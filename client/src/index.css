@@ -1,0 +1,38 @@
+/* Fonts (Inter + JetBrains Mono) are loaded via <link> tags in index.html. */
+@import './styles/variables.css';
+@import './styles/design-system.css';
+@import './styles/animations.css';
+@import './styles/overlays.css';
+
+/* ==========================================================================
+   Global typography — Inter (UI) + JetBrains Mono (code)
+   ========================================================================== */
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Inter alternate glyphs: cleaner a, g, l, 1 — removes ambiguity in IDs/codes */
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+body {
+  line-height: 1.6;
+}
+
+* {
+  font-optical-sizing: auto;
+}
+
+code,
+pre,
+kbd {
+  font-family: var(--font-mono);
+}
+
+/* Numeric columns stay aligned in tables and scoreboards */
+table td,
+table th,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,45 @@
+/* Mark Attendance — two-panel layout */
+.mark-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.mark-config { position: sticky; top: calc(var(--navbar-height) + 32px); }
+
+.mark-list { display: flex; flex-direction: column; }
+.mark-list-body { overflow-y: auto; }
+
+.mark-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.mark-row:last-child { border-bottom: none; }
+.mark-row > .flex { flex: 1; }
+.mark-segmented { flex-shrink: 0; }
+.mark-note { width: 160px; height: 34px; flex-shrink: 0; }
+
+.mark-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+}
+
+@media (max-width: 1024px) {
+  .mark-grid { grid-template-columns: 1fr; }
+  .mark-config { position: static; }
+}
+@media (max-width: 768px) {
+  .mark-row { flex-wrap: wrap; }
+  .mark-note { width: 100%; }
+}

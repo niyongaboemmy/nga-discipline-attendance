@@ -1,0 +1,37 @@
+/* ==========================================================================
+   Motion — quiet and fast. One subtle page fade, restrained micro-interactions.
+   Rules of thumb: nothing bounces, nothing drifts, nothing exceeds ~250ms.
+   ========================================================================== */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-fade-in { animation: fade-in 160ms var(--ease-out, ease) both; }
+.animate-slide-in-up { animation: rise-in 200ms var(--ease-out, ease) both; }
+
+/* Page-load reveal: the whole content area rises once, together.
+   (No per-child stagger — it made every navigation feel slow.) */
+.app-content {
+  animation: rise-in 220ms var(--ease-out, ease) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

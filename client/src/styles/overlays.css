@@ -1,0 +1,80 @@
+/* Toasts + modal overlays. Uses the shared design tokens in variables.css. */
+
+.toast-viewport {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(380px, calc(100vw - 40px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-popover);
+  animation: toast-in 0.18s ease-out;
+}
+.toast.is-leaving { animation: toast-out 0.16s ease-in forwards; }
+.toast-icon { flex-shrink: 0; margin-top: 1px; }
+.toast-body { flex: 1; min-width: 0; }
+.toast-title { font-size: 14px; font-weight: 600; }
+.toast-msg { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+.toast-close { flex-shrink: 0; color: var(--text-tertiary); background: none; border: none; cursor: pointer; padding: 2px; }
+.toast-close:hover { color: var(--text-primary); }
+
+.toast.is-success { border-left: 3px solid var(--success); }
+.toast.is-error   { border-left: 3px solid var(--danger); }
+.toast.is-info    { border-left: 3px solid var(--info); }
+.toast.is-success .toast-icon { color: var(--success); }
+.toast.is-error .toast-icon   { color: var(--danger); }
+.toast.is-info .toast-icon    { color: var(--info); }
+
+@keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes toast-out { to { opacity: 0; transform: translateX(16px); } }
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(15, 16, 24, 0.40);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fade-in 0.15s ease-out;
+}
+.modal-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-popover);
+  padding: 22px;
+  animation: rise-in 200ms var(--ease-out) both;
+}
+.modal-title { font-size: 17px; font-weight: 700; font-family: var(--font-display); }
+.modal-message { font-size: 14px; color: var(--text-secondary); margin-top: 8px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+/* Print: when printing a report, hide the app chrome and show only the print area. */
+@media print {
+  .navbar, .no-print { display: none !important; }
+  .app-shell, .app-content { margin: 0 !important; padding: 0 !important; display: block !important; }
+  .print-area { box-shadow: none !important; border: none !important; }
+  body { background: #fff !important; }
+}
