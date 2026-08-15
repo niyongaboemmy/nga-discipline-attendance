@@ -1,10 +1,12 @@
 import { Router, Response } from 'express';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
+import { authorizePermission } from '../middleware/authorize.js';
 
 const router = Router();
 
 router.use(authMiddleware);
+router.use(authorizePermission('SETTINGS_MANAGE'));
 
 // Default preferences applied when a user has saved none yet.
 const DEFAULT_PREFS = {

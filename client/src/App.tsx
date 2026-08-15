@@ -10,6 +10,7 @@ import { Login } from './pages/Login';
 import { SSOCallback } from './pages/SSOCallback';
 import { Dashboard } from './pages/Dashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { RolesPermissions } from './pages/RolesPermissions';
 import { Pending } from './pages/Pending';
 import { MarkAttendance } from './pages/MarkAttendance';
 import { AttendanceRecords } from './pages/AttendanceRecords';
@@ -65,6 +66,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <AuditLog />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/roles"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <RolesPermissions />
               </ProtectedRoute>
             }
           />

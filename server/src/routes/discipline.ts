@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
-import { roleGuard } from '../middleware/roleGuard.js';
+import { authorizePermission, selfOrPermission } from '../middleware/authorize.js';
 import {
   derivePoints,
   isValidCategory,
@@ -68,7 +68,7 @@ async function triggerConductCheck(studentId: string, studentName: string) {
 }
 
 // Log a discipline record — demerit or merit (Teacher/Admin only)
-router.post('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const {
     studentId,
@@ -196,7 +196,7 @@ router.post('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response
 
 // Log the SAME record against multiple students at once (Teacher/Admin only).
 // e.g. a whole-class tardiness demerit. Points are derived server-side per record.
-router.post('/bulk', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const {
     students, className = null, type, category, severity, title,
@@ -276,7 +276,7 @@ router.post('/bulk', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
 });
 
 // List discipline records with filters + pagination (Teacher/Admin only)
-router.get('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.get('/', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res: Response) => {
   const { studentId, type, severity, status, category, dateFrom, dateTo, search } = req.query;
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
@@ -318,7 +318,7 @@ router.get('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response)
 });
 
 // Discipline overview analytics (Teacher/Admin only)
-router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.get('/overview', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res: Response) => {
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
   const periodFilter = academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
@@ -413,7 +413,7 @@ router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: R
 });
 
 // Student's own discipline records + conduct score (Student only)
-router.get('/me', roleGuard(['student']), async (req: any, res: Response) => {
+router.get('/me', authorizePermission('DISCIPLINE_VIEW_OWN'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const db = getDb();
@@ -439,20 +439,10 @@ router.get('/me', roleGuard(['student']), async (req: any, res: Response) => {
   }
 });
 
-// A specific student's discipline records (Teacher/Admin, or the student themself)
-router.get('/student/:id', async (req: any, res: Response) => {
+// A specific student's discipline records (anyone with DISCIPLINE_VIEW_ALL, or the student themself)
+router.get('/student/:id', selfOrPermission('id', 'DISCIPLINE_VIEW_ALL'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = req.params.id;
-
-  // Staff can view anyone; everyone else (students, unassigned) only themselves.
-  const { role, id: requesterId } = authReq.user!;
-  const isStaff = role === 'teacher' || role === 'admin';
-  if (!isStaff && requesterId !== studentId) {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied. You can only view your own records.',
-    });
-  }
 
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(authReq);
@@ -477,7 +467,7 @@ router.get('/student/:id', async (req: any, res: Response) => {
 });
 
 // Update a record's review status / sanction (Teacher/Admin only)
-router.put('/:id/status', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const id = req.params.id;
   const { status, resolutionNote, sanction } = req.body;

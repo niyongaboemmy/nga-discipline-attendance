@@ -1,11 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Calendar } from 'lucide-react';
+import { ChevronDown, Calendar, AlertTriangle } from 'lucide-react';
 import { useAcademicPeriod } from '../../context/AcademicPeriodContext';
 
 /** Global year → term switcher. Displays every academic year but defaults to
- *  whichever year/term the MIS currently flags as active (see AcademicPeriodContext). */
+ *  whichever year/term the MIS currently flags as active (see AcademicPeriodContext).
+ *  Renders as a warning pill when no year/term is selected, since every scoped
+ *  page falls back to unfiltered ("all periods") data in that state. */
 export const AcademicPeriodSwitcher: React.FC = () => {
-  const { years, termsByYear, selectedYearId, selectedTermId, fetchTermsForYear, switchPeriod } = useAcademicPeriod();
+  const {
+    years, termsByYear, selectedYearId, selectedTermId, hasSelection, misHasActivePeriod, loading,
+    fetchTermsForYear, switchPeriod,
+  } = useAcademicPeriod();
   const [open, setOpen] = useState(false);
   const [activeYearId, setActiveYearId] = useState<number | null>(selectedYearId);
   const [switching, setSwitching] = useState(false);
@@ -25,7 +30,7 @@ export const AcademicPeriodSwitcher: React.FC = () => {
     if (open && activeYearId != null) fetchTermsForYear(activeYearId);
   }, [open, activeYearId, fetchTermsForYear]);
 
-  if (years.length === 0) return null;
+  if (loading && years.length === 0) return null;
 
   const selectedYear = years.find((y) => y.academic_year_id === selectedYearId);
   const selectedTerm = termsByYear[selectedYearId ?? -1]?.find((t) => t.academic_term_id === selectedTermId);
@@ -48,21 +53,50 @@ export const AcademicPeriodSwitcher: React.FC = () => {
     <div style={{ position: 'relative' }} ref={ref}>
       <button
         className="icon-btn hide-mobile"
-        style={{ display: 'flex', alignItems: 'center', gap: '6px', width: 'auto', padding: '0 10px' }}
+        style={{
+          alignItems: 'center', gap: '6px', width: 'auto', padding: '0 10px',
+          ...(hasSelection ? {} : { background: 'var(--warning-light)', color: 'var(--warning)' }),
+        }}
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        aria-label="Switch academic period"
+        aria-label={hasSelection ? 'Switch academic period' : 'No academic period selected — choose one'}
+        title={hasSelection ? undefined : 'No academic year/term selected. Data shown may span every period.'}
       >
-        <Calendar size={16} />
+        {hasSelection ? <Calendar size={16} /> : <AlertTriangle size={16} />}
         <span className="text-sm font-semibold">
-          {selectedYear ? selectedYear.name : 'Academic period'}
-          {selectedTerm ? ` · ${selectedTerm.name}` : ''}
+          {years.length === 0
+            ? 'No academic years'
+            : hasSelection
+              ? `${selectedYear?.name ?? ''}${selectedTerm ? ` · ${selectedTerm.name}` : ''}`
+              : 'Select academic period'}
         </span>
         <ChevronDown size={14} className="topnav-caret" />
       </button>
 
-      {open && (
+      {open && years.length === 0 && (
+        <div className="menu menu--right animate-fade-in" style={{ minWidth: '260px' }}>
+          <div className="empty-state" style={{ padding: '16px' }}>
+            <AlertTriangle size={20} color="var(--warning)" />
+            <span className="text-sm text-secondary">
+              No academic years are configured in the MIS yet. Contact an administrator.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {open && years.length > 0 && (
         <div className="menu menu--right animate-fade-in" style={{ display: 'flex', minWidth: '320px' }}>
+          {!misHasActivePeriod && (
+            <div
+              className="text-xs"
+              style={{
+                position: 'absolute', top: '-34px', right: 0, whiteSpace: 'nowrap',
+                background: 'var(--warning-light)', color: 'var(--warning)', padding: '6px 10px', borderRadius: '6px',
+              }}
+            >
+              The MIS has no active term — pick one manually.
+            </div>
+          )}
           <div style={{ borderRight: '1px solid var(--border-color)', minWidth: '140px' }}>
             {years.map((y) => (
               <button

@@ -37,8 +37,8 @@ export const SSOCallback: React.FC = () => {
         const result = await response.json();
 
         if (response.ok && result.success) {
-          const { token, user, permissions } = result.data;
-          setSession(token, user, permissions);
+          const { token, user, permissions, rolePermissions } = result.data;
+          setSession(token, user, permissions, rolePermissions || []);
           // Route to the dashboard that matches the user's actual role.
           navigate(homeRouteForRole(user.role));
         } else {

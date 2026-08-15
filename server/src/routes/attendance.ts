@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
-import { roleGuard } from '../middleware/roleGuard.js';
+import { authorizePermission, selfOrPermission } from '../middleware/authorize.js';
 import { recordAudit } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
@@ -15,7 +15,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 router.use(authMiddleware);
 
 // Mark attendance (Teacher/Admin only)
-router.post('/mark', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const { classId, className, date, period = 'Morning', records } = req.body;
 
@@ -100,7 +100,7 @@ router.post('/mark', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
 });
 
 // View attendance history (Teacher/Admin only)
-router.get('/records', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: any, res: Response) => {
   const { classId, dateFrom, dateTo, search, status } = req.query;
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
@@ -158,7 +158,7 @@ router.get('/records', roleGuard(['teacher', 'admin']), async (req: any, res: Re
 });
 
 // Student's own attendance (Student only)
-router.get('/me', roleGuard(['student']), async (req: any, res: Response) => {
+router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const db = getDb();
@@ -187,20 +187,10 @@ router.get('/me', roleGuard(['student']), async (req: any, res: Response) => {
   }
 });
 
-// Specific student's attendance (Teacher/Admin, or the student themself)
-router.get('/student/:id', async (req: any, res: Response) => {
+// Specific student's attendance (anyone with ATTENDANCE_VIEW_ALL, or the student themself)
+router.get('/student/:id', selfOrPermission('id', 'ATTENDANCE_VIEW_ALL'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = req.params.id;
-
-  // Staff can view anyone; everyone else (students, unassigned) only themselves.
-  const { role, id: requesterId } = authReq.user!;
-  const isStaff = role === 'teacher' || role === 'admin';
-  if (!isStaff && requesterId !== studentId) {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied. You can only view your own records.',
-    });
-  }
 
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(authReq);
@@ -228,7 +218,7 @@ router.get('/student/:id', async (req: any, res: Response) => {
 });
 
 // Fetch student's own excuse requests
-router.get('/excuses/me', roleGuard(['student']), async (req: any, res: Response) => {
+router.get('/excuses/me', authorizePermission('EXCUSES_VIEW_OWN'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const db = getDb();
@@ -258,7 +248,7 @@ router.get('/excuses/me', roleGuard(['student']), async (req: any, res: Response
 });
 
 // Submit a new excuse request
-router.post('/excuse', roleGuard(['student']), async (req: any, res: Response) => {
+router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const studentName = authReq.user!.name;
@@ -311,7 +301,7 @@ router.post('/excuse', roleGuard(['student']), async (req: any, res: Response) =
 
 
 // List excuse requests for review (Teacher/Admin only)
-router.get('/excuses', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.get('/excuses', authorizePermission('EXCUSES_REVIEW'), async (req: any, res: Response) => {
   const { status, search } = req.query;
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
@@ -340,7 +330,7 @@ router.get('/excuses', roleGuard(['teacher', 'admin']), async (req: any, res: Re
 });
 
 // Approve or reject an excuse request (Teacher/Admin only)
-router.put('/excuse/:id/status', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const id = req.params.id;
   const { status } = req.body as { status?: string };

@@ -20,10 +20,15 @@ interface AuthContextType {
   isAuthenticated: boolean;
   user: User | null;
   token: string | null;
+  /** MIS-native permission strings — a separate, unrelated system used for
+   *  nothing locally today. Do not confuse with `rolePermissions` below. */
   permissions: string[];
+  /** This app's own RBAC permission keys for the signed-in user's current role
+   *  (see server/src/constants/permissions.ts). Drives `usePermissions()`. */
+  rolePermissions: string[];
   loading: boolean;
   login: () => void;
-  setSession: (token: string, user: User, permissions: string[]) => void;
+  setSession: (token: string, user: User, permissions: string[], rolePermissions?: string[]) => void;
   logout: () => void;
   toggleTheme: () => void;
   theme: 'light' | 'dark';
@@ -35,6 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
+  const [rolePermissions, setRolePermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
 
@@ -43,6 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const savedToken = localStorage.getItem('sso_token');
     const savedUser = localStorage.getItem('sso_user');
     const savedPermissions = localStorage.getItem('sso_permissions');
+    const savedRolePermissions = localStorage.getItem('sso_role_permissions');
 
     let restored = false;
     if (savedToken && savedUser) {
@@ -52,6 +59,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(parsedUser);
         if (savedPermissions) {
           setPermissions(JSON.parse(savedPermissions));
+        }
+        if (savedRolePermissions) {
+          setRolePermissions(JSON.parse(savedRolePermissions));
         }
 
         // Handle theme (dark is the app's signature look)
@@ -64,6 +74,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('sso_token');
         localStorage.removeItem('sso_user');
         localStorage.removeItem('sso_permissions');
+        localStorage.removeItem('sso_role_permissions');
       }
     }
     if (!restored) {
@@ -93,14 +104,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = target;
   };
 
-  const setSession = (newToken: string, newUser: User, newPermissions: string[]) => {
+  const setSession = (
+    newToken: string, newUser: User, newPermissions: string[], newRolePermissions?: string[]
+  ) => {
     setToken(newToken);
     setUser(newUser);
     setPermissions(newPermissions);
-    
+
     localStorage.setItem('sso_token', newToken);
     localStorage.setItem('sso_user', JSON.stringify(newUser));
     localStorage.setItem('sso_permissions', JSON.stringify(newPermissions));
+
+    // rolePermissions is optional here because some callers (e.g. switching
+    // academic period) re-sign the token without touching the user's role —
+    // in that case, keep whatever role permissions are already in state.
+    if (newRolePermissions !== undefined) {
+      setRolePermissions(newRolePermissions);
+      localStorage.setItem('sso_role_permissions', JSON.stringify(newRolePermissions));
+    }
 
     if (newUser.preferred_theme) {
       setTheme(newUser.preferred_theme);
@@ -111,11 +132,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
     setUser(null);
     setPermissions([]);
-    
+    setRolePermissions([]);
+
     localStorage.removeItem('sso_token');
     localStorage.removeItem('sso_user');
     localStorage.removeItem('sso_permissions');
-    
+    localStorage.removeItem('sso_role_permissions');
+
     // Redirect to home/login page
     window.location.href = '/';
   };
@@ -131,6 +154,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         token,
         permissions,
+        rolePermissions,
         loading,
         login,
         setSession,

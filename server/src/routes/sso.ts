@@ -3,14 +3,46 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { getDb } from '../database.js';
 import { Role } from '../middleware/auth.js';
+import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 
 const router = Router();
+
+const levelForRole: Record<string, string> = { student: 'STUDENT', teacher: 'TEACHER', admin: 'ADMIN' };
+
+/** Look up the id of the seeded system role matching a legacy role string's level. */
+async function systemRoleIdFor(role: Role): Promise<number | null> {
+  const level = levelForRole[role];
+  if (!level) return null; // 'unassigned' has no role_id
+  const db = getDb();
+  const row = await db.get('SELECT id FROM roles WHERE level = ? AND is_system = 1', level);
+  return row?.id ?? null;
+}
+
+/** The local RBAC permission-key set for a user, straight from the DB — used to
+ *  hydrate the frontend session (distinct from the unrelated MIS `permissions`
+ *  array carried alongside it). */
+async function fetchRolePermissions(userId: string): Promise<string[]> {
+  const db = getDb();
+  const rows = await db.all(
+    `SELECT DISTINCT p.key FROM users u
+     JOIN role_permissions rp ON rp.role_id = u.role_id
+     JOIN permissions p ON p.id = rp.permission_id
+     WHERE u.id = ? ORDER BY p.key`,
+    userId
+  );
+  return rows.map((r: any) => r.key);
+}
 
 /**
  * Resolve a user's effective role and persist the identity.
  * Precedence: an admin-assigned role in our DB ALWAYS wins; otherwise we use the
  * role detected from the MIS payload; if neither yields a role the user is
  * 'unassigned' (never silently treated as a teacher).
+ *
+ * `role_id` (the RBAC permission-set link) is only touched when the legacy
+ * role actually changes here — if an admin has assigned this user a *custom*
+ * role at the same level, a login must not silently reset it back to the
+ * plain system role.
  */
 async function resolveAndPersistUser(
   id: string,
@@ -28,19 +60,31 @@ async function resolveAndPersistUser(
     const finalRole: Role = forceRole
       ? computedRole
       : existing.role !== 'unassigned' ? existing.role : computedRole;
-    await db.run(
-      `UPDATE users
-         SET name = ?, email = COALESCE(?, email), role = ?, last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-      name, email || null, finalRole, id
-    );
+
+    if (finalRole !== existing.role) {
+      const roleId = await systemRoleIdFor(finalRole);
+      await db.run(
+        `UPDATE users
+           SET name = ?, email = COALESCE(?, email), role = ?, role_id = ?, last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        name, email || null, finalRole, roleId, id
+      );
+    } else {
+      await db.run(
+        `UPDATE users
+           SET name = ?, email = COALESCE(?, email), last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        name, email || null, id
+      );
+    }
     return finalRole;
   }
 
+  const roleId = await systemRoleIdFor(computedRole);
   await db.run(
-    `INSERT INTO users (id, name, email, role, source, last_login)
-     VALUES (?, ?, ?, ?, 'sso', CURRENT_TIMESTAMP)`,
-    id, name, email || null, computedRole
+    `INSERT INTO users (id, name, email, role, role_id, source, last_login)
+     VALUES (?, ?, ?, ?, ?, 'sso', CURRENT_TIMESTAMP)`,
+    id, name, email || null, computedRole, roleId
   );
   return computedRole;
 }
@@ -78,35 +122,6 @@ function roleFromPermissions(permissions: unknown): Role {
 
   // Nothing recognizable — must be assigned by an administrator.
   return 'unassigned';
-}
-
-/**
- * Resolve the caller's current academic year/term from the MIS. The MIS bundles
- * this into `GET /users/me` rather than exposing a dedicated "current" endpoint
- * (see nga_central_mis/SSO_CLIENT_INTEGRATION.md), so we call it once at login
- * and cache the result as JWT claims — cheaper than calling it on every request.
- */
-async function resolveCurrentAcademicPeriod(
-  misToken: string
-): Promise<{ academicYearId?: number; academicTermId?: number }> {
-  try {
-    const resp = await fetch(`${config.ngaMisBaseUrl}/users/me`, {
-      headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json' },
-    });
-    if (!resp.ok) return {};
-    const body = (await resp.json()) as any;
-    const data = body.data ?? body;
-    const year = data.currentAcademicYear;
-    const terms: any[] = Array.isArray(data.currentAcademicTerms) ? data.currentAcademicTerms : [];
-    const currentTerm = terms.find((t) => Number(t.is_current) === 1) || terms[0];
-    return {
-      academicYearId: year?.academic_year_id != null ? Number(year.academic_year_id) : undefined,
-      academicTermId: currentTerm?.academic_term_id != null ? Number(currentTerm.academic_term_id) : undefined,
-    };
-  } catch (error) {
-    console.error('Could not resolve current academic period from MIS:', (error as Error).message);
-    return {};
-  }
 }
 
 /** Fallback role detection from an explicit role field, if a MIS ever sends one. */
@@ -207,6 +222,7 @@ router.post('/exchange', async (req: Request, res: Response) => {
     const computedRole: Role = isBootstrapAdmin ? 'admin' : resolveMisRole(misUser, permissions);
 
     const role = await resolveAndPersistUser(id, name, email, computedRole, isBootstrapAdmin);
+    const rolePermissions = await fetchRolePermissions(id);
 
     // Carry the user's MIS theme preference through so the app opens in the same
     // light/dark mode they use in the MIS. Only honor the known values.
@@ -223,7 +239,10 @@ router.post('/exchange', async (req: Request, res: Response) => {
     };
     const token = jwt.sign({ ...localUser, misToken }, config.jwtSecret, { expiresIn: '24h' });
 
-    return res.json({ success: true, data: { token, user: localUser, permissions: permissions || [] } });
+    return res.json({
+      success: true,
+      data: { token, user: localUser, permissions: permissions || [], rolePermissions },
+    });
   } catch (error) {
     console.error('SSO exchange error:', error);
     return res.status(502).json({

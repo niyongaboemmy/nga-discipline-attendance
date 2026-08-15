@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
-import { roleGuard } from '../middleware/roleGuard.js';
+import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 
 const router = Router();
@@ -9,7 +9,7 @@ const router = Router();
 router.use(authMiddleware);
 
 // Clock In (Teachers & Admins)
-router.post('/clock-in', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const staffId = authReq.user!.id;
   const staffName = authReq.user!.name;
@@ -65,7 +65,7 @@ router.post('/clock-in', roleGuard(['teacher', 'admin']), async (req: any, res: 
 });
 
 // Clock Out (Teachers & Admins)
-router.post('/clock-out', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.post('/clock-out', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const staffId = authReq.user!.id;
   const today = new Date().toISOString().split('T')[0];
@@ -114,7 +114,7 @@ router.post('/clock-out', roleGuard(['teacher', 'admin']), async (req: any, res:
 });
 
 // Fetch own staff attendance (Teacher / Admin logs for themselves)
-router.get('/attendance/me', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.get('/attendance/me', authorizePermission('STAFF_ATTENDANCE_VIEW_OWN'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const staffId = authReq.user!.id;
   const { academicTermId } = resolveAcademicPeriod(authReq);
@@ -144,7 +144,7 @@ router.get('/attendance/me', roleGuard(['teacher', 'admin']), async (req: any, r
 });
 
 // Fetch all staff attendance (Admins only)
-router.get('/attendance', roleGuard(['admin']), async (req: any, res: Response) => {
+router.get('/attendance', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res: Response) => {
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
   try {

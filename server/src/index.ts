@@ -14,6 +14,7 @@ import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
 import misRoutes from './routes/mis.js';
 import academicsRoutes from './routes/academics.js';
+import rolesPermissionsRoutes from './routes/rolesPermissions.js';
 
 const app = express();
 
@@ -41,6 +42,7 @@ app.use('/api/staff', staffRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/roles-permissions', rolesPermissionsRoutes);
 app.use('/api/settings', settingsRoutes);
 
 // MIS roster proxy — classes, students, staff and timetables are read from the

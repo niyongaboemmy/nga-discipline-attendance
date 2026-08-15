@@ -3,6 +3,7 @@ import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../context/ToastContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { Gavel, Award, AlertCircle, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface DisciplineRecord {
@@ -44,6 +45,7 @@ const PAGE_SIZE = 25;
 
 export const DisciplineRecords: React.FC = () => {
   const toast = useToast();
+  const { can } = usePermissions();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [records, setRecords] = useState<DisciplineRecord[]>([]);
   const [total, setTotal] = useState(0);
@@ -204,12 +206,12 @@ export const DisciplineRecords: React.FC = () => {
                       {r.type === 'demerit' ? (
                         <div className="flex gap-1 flex-wrap">
                           {r.status === 'open' && (
-                            <button className="btn btn-outline btn-sm" disabled={busyId === r.id} onClick={() => updateStatus(r, 'under_review')}>Review</button>
+                            <button className="btn btn-outline btn-sm" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => updateStatus(r, 'under_review')}>Review</button>
                           )}
                           {(r.status === 'open' || r.status === 'under_review') && (
                             <>
-                              <button className="btn btn-outline btn-sm" disabled={busyId === r.id} onClick={() => updateStatus(r, 'resolved')}>Resolve</button>
-                              <button className="btn btn-outline btn-sm" disabled={busyId === r.id} onClick={() => setDismissTarget(r)}>Dismiss</button>
+                              <button className="btn btn-outline btn-sm" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => updateStatus(r, 'resolved')}>Resolve</button>
+                              <button className="btn btn-outline btn-sm" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => setDismissTarget(r)}>Dismiss</button>
                             </>
                           )}
                           {(r.status === 'resolved' || r.status === 'dismissed') && <span className="text-xs text-tertiary">Closed</span>}

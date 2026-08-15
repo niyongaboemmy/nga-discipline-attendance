@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { usePermissions } from '../hooks/usePermissions';
 import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck } from 'lucide-react';
 import './MarkAttendance.css';
 
@@ -21,6 +22,7 @@ const initials = (name: string) => name.split(' ').map((n) => n[0]).join('').toU
 
 export const MarkAttendance: React.FC = () => {
   const navigate = useNavigate();
+  const { can } = usePermissions();
   const [classes, setClasses] = useState<ClassData[]>([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [students, setStudents] = useState<Student[]>([]);
@@ -208,7 +210,13 @@ export const MarkAttendance: React.FC = () => {
               <span className="text-sm text-secondary">{markedCount} of {students.length} marked</span>
               <div className="flex gap-2">
                 <button type="button" className="btn btn-outline" onClick={() => navigate('/dashboard')}>Cancel</button>
-                <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={saving || !can('ATTENDANCE_MARK')}
+                  title={can('ATTENDANCE_MARK') ? undefined : "You don't have permission to mark attendance."}
+                  onClick={handleSave}
+                >
                   <Save size={16} /> {saving ? 'Saving…' : 'Save session'}
                 </button>
               </div>

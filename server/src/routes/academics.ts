@@ -2,35 +2,23 @@ import { Router, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
+import { authorizePermission } from '../middleware/authorize.js';
+import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 
 /**
  * Academic year/term integration with the NGA Central MIS.
  *
  * The MIS is the sole source of truth for academic years/terms — this app never
  * creates its own. It exposes `/academics/years` and `/academics/terms` but has
- * no dedicated "current period" endpoint, so "current" is derived from
- * `GET /users/me`, which bundles `currentAcademicYear`/`currentAcademicTerms`
- * (see SSO_CLIENT_INTEGRATION.md in nga_central_mis).
+ * no dedicated "current period" endpoint, so "current" is derived from the
+ * misToken's own JWT payload (falling back to `GET /users/me`) via
+ * utils/misAcademics.ts.
  */
 const router = Router();
 
 router.use(authMiddleware);
 
-/** Fetch the caller's current academic year + terms-in-that-year from the MIS. */
-async function fetchCurrentPeriod(misToken: string) {
-  const resp = await fetch(`${config.ngaMisBaseUrl}/users/me`, {
-    headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json' },
-  });
-  if (!resp.ok) return null;
-  const body = (await resp.json()) as any;
-  const data = body.data ?? body;
-  return {
-    currentAcademicYear: data.currentAcademicYear ?? null,
-    currentAcademicTerms: data.currentAcademicTerms ?? [],
-  };
-}
-
-router.get('/years', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/years', authorizePermission('ACADEMIC_PERIOD_VIEW'), async (req: AuthenticatedRequest, res: Response) => {
   const misToken = req.user?.misToken;
   if (!misToken) {
     return res.status(403).json({ success: false, message: 'This session is not linked to the MIS.' });
@@ -51,7 +39,7 @@ router.get('/years', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-router.get('/terms', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/terms', authorizePermission('ACADEMIC_PERIOD_VIEW'), async (req: AuthenticatedRequest, res: Response) => {
   const misToken = req.user?.misToken;
   if (!misToken) {
     return res.status(403).json({ success: false, message: 'This session is not linked to the MIS.' });
@@ -76,16 +64,13 @@ router.get('/terms', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-router.get('/current', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/current', authorizePermission('ACADEMIC_PERIOD_VIEW'), async (req: AuthenticatedRequest, res: Response) => {
   const misToken = req.user?.misToken;
   if (!misToken) {
     return res.status(403).json({ success: false, message: 'This session is not linked to the MIS.' });
   }
   try {
-    const period = await fetchCurrentPeriod(misToken);
-    if (!period) {
-      return res.status(502).json({ success: false, message: 'Could not resolve the current academic period from the MIS.' });
-    }
+    const period = await resolveCurrentAcademicPeriod(misToken);
     return res.json({ success: true, data: period });
   } catch (error) {
     console.error('Academics current-period error:', (error as Error).message);
@@ -93,7 +78,7 @@ router.get('/current', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-router.post('/switch', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/switch', authorizePermission('ACADEMIC_PERIOD_SWITCH'), async (req: AuthenticatedRequest, res: Response) => {
   const misToken = req.user?.misToken;
   if (!misToken || !req.user) {
     return res.status(403).json({ success: false, message: 'This session is not linked to the MIS.' });
@@ -123,8 +108,13 @@ router.post('/switch', async (req: AuthenticatedRequest, res: Response) => {
       return res.status(400).json({ success: false, message: 'That academic term was not found for the given year.' });
     }
 
-    const { misToken: _misToken, iat, exp, ...rest } = req.user as any;
-    const updatedUser = { ...rest, academicYearId, academicTermId };
+    // Only carry the plain JWT-claim fields forward — req.user also has RBAC
+    // fields (roleId/roleName/roleLevel/permissions) that authMiddleware
+    // resolves fresh from the DB every request and must never be baked into
+    // the token itself (permissions is a Set, which doesn't even survive
+    // JSON serialization).
+    const { id, name, email, role, preferred_theme } = req.user as any;
+    const updatedUser = { id, name, email, role, preferred_theme, academicYearId, academicTermId };
     const token = jwt.sign({ ...updatedUser, misToken }, config.jwtSecret, { expiresIn: '24h' });
 
     return res.json({ success: true, data: { token, user: updatedUser } });

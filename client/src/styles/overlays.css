@@ -16,11 +16,9 @@
   align-items: flex-start;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: var(--radius-md);
-  background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
-  backdrop-filter: blur(16px) saturate(150%);
-  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-popover);
   animation: toast-in 0.18s ease-out;
 }
@@ -58,10 +56,8 @@
 .modal-card {
   width: 100%;
   max-width: 420px;
-  background: var(--glass-bg-strong);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
-  backdrop-filter: blur(20px) saturate(150%);
-  border: 1px solid var(--glass-border);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-popover);
   padding: 22px;
@@ -73,8 +69,9 @@
 
 /* Print: when printing a report, hide the app chrome and show only the print area. */
 @media print {
-  .navbar, .no-print { display: none !important; }
-  .app-shell, .app-content { margin: 0 !important; padding: 0 !important; display: block !important; }
+  .navbar, .sidebar, .no-print { display: none !important; }
+  .app-body { padding-top: 0 !important; display: block !important; }
+  .app-shell, .app-content, .app-content-col { margin: 0 !important; padding: 0 !important; display: block !important; }
   .print-area { box-shadow: none !important; border: none !important; }
   body { background: #fff !important; }
 }

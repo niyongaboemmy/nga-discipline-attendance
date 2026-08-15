@@ -1,85 +1,115 @@
 /* ==========================================================================
    NGA Discipline & Attendance — Design Tokens
-   Refined, professional campus brand: deep indigo primary, violet accent,
-   cool neutral surfaces. Crisp, calm, modern.
-   No component should hardcode a hex value; reference these variables.
+   Matches the shared NGA MIS / TaskMentor visual language: blue-600 primary,
+   slate neutral surfaces, flat bordered chrome. Values below are pinned to
+   nga_central_mis/frontend/tailwind.config.js and
+   nga-task-mentor/client/tailwind.config.js so all three apps read as one
+   product suite. No component should hardcode a hex value; reference these
+   variables.
    ========================================================================== */
 
 :root {
-  /* --- Brand --- */
-  --primary: #4f46e5;          /* deep indigo */
-  --primary-hover: #4338ca;
-  --primary-active: #3730a3;
-  --primary-light: rgba(79, 70, 229, 0.09);
-  --primary-glow: rgba(79, 70, 229, 0.28);
+  /* Tells the browser to render native form chrome (select arrows, date/time
+     pickers, checkboxes, scrollbars) in its light variant — required so it
+     stops defaulting to dark UA chrome that clashes with our light surfaces. */
+  color-scheme: light;
+
+  /* --- Brand (blue-600 / blue-700, constant across themes — buttons never
+     shift color between light/dark, matching Button.tsx in the sibling apps) --- */
+  --primary: #2563eb;          /* blue-600 */
+  --primary-hover: #1d4ed8;    /* blue-700 */
+  --primary-active: #1e40af;   /* blue-800 */
+  --primary-light: rgba(37, 99, 235, 0.09);
+  --primary-glow: rgba(37, 99, 235, 0.28);
   --primary-contrast: #ffffff;
 
-  /* signature accent — used sparingly for high-impact moments */
-  --accent: #7c3aed;           /* vivid violet */
-  --accent-ink: #ffffff;       /* readable text on accent */
-  --accent-light: rgba(124, 58, 237, 0.12);
+  /* text/icon variant of the brand color — shifts lighter in dark mode for
+     contrast against dark surfaces (mirrors "text-blue-600 dark:text-blue-400"
+     used throughout the sibling apps for active nav items/links) */
+  --primary-text: #2563eb;
+
+  /* signature accent — a lighter sky-blue used sparingly for secondary highlights */
+  --accent: #3b82f6;           /* blue-500 */
+  --accent-ink: #ffffff;
+  --accent-light: rgba(59, 130, 246, 0.12);
 
   /* --- Semantic status --- */
   --success: #059669;
   --success-light: rgba(5, 150, 105, 0.12);
   --warning: #d97706;
   --warning-light: rgba(217, 119, 6, 0.12);
-  --danger: #e11d48;
-  --danger-light: rgba(225, 29, 72, 0.10);
+  --danger: #dc2626;           /* red-600, matches Button.tsx danger variant */
+  --danger-light: rgba(220, 38, 38, 0.10);
   --info: #0284c7;
   --info-light: rgba(2, 132, 199, 0.10);
 
-  /* --- Surfaces (cool neutral) --- */
-  --bg-page: #f6f7f9;
-  --bg-page-solid: #f6f7f9;
+  /* --- Surfaces (slate neutral) --- */
+  --bg-page: #f3f4f6;          /* gray-100, matches SystemLayout shell bg */
+  --bg-page-solid: #f3f4f6;
   --bg-card: #ffffff;
-  --bg-subtle: #f1f2f5;
-  --bg-hover: #eceef2;
-  --bg-inverse: #111827;
+  --bg-subtle: #f8fafc;        /* surface.light */
+  --bg-hover: #eef2f7;
+  --bg-inverse: #1e293b;
+  /* Chrome surfaces (sidebar rail, mobile drawer) — same as card in light,
+     but much darker than card in dark mode so chrome nearly merges into
+     the near-black page, matching the sibling apps' minimal dark look. */
+  --bg-chrome: #ffffff;
 
   /* --- Glass surfaces (chrome only: navbar, sidebar, popovers) --- */
-  --glass-bg: rgba(255, 255, 255, 0.68);
-  --glass-bg-strong: rgba(255, 255, 255, 0.82);
-  --glass-border: rgba(17, 24, 39, 0.07);
-  --glass-blur: 14px;
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-bg-strong: rgba(255, 255, 255, 0.95);
+  --glass-border: rgba(226, 232, 240, 0.7);
+  --glass-blur: 12px;
 
   /* --- Text --- */
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-tertiary: #9ca3af;
-  --text-link: var(--primary);
+  --text-primary: #1e293b;     /* text.primary.light */
+  --text-secondary: #64748b;   /* text.secondary.light */
+  --text-tertiary: #94a3b8;
+  --text-link: var(--primary-text);
 
   /* --- Borders --- */
-  --border: #e5e7eb;
-  --border-strong: #d1d5db;
+  --border: #e2e8f0;           /* border.light */
+  --border-strong: #cbd5e1;
   --border-focus: var(--primary);
 
-  /* --- Radius --- */
-  --radius-card: 14px;
-  --radius-input: 10px;
-  --radius-btn: 10px;
-  --radius-badge: 7px;
-  --radius-full: 9999px;
-  --radius-lg: 14px;
-  --radius-md: 10px;
-  --radius-sm: 7px;
+  /* Form controls: a translucent surface + border (not a flat solid fill),
+     matching Input.tsx/Select.tsx in the sibling apps — softer than the card
+     border, so fields read as recessed "wells" instead of outlined boxes. */
+  --input-bg: var(--bg-subtle);
+  --input-border: var(--border);
 
-  /* --- Shadow (soft, layered) --- */
-  --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.05);
-  --shadow-card: 0 1px 2px rgba(17, 24, 39, 0.04), 0 4px 16px -6px rgba(17, 24, 39, 0.08);
-  --shadow-md: 0 1px 2px rgba(17, 24, 39, 0.04), 0 4px 16px -6px rgba(17, 24, 39, 0.08);
-  --shadow-lift: 0 2px 4px rgba(17, 24, 39, 0.05), 0 14px 32px -12px rgba(17, 24, 39, 0.18);
-  --shadow-popover: 0 8px 28px -6px rgba(17, 24, 39, 0.18), 0 2px 8px rgba(17, 24, 39, 0.07);
-  --shadow-glow: 0 6px 18px -6px var(--primary-glow);
+  /* --- Radius --- */
+  --radius-card: 16px;         /* rounded-2xl */
+  --radius-input: 12px;        /* rounded-xl */
+  --radius-field: 16px;        /* rounded-2xl, matches Input.tsx/Select.tsx */
+  --radius-btn: 9999px;        /* pill buttons, matches Button.tsx rounded-full */
+  --radius-badge: 9999px;      /* pill badges/chips/tags */
+  --radius-full: 9999px;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+
+  /* --- Shadow: none — flat surfaces, separation comes from borders only,
+     matching the sibling apps' flatter look --- */
+  --shadow-sm: none;
+  --shadow-card: none;
+  --shadow-md: none;
+  --shadow-lift: none;
+  --shadow-popover: none;
+  --shadow-glow: none;
 
   /* --- Typography --- */
   --font-display: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-body: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, monospace;
   --font-family: var(--font-body);
+  --font-size-base: 15px;      /* matches sibling apps' html { font-size: 15px } */
+  --font-size-base-wide: 14.5px; /* applied above 1920px viewport, same as siblings */
 
   /* --- Layout metrics --- */
   --navbar-height: 64px;
+  --sidebar-width: 256px;      /* w-64 */
+  --sidebar-width-collapsed: 80px; /* w-20 */
 
   /* --- Motion --- */
   --transition-fast: 160ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -88,48 +118,61 @@
 }
 
 [data-theme="dark"] {
-  --primary: #3b82f6;
-  --primary-hover: #60a5fa;
-  --primary-active: #2563eb;
-  --primary-light: rgba(59, 130, 246, 0.16);
-  --primary-glow: rgba(59, 130, 246, 0.35);
+  color-scheme: dark;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-active: #1e40af;
+  --primary-light: rgba(37, 99, 235, 0.18);
+  --primary-glow: rgba(37, 99, 235, 0.35);
   --primary-contrast: #ffffff;
 
-  --accent: #a78bfa;
-  --accent-ink: #161228;
-  --accent-light: rgba(167, 139, 250, 0.15);
+  --primary-text: #60a5fa;     /* blue-400, for links/active nav on dark surfaces */
+
+  --accent: #60a5fa;
+  --accent-ink: #0b1220;
+  --accent-light: rgba(96, 165, 250, 0.15);
 
   --success: #34d399;
   --success-light: rgba(52, 211, 153, 0.14);
   --warning: #fbbf24;
   --warning-light: rgba(251, 191, 36, 0.14);
-  --danger: #fb7185;
-  --danger-light: rgba(251, 113, 133, 0.14);
+  --danger: #f87171;
+  --danger-light: rgba(248, 113, 113, 0.14);
   --info: #38bdf8;
   --info-light: rgba(56, 189, 248, 0.14);
 
-  --bg-page: #0a0c11;
-  --bg-page-solid: #0a0c11;
-  --bg-card: #12151d;
-  --bg-subtle: #181c26;
-  --bg-hover: #1e2330;
-  --bg-inverse: #f6f7f9;
+  --bg-page: #000000;          /* matches shared apps' shell: dark:bg-black */
+  --bg-page-solid: #000000;
+  --bg-chrome: #0a0e17;        /* near-black, ~gray-800/30 over black — the sidebar's tone */
+  --bg-card: #0a0e17;          /* every surface matches the sidebar's darkness; separation
+                                   comes from borders, not a lighter fill */
+  --bg-subtle: #060810;
+  --bg-hover: #141a28;
+  --bg-inverse: #f8fafc;
 
-  --glass-bg: rgba(13, 16, 23, 0.66);
-  --glass-bg-strong: rgba(13, 16, 23, 0.85);
-  --glass-border: rgba(255, 255, 255, 0.07);
+  --glass-bg: rgba(0, 0, 0, 0.6);
+  --glass-bg-strong: rgba(8, 11, 18, 0.94);
+  --glass-border: rgba(51, 65, 85, 0.5);
 
-  --text-primary: #f3f4f6;
-  --text-secondary: #9da3b2;
-  --text-tertiary: #696f7e;
+  --text-primary: #f1f5f9;     /* text.primary.dark */
+  --text-secondary: #94a3b8;   /* text.secondary.dark */
+  --text-tertiary: #64748b;
 
-  --border: #232836;
-  --border-strong: #364056;
+  /* Soft translucent hairlines rather than solid lines — visible enough to
+     separate surfaces without the bright, "outlined-box" look solid borders
+     create against a near-black fill. */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -10px rgba(0, 0, 0, 0.55);
-  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -10px rgba(0, 0, 0, 0.55);
-  --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.5), 0 18px 40px -14px rgba(0, 0, 0, 0.65);
-  --shadow-popover: 0 10px 32px -6px rgba(0, 0, 0, 0.65), 0 2px 8px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 6px 18px -6px var(--primary-glow);
+  /* A faint white overlay (not a lighter flat color) so fields still read as
+     recessed "wells" even though every surface sits at the sidebar's darkness. */
+  --input-bg: rgba(255, 255, 255, 0.025);
+  --input-border: rgba(255, 255, 255, 0.06);
+
+  --shadow-sm: none;
+  --shadow-card: none;
+  --shadow-md: none;
+  --shadow-lift: none;
+  --shadow-popover: none;
+  --shadow-glow: none;
 }

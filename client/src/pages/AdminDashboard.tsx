@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Users, GraduationCap, Briefcase, ShieldCheck, HelpCircle, Search, Check, AlertCircle, Inbox } from 'lucide-react';
+import { Users, GraduationCap, Briefcase, ShieldCheck, HelpCircle, Search, Check, AlertCircle, Inbox, KeyRound } from 'lucide-react';
 import { useAuth, type Role } from '../context/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { HeroBanner } from '../components/common/HeroBanner';
 import { useToast } from '../context/ToastContext';
@@ -12,13 +14,14 @@ interface ManagedUser {
   name: string;
   email: string | null;
   role: Role;
+  role_id: number | null;
   status: string;
   source: string;
   last_login: string | null;
 }
 interface Overview { total: number; students: number; teachers: number; admins: number; unassigned: number; }
+interface RoleOption { id: number; name: string; level: 'STUDENT' | 'TEACHER' | 'ADMIN'; is_system: number; }
 
-const ROLE_OPTIONS: Role[] = ['unassigned', 'student', 'teacher', 'admin'];
 const roleBadge = (r: Role) =>
   r === 'admin' ? 'badge-primary' : r === 'teacher' ? 'badge-info' : r === 'student' ? 'badge-success' : 'badge-warning';
 
@@ -28,30 +31,38 @@ const initials = (name: string) => name.split(' ').map((n) => n[0]).join('').toU
 export const AdminDashboard: React.FC = () => {
   const toast = useToast();
   const { user } = useAuth();
+  const { can } = usePermissions();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [roles, setRoles] = useState<RoleOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   // A role change requested via the dropdown, awaiting confirmation.
-  const [pending, setPending] = useState<{ id: string; name: string; from: Role; to: Role } | null>(null);
+  const [pending, setPending] = useState<{ id: string; name: string; fromRoleId: number | null; toRoleId: number; toName: string } | null>(null);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [oRes, uRes] = await Promise.all([
+      const requests = [
         fetch('/api/admin/overview', { headers: authHeaders() }),
         fetch('/api/admin/users', { headers: authHeaders() }),
-      ]);
+        fetch('/api/roles-permissions/roles', { headers: authHeaders() }),
+      ];
+      const [oRes, uRes, rRes] = await Promise.all(requests);
       if (!oRes.ok || !uRes.ok) throw new Error('Failed to load admin data.');
       const o = await oRes.json();
       const u = await uRes.json();
       if (!o.success || !u.success) throw new Error('Server returned an error.');
       setOverview(o.data);
       setUsers(u.data);
+      if (rRes.ok) {
+        const r = await rRes.json();
+        if (r.success) setRoles(r.data);
+      }
     } catch (err) {
       setError((err as Error).message || 'Could not reach the server.');
     } finally {
@@ -61,21 +72,24 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => { load(); }, []);
 
-  const changeRole = async (id: string, role: Role) => {
+  const changeRole = async (id: string, roleId: number) => {
     setSavingId(id);
     setSavedId(null);
     const prev = users;
-    setUsers((list) => list.map((u) => (u.id === id ? { ...u, role } : u)));
+    const targetRole = roles.find((r) => r.id === roleId);
+    setUsers((list) => list.map((u) => (u.id === id
+      ? { ...u, role_id: roleId, role: (targetRole?.level.toLowerCase() as Role) ?? u.role }
+      : u)));
     try {
       const res = await fetch(`/api/admin/users/${id}/role`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role_id: roleId }),
       });
       const result = await res.json();
       if (!res.ok || !result.success) throw new Error(result.message || 'Update failed.');
       setSavedId(id);
-      toast.success('Role updated', `${result.data?.name || 'User'} is now ${role}`);
+      toast.success('Role updated', `${result.data?.name || 'User'} is now ${targetRole?.name || 'updated'}`);
       setTimeout(() => setSavedId((s) => (s === id ? null : s)), 2000);
       // refresh counts to reflect the change
       const oRes = await fetch('/api/admin/overview', { headers: authHeaders() });
@@ -89,9 +103,10 @@ export const AdminDashboard: React.FC = () => {
   };
 
   // Open the confirm dialog when a different role is chosen.
-  const requestRoleChange = (u: ManagedUser, to: Role) => {
-    if (to === u.role) return;
-    setPending({ id: u.id, name: u.name, from: u.role, to });
+  const requestRoleChange = (u: ManagedUser, toRoleId: number) => {
+    if (toRoleId === u.role_id) return;
+    const toName = roles.find((r) => r.id === toRoleId)?.name || 'this role';
+    setPending({ id: u.id, name: u.name, fromRoleId: u.role_id, toRoleId, toName });
   };
 
   const visible = useMemo(
@@ -99,6 +114,8 @@ export const AdminDashboard: React.FC = () => {
       [u.name, u.email || '', u.id].some((f) => f.toLowerCase().includes(search.toLowerCase()))),
     [users, search],
   );
+
+  const currentRoleName = (u: ManagedUser) => roles.find((r) => r.id === u.role_id)?.name || (u.role === 'unassigned' ? 'Unassigned' : u.role);
 
   const cards = overview ? [
     { label: 'Total Users', value: overview.total, icon: <Users size={18} />, accent: 'var(--primary)', tag: 'Roster' },
@@ -123,6 +140,19 @@ export const AdminDashboard: React.FC = () => {
             <>Manage user roles and review system membership.</>
           )}
         </HeroBanner>
+      )}
+
+      {can(['ROLES_PERMISSIONS_VIEW', 'ROLES_PERMISSIONS_MANAGE']) && (
+        <div className="card card-pad mb-4 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <KeyRound size={20} color="var(--accent)" />
+            <div>
+              <div className="font-semibold text-sm">Roles &amp; Permissions</div>
+              <div className="text-xs text-secondary">Create custom roles and fine-tune what each one can do.</div>
+            </div>
+          </div>
+          <Link to="/admin/roles" className="btn btn-outline btn-sm">Manage roles</Link>
+        </div>
       )}
 
       {loading ? (
@@ -180,18 +210,19 @@ export const AdminDashboard: React.FC = () => {
                         </td>
                         <td className="text-secondary">{u.email || '—'}</td>
                         <td><span className={`badge ${u.status === 'active' ? 'badge-success' : 'badge-neutral'}`}>{u.status}</span></td>
-                        <td><span className={`badge ${roleBadge(u.role)}`}>{u.role}</span></td>
+                        <td><span className={`badge ${roleBadge(u.role)}`}>{currentRoleName(u)}</span></td>
                         <td className="text-right">
                           <div className="flex items-center gap-2 justify-end">
                             {savedId === u.id && <span className="text-success flex items-center gap-1 text-xs"><Check size={14} /> Saved</span>}
                             <select
                               className="select"
                               style={{ width: 'auto', height: '34px' }}
-                              value={u.role}
-                              disabled={savingId === u.id}
-                              onChange={(e) => requestRoleChange(u, e.target.value as Role)}
+                              value={u.role_id ?? ''}
+                              disabled={savingId === u.id || !can('USERS_MANAGE')}
+                              onChange={(e) => requestRoleChange(u, Number(e.target.value))}
                             >
-                              {ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                              {u.role_id == null && <option value="" disabled>Unassigned</option>}
+                              {roles.map((r) => <option key={r.id} value={r.id}>{r.level} — {r.name}</option>)}
                             </select>
                           </div>
                         </td>
@@ -203,7 +234,7 @@ export const AdminDashboard: React.FC = () => {
             )}
             <div className="card-footer flex justify-between text-xs text-secondary">
               <span>{visible.length} of {users.length} users</span>
-              <span>Role changes apply on the user’s next sign-in</span>
+              <span>Backend access updates immediately; the user's own screen refreshes on next sign-in</span>
             </div>
           </section>
         </>
@@ -212,15 +243,15 @@ export const AdminDashboard: React.FC = () => {
       <ConfirmDialog
         open={!!pending}
         title="Change user role?"
-        message={pending ? `${pending.name} will change from "${pending.from}" to "${pending.to}". This takes effect on their next sign-in.` : ''}
+        message={pending ? `${pending.name} will be assigned "${pending.toName}". This takes effect on the backend immediately.` : ''}
         confirmLabel="Change role"
         loading={!!pending && savingId === pending.id}
         onCancel={() => setPending(null)}
         onConfirm={async () => {
           if (!pending) return;
-          const { id, to } = pending;
+          const { id, toRoleId } = pending;
           setPending(null);
-          await changeRole(id, to);
+          await changeRole(id, toRoleId);
         }}
       />
     </DashboardLayout>

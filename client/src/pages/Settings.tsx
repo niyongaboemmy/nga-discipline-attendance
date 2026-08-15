@@ -89,7 +89,7 @@ export const Settings: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '220px 1fr', gap: '24px', alignItems: 'start' }}>
+      <div className="grid grid-sidebar" style={{ ['--sidebar-col-width' as string]: '220px', gap: '24px', alignItems: 'start' }}>
         <nav className="vtabs">
           {TABS.map((t) => (
             <button key={t.key} className={`vtab${tab === t.key ? ' is-active' : ''}`} onClick={() => setTab(t.key)}>
@@ -152,7 +152,7 @@ export const Settings: React.FC = () => {
                 <span className="badge badge-success">Active</span>
               </Row>
               <Row title="Password" desc="Managed by Discipline">
-                <a href="https://ngamis.isengesho.com/login" target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">Manage in MIS</a>
+                <a href="https://mis.amashuri.com/login" target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">Manage in MIS</a>
               </Row>
             </>
           )}

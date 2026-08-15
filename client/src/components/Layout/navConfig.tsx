@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   History as AuditIcon,
   Award,
+  KeyRound,
   Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -36,6 +37,7 @@ export const navItems: NavItem[] = [
 
   // Admin
   { label: 'Admin Console', path: '/admin', icon: ShieldCheck, roles: ['admin'], section: 'Administration' },
+  { label: 'Roles & Permissions', path: '/admin/roles', icon: KeyRound, roles: ['admin'], section: 'Administration' },
   { label: 'Audit Log', path: '/admin/audit', icon: AuditIcon, roles: ['admin'], section: 'Administration' },
 
   // Attendance (staff)

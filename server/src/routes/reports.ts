@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
-import { roleGuard } from '../middleware/roleGuard.js';
+import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 
 const router = Router();
@@ -9,7 +9,7 @@ const router = Router();
 router.use(authMiddleware);
 
 // Get overview analytics stats (Teacher & Admin only)
-router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, res: Response) => {
   const db = getDb();
   const today = new Date().toISOString().split('T')[0];
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
@@ -120,7 +120,7 @@ router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: R
 });
 
 // Class level reports
-router.get('/class/:id', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
+router.get('/class/:id', authorizePermission('REPORTS_VIEW'), async (req: any, res: Response) => {
   const classId = req.params.id;
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);

@@ -18,7 +18,7 @@ export const Login: React.FC = () => {
           <button className="icon-btn" onClick={toggleTheme} aria-label="Toggle theme">
             {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
           </button>
-          <a className="btn btn-outline btn-sm" href="https://ngamis.isengesho.com" target="_blank" rel="noopener noreferrer">
+          <a className="btn btn-outline btn-sm" href="https://mis.amashuri.com" target="_blank" rel="noopener noreferrer">
             Visit MIS <ExternalLink size={14} />
           </a>
         </div>
@@ -45,7 +45,7 @@ export const Login: React.FC = () => {
 
           <p className="login-foot">
             No account or need password help?{' '}
-            <a href="https://ngamis.isengesho.com" target="_blank" rel="noopener noreferrer">Visit Discipline MIS</a>
+            <a href="https://mis.amashuri.com" target="_blank" rel="noopener noreferrer">Visit Discipline MIS</a>
           </p>
         </div>
       </main>

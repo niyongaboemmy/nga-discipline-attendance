@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useToast } from '../context/ToastContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { Check, X, Inbox, AlertCircle, Calendar } from 'lucide-react';
 
 interface Excuse {
@@ -24,6 +25,7 @@ const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_
 
 export const ExcuseReview: React.FC = () => {
   const toast = useToast();
+  const { can } = usePermissions();
   const [excuses, setExcuses] = useState<Excuse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -113,10 +115,20 @@ export const ExcuseReview: React.FC = () => {
               )}
               {ex.status === 'pending' && (
                 <div className="flex gap-2 justify-end">
-                  <button className="btn btn-danger btn-sm" disabled={busyId === ex.id} onClick={() => review(ex, 'rejected')}>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    disabled={busyId === ex.id || !can('EXCUSES_REVIEW')}
+                    title={can('EXCUSES_REVIEW') ? undefined : "You don't have permission to review excuses."}
+                    onClick={() => review(ex, 'rejected')}
+                  >
                     <X size={14} /> Reject
                   </button>
-                  <button className="btn btn-primary btn-sm" disabled={busyId === ex.id} onClick={() => review(ex, 'approved')}>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={busyId === ex.id || !can('EXCUSES_REVIEW')}
+                    title={can('EXCUSES_REVIEW') ? undefined : "You don't have permission to review excuses."}
+                    onClick={() => review(ex, 'approved')}
+                  >
                     <Check size={14} /> Approve
                   </button>
                 </div>

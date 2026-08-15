@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useToast } from '../context/ToastContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { Gavel, Award, AlertCircle, Save, Users } from 'lucide-react';
 
 interface ClassData { id: string; name: string; department: string; }
@@ -31,6 +32,7 @@ const today = () => new Date().toISOString().split('T')[0];
 export const LogIncident: React.FC = () => {
   const navigate = useNavigate();
   const toast = useToast();
+  const { can } = usePermissions();
   const [classes, setClasses] = useState<ClassData[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loadingClasses, setLoadingClasses] = useState(true);
@@ -298,7 +300,12 @@ export const LogIncident: React.FC = () => {
 
               <div className="flex gap-2">
                 <button type="button" className="btn btn-outline" onClick={() => navigate('/discipline/records')}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={saving || (bulk ? bulkIds.length === 0 : !form.studentId)}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={saving || (bulk ? bulkIds.length === 0 : !form.studentId) || !can('DISCIPLINE_LOG')}
+                  title={can('DISCIPLINE_LOG') ? undefined : "You don't have permission to log discipline records."}
+                >
                   <Save size={16} /> {saving ? 'Saving…' : bulk ? `Save for ${bulkIds.length || ''} students` : 'Save record'}
                 </button>
               </div>

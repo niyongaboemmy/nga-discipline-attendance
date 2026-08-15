@@ -84,7 +84,7 @@ export const LeaveRequests: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: '380px 1fr', gap: '20px', alignItems: 'start' }}>
+      <div className="grid grid-sidebar" style={{ ['--sidebar-col-width' as string]: '380px', gap: '20px', alignItems: 'start' }}>
         {/* Form */}
         <section className="card">
           <div className="card-header"><span className="section-title">Submit leave request</span></div>

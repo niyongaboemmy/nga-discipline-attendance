@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { AcademicPeriodSwitcher } from './AcademicPeriodSwitcher';
-import { navItems, type NavItem } from './navConfig';
+import { SystemsMenu } from './SystemsMenu';
+import { NavSearch } from './NavSearch';
 import {
-  Sun, Moon, Bell, Menu, X, CheckCheck, Trash2, ChevronDown, LogOut,
+  Sun, Moon, Bell, Menu, CheckCheck, Trash2, LogOut, LayoutGrid,
   Settings as SettingsIcon,
 } from 'lucide-react';
 
@@ -16,29 +17,16 @@ interface Notification {
   created_at: string;
 }
 
-/** Top-level nav entry: either a direct link or a labeled dropdown of links. */
-type NavGroup = { item: NavItem } | { section: string; items: NavItem[] };
-
-/** Group the role's nav items by section; single-item sections become direct links.
-    Settings is excluded here — it lives in the user menu. */
-function buildGroups(role: string): NavGroup[] {
-  const visible = navItems.filter((i) => i.roles.includes(role as NavItem['roles'][number]) && i.path !== '/settings');
-  const groups: Array<{ section?: string; items: NavItem[] }> = [];
-  for (const item of visible) {
-    const last = groups[groups.length - 1];
-    if (item.section && last?.section === item.section) last.items.push(item);
-    else groups.push({ section: item.section, items: [item] });
-  }
-  return groups.map((g) =>
-    !g.section || g.items.length === 1 ? { item: g.items[0] } : { section: g.section, items: g.items }
-  );
+interface NavbarProps {
+  onOpenMobileMenu?: () => void;
 }
 
-export const Navbar: React.FC = () => {
+/** Fixed top bar: brand, academic period switcher, notifications, theme toggle,
+ *  user menu, and (on narrow viewports) the trigger for the Sidebar's mobile
+ *  drawer. Primary navigation itself lives in Sidebar, not here. */
+export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu }) => {
   const { user, theme, toggleTheme, logout } = useAuth();
-  const location = useLocation();
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  // Which popup is open: a section name, 'notif', 'user', 'mobile', or none.
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const barRef = useRef<HTMLElement>(null);
 
@@ -61,7 +49,6 @@ export const Navbar: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Close any open popup on outside click or route change.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (barRef.current && !barRef.current.contains(e.target as Node)) setOpenMenu(null);
@@ -69,7 +56,6 @@ export const Navbar: React.FC = () => {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
-  useEffect(() => { setOpenMenu(null); }, [location.pathname]);
 
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
 
@@ -109,66 +95,35 @@ export const Navbar: React.FC = () => {
   const unreadCount = notifications.filter((n) => !n.read).length;
   if (!user) return null;
 
-  const groups = buildGroups(user.role);
   const toggle = (key: string) => setOpenMenu((m) => (m === key ? null : key));
-  const isGroupActive = (items: NavItem[]) => items.some((i) => i.path === location.pathname);
 
   return (
     <header className="navbar" ref={barRef}>
       <div className="flex items-center" style={{ minWidth: 0 }}>
-        {/* Brand */}
+        {onOpenMobileMenu && (
+          <button className="icon-btn sidebar-hamburger" onClick={onOpenMobileMenu} aria-label="Open navigation menu">
+            <Menu size={20} />
+          </button>
+        )}
+
+        {/* Apps waffle (cross-app switcher) */}
+        <div style={{ position: 'relative' }}>
+          <button className="icon-btn" onClick={() => toggle('apps')} aria-label="Switch apps" title="Apps">
+            <LayoutGrid size={19} />
+          </button>
+          <SystemsMenu isOpen={openMenu === 'apps'} onClose={() => setOpenMenu(null)} />
+        </div>
+
         <NavLink to="/dashboard" className="topnav-brand">
           <img src="/logo.png" alt="NGA logo" />
           <span className="wordmark">Discipline Portal</span>
         </NavLink>
-
-        {/* Primary navigation (desktop) */}
-        <nav className="topnav-links" aria-label="Primary">
-          {groups.map((g) =>
-            'item' in g ? (
-              <NavLink
-                key={g.item.path}
-                to={g.item.path}
-                className={({ isActive }) => `topnav-link${isActive ? ' is-active' : ''}`}
-              >
-                {g.item.label}
-              </NavLink>
-            ) : (
-              <div key={g.section} className="topnav-group">
-                <button
-                  className={`topnav-link${isGroupActive(g.items) ? ' is-active' : ''}${openMenu === g.section ? ' is-open' : ''}`}
-                  onClick={() => toggle(g.section)}
-                  aria-expanded={openMenu === g.section}
-                >
-                  {g.section}
-                  <ChevronDown size={14} className="topnav-caret" />
-                </button>
-                {openMenu === g.section && (
-                  <div className="menu animate-fade-in">
-                    {g.items.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <NavLink
-                          key={item.path}
-                          to={item.path}
-                          className={({ isActive }) => `menu-item${isActive ? ' is-active' : ''}`}
-                        >
-                          <Icon size={16} />
-                          <span>{item.label}</span>
-                        </NavLink>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )
-          )}
-        </nav>
       </div>
 
       <div className="navbar-actions">
-        {/* Academic period switcher */}
         <AcademicPeriodSwitcher />
+
+        <NavSearch />
 
         {/* Notifications */}
         <div style={{ position: 'relative' }}>
@@ -229,14 +184,9 @@ export const Navbar: React.FC = () => {
         </button>
 
         {/* User menu (profile, settings, sign out) */}
-        <div style={{ position: 'relative' }}>
-          <button className="topnav-user" onClick={() => toggle('user')} aria-expanded={openMenu === 'user'}>
+        <div className="topnav-user-wrap" style={{ position: 'relative' }}>
+          <button className="topnav-user" onClick={() => toggle('user')} aria-expanded={openMenu === 'user'} aria-label="Account menu">
             <div className="avatar avatar-sm">{user.name.charAt(0).toUpperCase()}</div>
-            <div className="hide-mobile text-left">
-              <div className="text-sm font-semibold truncate" style={{ maxWidth: '140px' }}>{user.name}</div>
-              <div className="text-xs text-secondary capitalize">{user.role}</div>
-            </div>
-            <ChevronDown size={14} className="topnav-caret hide-mobile" />
           </button>
 
           {openMenu === 'user' && (
@@ -256,52 +206,7 @@ export const Navbar: React.FC = () => {
             </div>
           )}
         </div>
-
-        {/* Mobile menu toggle */}
-        <button className="icon-btn topnav-hamburger" onClick={() => toggle('mobile')} aria-label="Open menu">
-          {openMenu === 'mobile' ? <X size={20} /> : <Menu size={20} />}
-        </button>
       </div>
-
-      {/* Mobile slide-down panel */}
-      {openMenu === 'mobile' && (
-        <div className="topnav-mobile-panel animate-slide-in-up">
-          {groups.map((g) =>
-            'item' in g ? (
-              <NavLink
-                key={g.item.path}
-                to={g.item.path}
-                className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
-              >
-                <span className="nav-icon"><g.item.icon size={18} /></span>
-                <span className="nav-label">{g.item.label}</span>
-              </NavLink>
-            ) : (
-              <React.Fragment key={g.section}>
-                <div className="nav-section-label">{g.section}</div>
-                {g.items.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}
-                    >
-                      <span className="nav-icon"><Icon size={18} /></span>
-                      <span className="nav-label">{item.label}</span>
-                    </NavLink>
-                  );
-                })}
-              </React.Fragment>
-            )
-          )}
-          <div className="nav-divider" />
-          <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? ' is-active' : ''}`}>
-            <span className="nav-icon"><SettingsIcon size={18} /></span>
-            <span className="nav-label">Settings</span>
-          </NavLink>
-        </div>
-      )}
     </header>
   );
 };

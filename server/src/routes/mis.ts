@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { config } from '../config.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
+import { authorizePermission } from '../middleware/authorize.js';
 
 /**
  * MIS roster proxy.
@@ -16,6 +17,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 const router = Router();
 
 router.use(authMiddleware);
+router.use(authorizePermission('ROSTER_VIEW'));
 
 const paths = {
   classes: process.env.MIS_CLASSES_PATH || '/classes',
