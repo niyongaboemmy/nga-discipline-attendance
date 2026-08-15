@@ -166,7 +166,7 @@ router.post('/exchange', async (req: Request, res: Response) => {
 
     const { token: misToken, user: misUser, permissions } = result.data;
 
-    const id = misUser.id || misUser.uuid || misUser.email || 'MIS-USER';
+    const id = String(misUser.user_id ?? misUser.id ?? misUser.uuid ?? misUser.email ?? 'MIS-USER');
     const name = misUser.name || misUser.username || 'Discipline User';
     const email = misUser.email || '';
 

@@ -82,7 +82,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = () => {
     const clientId = import.meta.env.VITE_SSO_CLIENT_ID;
     const loginUrl = import.meta.env.VITE_MIS_LOGIN_URL;
-    const redirectUri = `${window.location.origin}/callback`;
+    const redirectUri = `${window.location.origin}/sso/callback`;
 
     // Construct MIS redirect URL
     const target = `${loginUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}`;
