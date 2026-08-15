@@ -4,6 +4,7 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { roleGuard } from '../middleware/roleGuard.js';
 import { recordAudit } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
+import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 
 const router = Router();
 
@@ -43,6 +44,7 @@ router.post('/mark', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
 
   const db = getDb();
   const teacherId = authReq.user!.id;
+  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
     // Run all insertions in a transaction
@@ -56,9 +58,9 @@ router.post('/mark', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
       }
 
       await db.run(
-        `INSERT INTO attendance_records 
-         (student_id, student_name, class_id, class_name, session_date, period, status, notes, marked_by, updated_at) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `INSERT INTO attendance_records
+         (student_id, student_name, class_id, class_name, session_date, period, status, notes, marked_by, academic_year_id, academic_term_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
          ON CONFLICT(student_id, class_id, session_date, period) DO UPDATE SET
            status = excluded.status,
            notes = excluded.notes,
@@ -72,7 +74,9 @@ router.post('/mark', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
         period,
         status,
         notes,
-        teacherId
+        teacherId,
+        academicYearId ?? null,
+        academicTermId ?? null
       );
     }
 
@@ -99,10 +103,16 @@ router.post('/mark', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
 router.get('/records', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
   const { classId, dateFrom, dateTo, search, status } = req.query;
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
 
   let query = 'SELECT * FROM attendance_records WHERE 1=1';
   const params: any[] = [];
 
+  if (academicTermId != null) {
+    // Legacy rows (no academic_term_id recorded yet) stay visible under any period.
+    query += ' AND (academic_term_id = ? OR academic_term_id IS NULL)';
+    params.push(academicTermId);
+  }
   if (classId) {
     query += ' AND class_id = ?';
     params.push(classId);
@@ -152,12 +162,18 @@ router.get('/me', roleGuard(['student']), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
-    const records = await db.all(
-      'SELECT * FROM attendance_records WHERE student_id = ? ORDER BY session_date DESC',
-      studentId
-    );
+    const records = academicTermId != null
+      ? await db.all(
+          'SELECT * FROM attendance_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC',
+          studentId, academicTermId
+        )
+      : await db.all(
+          'SELECT * FROM attendance_records WHERE student_id = ? ORDER BY session_date DESC',
+          studentId
+        );
     return res.json({
       success: true,
       data: records,
@@ -187,11 +203,17 @@ router.get('/student/:id', async (req: any, res: Response) => {
   }
 
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(authReq);
   try {
-    const records = await db.all(
-      'SELECT * FROM attendance_records WHERE student_id = ? ORDER BY session_date DESC',
-      studentId
-    );
+    const records = academicTermId != null
+      ? await db.all(
+          'SELECT * FROM attendance_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC',
+          studentId, academicTermId
+        )
+      : await db.all(
+          'SELECT * FROM attendance_records WHERE student_id = ? ORDER BY session_date DESC',
+          studentId
+        );
     return res.json({
       success: true,
       data: records,
@@ -210,12 +232,18 @@ router.get('/excuses/me', roleGuard(['student']), async (req: any, res: Response
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
-    const excuses = await db.all(
-      'SELECT * FROM excuse_requests WHERE student_id = ? ORDER BY created_at DESC',
-      studentId
-    );
+    const excuses = academicTermId != null
+      ? await db.all(
+          'SELECT * FROM excuse_requests WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY created_at DESC',
+          studentId, academicTermId
+        )
+      : await db.all(
+          'SELECT * FROM excuse_requests WHERE student_id = ? ORDER BY created_at DESC',
+          studentId
+        );
     return res.json({
       success: true,
       data: excuses,
@@ -250,16 +278,19 @@ router.post('/excuse', roleGuard(['student']), async (req: any, res: Response) =
   }
 
   const db = getDb();
+  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
   try {
     const result = await db.run(
-      `INSERT INTO excuse_requests (student_id, student_name, class_name, session_date, reason, description, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      `INSERT INTO excuse_requests (student_id, student_name, class_name, session_date, reason, description, status, academic_year_id, academic_term_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       studentId,
       studentName,
       className,
       sessionDate,
       reason,
-      description || ''
+      description || '',
+      academicYearId ?? null,
+      academicTermId ?? null
     );
 
     const inserted = await db.get('SELECT * FROM excuse_requests WHERE id = ?', result.lastID);
@@ -283,9 +314,14 @@ router.post('/excuse', roleGuard(['student']), async (req: any, res: Response) =
 router.get('/excuses', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
   const { status, search } = req.query;
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
 
   let query = 'SELECT * FROM excuse_requests WHERE 1=1';
   const params: any[] = [];
+  if (academicTermId != null) {
+    query += ' AND (academic_term_id = ? OR academic_term_id IS NULL)';
+    params.push(academicTermId);
+  }
   if (status) { query += ' AND status = ?'; params.push(status); }
   if (search) {
     query += ' AND (student_name LIKE ? OR student_id LIKE ? OR class_name LIKE ?)';

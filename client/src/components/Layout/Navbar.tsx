@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { AcademicPeriodSwitcher } from './AcademicPeriodSwitcher';
 import { navItems, type NavItem } from './navConfig';
 import {
   Sun, Moon, Bell, Menu, X, CheckCheck, Trash2, ChevronDown, LogOut,
@@ -166,6 +167,9 @@ export const Navbar: React.FC = () => {
       </div>
 
       <div className="navbar-actions">
+        {/* Academic period switcher */}
+        <AcademicPeriodSwitcher />
+
         {/* Notifications */}
         <div style={{ position: 'relative' }}>
           <button className="icon-btn" onClick={() => toggle('notif')} aria-label="Notifications">

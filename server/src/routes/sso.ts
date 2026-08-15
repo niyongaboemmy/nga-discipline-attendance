@@ -80,6 +80,35 @@ function roleFromPermissions(permissions: unknown): Role {
   return 'unassigned';
 }
 
+/**
+ * Resolve the caller's current academic year/term from the MIS. The MIS bundles
+ * this into `GET /users/me` rather than exposing a dedicated "current" endpoint
+ * (see nga_central_mis/SSO_CLIENT_INTEGRATION.md), so we call it once at login
+ * and cache the result as JWT claims — cheaper than calling it on every request.
+ */
+async function resolveCurrentAcademicPeriod(
+  misToken: string
+): Promise<{ academicYearId?: number; academicTermId?: number }> {
+  try {
+    const resp = await fetch(`${config.ngaMisBaseUrl}/users/me`, {
+      headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json' },
+    });
+    if (!resp.ok) return {};
+    const body = (await resp.json()) as any;
+    const data = body.data ?? body;
+    const year = data.currentAcademicYear;
+    const terms: any[] = Array.isArray(data.currentAcademicTerms) ? data.currentAcademicTerms : [];
+    const currentTerm = terms.find((t) => Number(t.is_current) === 1) || terms[0];
+    return {
+      academicYearId: year?.academic_year_id != null ? Number(year.academic_year_id) : undefined,
+      academicTermId: currentTerm?.academic_term_id != null ? Number(currentTerm.academic_term_id) : undefined,
+    };
+  } catch (error) {
+    console.error('Could not resolve current academic period from MIS:', (error as Error).message);
+    return {};
+  }
+}
+
 /** Fallback role detection from an explicit role field, if a MIS ever sends one. */
 function detectRoleFromMis(misUser: any): Role {
   const roleFields = [
@@ -186,7 +215,12 @@ router.post('/exchange', async (req: Request, res: Response) => {
         ? misUser.preferred_theme
         : undefined;
 
-    const localUser = { id, name, email, role, preferred_theme: preferredTheme };
+    const { academicYearId, academicTermId } = await resolveCurrentAcademicPeriod(misToken);
+
+    const localUser = {
+      id, name, email, role, preferred_theme: preferredTheme,
+      academicYearId, academicTermId,
+    };
     const token = jwt.sign({ ...localUser, misToken }, config.jwtSecret, { expiresIn: '24h' });
 
     return res.json({ success: true, data: { token, user: localUser, permissions: permissions || [] } });

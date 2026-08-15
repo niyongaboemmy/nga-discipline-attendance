@@ -11,6 +11,8 @@ export interface AuthenticatedRequest extends Request {
     email: string;
     role: Role;
     misToken?: string;
+    academicYearId?: number;
+    academicTermId?: number;
   };
 }
 

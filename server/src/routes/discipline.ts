@@ -12,6 +12,7 @@ import {
   DisciplineType,
 } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
+import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 
 const router = Router();
 
@@ -119,12 +120,13 @@ router.post('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response
 
   const db = getDb();
   const actor = authReq.user!;
+  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
     const result = await db.run(
       `INSERT INTO discipline_records
-         (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name, academic_year_id, academic_term_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       studentId,
       studentName,
       className,
@@ -138,7 +140,9 @@ router.post('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response
       location,
       effectiveSanction,
       actor.id,
-      actor.name
+      actor.name,
+      academicYearId ?? null,
+      academicTermId ?? null
     );
 
     const inserted = await db.get('SELECT * FROM discipline_records WHERE id = ?', result.lastID);
@@ -229,6 +233,7 @@ router.post('/bulk', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
 
   const db = getDb();
   const actor = authReq.user!;
+  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
     await db.run('BEGIN TRANSACTION');
@@ -237,10 +242,11 @@ router.post('/bulk', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
       if (!s.studentId || !s.studentName) throw new Error('Each student needs studentId and studentName.');
       const result = await db.run(
         `INSERT INTO discipline_records
-           (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name, academic_year_id, academic_term_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         s.studentId, s.studentName, className, type, category, severity, points,
-        title, description, incidentDate, location, effectiveSanction, actor.id, actor.name
+        title, description, incidentDate, location, effectiveSanction, actor.id, actor.name,
+        academicYearId ?? null, academicTermId ?? null
       );
       insertedIds.push(result.lastID!);
       await db.run(
@@ -273,10 +279,15 @@ router.post('/bulk', roleGuard(['teacher', 'admin']), async (req: any, res: Resp
 router.get('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
   const { studentId, type, severity, status, category, dateFrom, dateTo, search } = req.query;
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
 
   let where = ' WHERE 1=1';
   const params: any[] = [];
 
+  if (academicTermId != null) {
+    where += ' AND (academic_term_id = ? OR academic_term_id IS NULL)';
+    params.push(academicTermId);
+  }
   if (studentId) { where += ' AND student_id = ?'; params.push(studentId); }
   if (type) { where += ' AND type = ?'; params.push(type); }
   if (severity) { where += ' AND severity = ?'; params.push(severity); }
@@ -309,6 +320,9 @@ router.get('/', roleGuard(['teacher', 'admin']), async (req: any, res: Response)
 // Discipline overview analytics (Teacher/Admin only)
 router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
+  const periodFilter = academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
+  const periodParams = academicTermId != null ? [academicTermId] : [];
 
   try {
     const totals = await db.get(
@@ -318,20 +332,25 @@ router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: R
          SUM(CASE WHEN type = 'merit' THEN 1 ELSE 0 END) as merits,
          SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open,
          SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review
-       FROM discipline_records`
+       FROM discipline_records WHERE 1=1${periodFilter}`,
+      ...periodParams
     );
 
     const byCategory = await db.all(
       `SELECT category, type, COUNT(*) as count
        FROM discipline_records
+       WHERE 1=1${periodFilter}
        GROUP BY category, type
-       ORDER BY count DESC`
+       ORDER BY count DESC`,
+      ...periodParams
     );
 
     const bySeverity = await db.all(
       `SELECT type, severity, COUNT(*) as count
        FROM discipline_records
-       GROUP BY type, severity`
+       WHERE 1=1${periodFilter}
+       GROUP BY type, severity`,
+      ...periodParams
     );
 
     // 7-day trend of records logged per day.
@@ -340,9 +359,11 @@ router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: R
          SUM(CASE WHEN type = 'demerit' THEN 1 ELSE 0 END) as demerits,
          SUM(CASE WHEN type = 'merit' THEN 1 ELSE 0 END) as merits
        FROM discipline_records
+       WHERE 1=1${periodFilter}
        GROUP BY incident_date
        ORDER BY incident_date DESC
-       LIMIT 7`
+       LIMIT 7`,
+      ...periodParams
     );
     const trendStats = trends.reverse();
 
@@ -352,17 +373,20 @@ router.get('/overview', roleGuard(['teacher', 'admin']), async (req: any, res: R
          SUM(points) as demerit_points,
          COUNT(*) as count
        FROM discipline_records
-       WHERE type = 'demerit'
+       WHERE type = 'demerit'${periodFilter}
        GROUP BY student_id
        ORDER BY demerit_points DESC
-       LIMIT 5`
+       LIMIT 5`,
+      ...periodParams
     );
 
     const recentActivity = await db.all(
       `SELECT id, student_name, type, category, severity, title, status, incident_date, updated_at
        FROM discipline_records
+       WHERE 1=1${periodFilter}
        ORDER BY updated_at DESC
-       LIMIT 6`
+       LIMIT 6`,
+      ...periodParams
     );
 
     return res.json({
@@ -393,12 +417,18 @@ router.get('/me', roleGuard(['student']), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
-    const records = await db.all(
-      'SELECT * FROM discipline_records WHERE student_id = ? ORDER BY incident_date DESC, created_at DESC',
-      studentId
-    );
+    const records = academicTermId != null
+      ? await db.all(
+          'SELECT * FROM discipline_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY incident_date DESC, created_at DESC',
+          studentId, academicTermId
+        )
+      : await db.all(
+          'SELECT * FROM discipline_records WHERE student_id = ? ORDER BY incident_date DESC, created_at DESC',
+          studentId
+        );
     return res.json({
       success: true,
       data: { records, conductScore: computeConductScore(records) },
@@ -425,11 +455,17 @@ router.get('/student/:id', async (req: any, res: Response) => {
   }
 
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(authReq);
   try {
-    const records = await db.all(
-      'SELECT * FROM discipline_records WHERE student_id = ? ORDER BY incident_date DESC, created_at DESC',
-      studentId
-    );
+    const records = academicTermId != null
+      ? await db.all(
+          'SELECT * FROM discipline_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY incident_date DESC, created_at DESC',
+          studentId, academicTermId
+        )
+      : await db.all(
+          'SELECT * FROM discipline_records WHERE student_id = ? ORDER BY incident_date DESC, created_at DESC',
+          studentId
+        );
     return res.json({
       success: true,
       data: { records, conductScore: computeConductScore(records) },

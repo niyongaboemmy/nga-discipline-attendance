@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { roleGuard } from '../middleware/roleGuard.js';
+import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 
 const router = Router();
 
@@ -36,14 +37,17 @@ router.post('/clock-in', roleGuard(['teacher', 'admin']), async (req: any, res: 
       });
     }
 
+    const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
     await db.run(
-      `INSERT INTO staff_attendance (staff_id, staff_name, date, clock_in, status) 
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO staff_attendance (staff_id, staff_name, date, clock_in, status, academic_year_id, academic_term_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       staffId,
       staffName,
       today,
       now,
-      status
+      status,
+      academicYearId ?? null,
+      academicTermId ?? null
     );
 
     return res.json({
@@ -113,13 +117,19 @@ router.post('/clock-out', roleGuard(['teacher', 'admin']), async (req: any, res:
 router.get('/attendance/me', roleGuard(['teacher', 'admin']), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const staffId = authReq.user!.id;
-  
+  const { academicTermId } = resolveAcademicPeriod(authReq);
+
   const db = getDb();
   try {
-    const records = await db.all(
-      'SELECT * FROM staff_attendance WHERE staff_id = ? ORDER BY date DESC',
-      staffId
-    );
+    const records = academicTermId != null
+      ? await db.all(
+          'SELECT * FROM staff_attendance WHERE staff_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY date DESC',
+          staffId, academicTermId
+        )
+      : await db.all(
+          'SELECT * FROM staff_attendance WHERE staff_id = ? ORDER BY date DESC',
+          staffId
+        );
     return res.json({
       success: true,
       data: records,
@@ -136,8 +146,14 @@ router.get('/attendance/me', roleGuard(['teacher', 'admin']), async (req: any, r
 // Fetch all staff attendance (Admins only)
 router.get('/attendance', roleGuard(['admin']), async (req: any, res: Response) => {
   const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
   try {
-    const records = await db.all('SELECT * FROM staff_attendance ORDER BY date DESC, staff_name ASC');
+    const records = academicTermId != null
+      ? await db.all(
+          'SELECT * FROM staff_attendance WHERE (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY date DESC, staff_name ASC',
+          academicTermId
+        )
+      : await db.all('SELECT * FROM staff_attendance ORDER BY date DESC, staff_name ASC');
     return res.json({
       success: true,
       data: records,

@@ -13,6 +13,7 @@ import notificationsRoutes from './routes/notifications.js';
 import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
 import misRoutes from './routes/mis.js';
+import academicsRoutes from './routes/academics.js';
 
 const app = express();
 
@@ -45,6 +46,9 @@ app.use('/api/settings', settingsRoutes);
 // MIS roster proxy — classes, students, staff and timetables are read from the
 // NGA Central MIS using the signed-in user's MIS token (see routes/mis.ts).
 app.use('/api/mis', misRoutes);
+
+// Academic year/term integration — the MIS is the source of truth (see routes/academics.ts).
+app.use('/api/academics', academicsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

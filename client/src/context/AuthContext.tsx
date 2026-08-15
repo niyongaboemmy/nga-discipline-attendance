@@ -8,6 +8,8 @@ export interface User {
   email: string;
   role: Role;
   preferred_theme?: 'light' | 'dark';
+  academicYearId?: number;
+  academicTermId?: number;
 }
 
 /** Where each role lands by default. Single source of truth for role routing. */

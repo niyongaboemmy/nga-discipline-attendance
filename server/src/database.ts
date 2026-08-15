@@ -158,6 +158,23 @@ export async function initDatabase() {
     await db.run(`ALTER TABLE users ADD COLUMN preferences TEXT`);
   }
 
+  // Additive column migration: scope every record to the academic year/term it
+  // belongs to (nullable — existing rows stay NULL and are treated as
+  // "belongs to any period" for backward compatibility). The academic year/term
+  // themselves are never stored locally; they're owned by the NGA Central MIS
+  // and only referenced here by numeric id (see routes/academics.ts).
+  const academicPeriodTables = ['attendance_records', 'discipline_records', 'staff_attendance', 'excuse_requests'];
+  for (const table of academicPeriodTables) {
+    const cols = await db.all(`PRAGMA table_info(${table})`);
+    if (!cols.some((c: any) => c.name === 'academic_year_id')) {
+      await db.run(`ALTER TABLE ${table} ADD COLUMN academic_year_id INTEGER`);
+    }
+    if (!cols.some((c: any) => c.name === 'academic_term_id')) {
+      await db.run(`ALTER TABLE ${table} ADD COLUMN academic_term_id INTEGER`);
+    }
+    await db.run(`CREATE INDEX IF NOT EXISTS idx_${table}_academic_term ON ${table}(academic_term_id)`);
+  }
+
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
   // and the admin MIS sync (routes/admin.ts); all operational records start empty.
 

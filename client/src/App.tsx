@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { AcademicPeriodProvider } from './context/AcademicPeriodContext';
 import { ToastProvider } from './context/ToastContext';
 import { ProtectedRoute } from './components/common/ProtectedRoute';
 
@@ -31,6 +32,7 @@ import { StudentReport } from './pages/StudentReport';
 export const App: React.FC = () => {
   return (
     <AuthProvider>
+      <AcademicPeriodProvider>
       <ToastProvider>
       <BrowserRouter>
         <Routes>
@@ -202,6 +204,7 @@ export const App: React.FC = () => {
         </Routes>
       </BrowserRouter>
       </ToastProvider>
+      </AcademicPeriodProvider>
     </AuthProvider>
   );
 };
