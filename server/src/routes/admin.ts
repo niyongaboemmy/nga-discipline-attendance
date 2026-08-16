@@ -201,20 +201,43 @@ router.get('/audit', authorizePermission('AUDIT_VIEW'), async (req: any, res: Re
   }
 
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
-  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  // Keyset ("seek") pagination rather than OFFSET. This table is append-only
+  // and read newest-first, so rows are constantly inserted at the head an
+  // OFFSET counts from: between two page requests, an offset that skips N
+  // rows silently re-shows entries that shifted down, and hides others.
+  // Seeking past the last row the client actually saw is stable regardless
+  // of what arrives meanwhile. The id tiebreaker is required, not cosmetic —
+  // audit rows routinely share a timestamp to the second, and a non-unique
+  // sort key drops or repeats them.
+  const beforeAt = typeof req.query.before_at === 'string' ? req.query.before_at : null;
+  const beforeId = parseInt(req.query.before_id, 10);
+  const cursorParams: any[] = [];
+  let cursor = '';
+  if (beforeAt && Number.isFinite(beforeId)) {
+    cursor = ' AND (created_at < ? OR (created_at = ? AND id < ?))';
+    cursorParams.push(beforeAt, beforeAt, beforeId);
+  }
 
   try {
     const totalRow = await db.get(`SELECT COUNT(*) as count FROM audit_log${where}`, ...params);
+    // Fetch one extra row to know whether another page exists without a
+    // second COUNT against the filtered set.
     const rows = await db.all(
-      `SELECT * FROM audit_log${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-      ...params, limit, offset
+      `SELECT * FROM audit_log${where}${cursor} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      ...params, ...cursorParams, limit + 1
     );
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.length = limit;
     // Surface the distinct action vocabulary so the client can build a filter list.
     const actions = await db.all(`SELECT DISTINCT action FROM audit_log ORDER BY action`);
+    const last = rows[rows.length - 1];
     return res.json({
       success: true,
       data: rows,
       total: totalRow.count,
+      hasMore,
+      nextCursor: hasMore && last ? { before_at: last.created_at, before_id: last.id } : null,
       actions: actions.map((a) => a.action),
     });
   } catch (error) {

@@ -1939,3 +1939,123 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   .pager { flex-direction: column; align-items: stretch; }
   .pager-nav { justify-content: space-between; }
 }
+
+/* ==========================================================================
+   Audit log
+   ========================================================================== */
+.audit-list { list-style: none; margin: 0; padding: 0; }
+
+.audit-day {
+  position: sticky;
+  top: var(--navbar-height);
+  z-index: 1;
+  padding: 8px 18px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border);
+}
+
+.audit-row { border-bottom: 1px solid var(--border); }
+.audit-row:last-child { border-bottom: none; }
+.audit-row.is-open { background: var(--bg-subtle); }
+
+.audit-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 18px;
+  text-align: left;
+  transition: background-color var(--transition-fast);
+}
+.audit-main:hover { background: var(--bg-hover); }
+
+/* Operation class, not one colour per action — colour is reserved for the
+   destructive and permission-changing cases so they stand out in a long log. */
+.audit-op {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.audit-op.is-create { color: var(--success); background: var(--success-light); border-color: transparent; }
+.audit-op.is-remove { color: var(--danger); background: var(--danger-light); border-color: transparent; }
+.audit-op.is-modify { color: var(--warning); background: var(--warning-light); border-color: transparent; }
+.audit-op.is-auth   { color: var(--info); background: var(--info-light); border-color: transparent; }
+
+.audit-body { flex: 1; min-width: 0; }
+.audit-sentence { display: block; font-size: 13.5px; line-height: 1.5; }
+.audit-sentence strong { font-weight: 650; }
+.audit-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+.audit-meta code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+.audit-dot { opacity: 0.6; }
+.audit-caret { flex-shrink: 0; color: var(--text-tertiary); transition: transform var(--transition-fast); margin-top: 4px; }
+.audit-caret.is-open { transform: rotate(90deg); }
+
+.audit-detail { padding: 0 18px 16px 56px; display: flex; flex-direction: column; gap: 12px; }
+.audit-diff { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.audit-diff th, .audit-diff td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.audit-diff thead th {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  font-weight: 700;
+}
+.audit-diff tbody th { font-weight: 600; color: var(--text-secondary); width: 30%; }
+.audit-before { color: var(--danger); background: var(--danger-light); padding: 1px 6px; border-radius: 5px; }
+.audit-after { color: var(--success); background: var(--success-light); padding: 1px 6px; border-radius: 5px; }
+
+.audit-attrs {
+  display: grid;
+  grid-template-columns: minmax(90px, max-content) 1fr;
+  gap: 4px 14px;
+  font-size: 12.5px;
+  margin: 0;
+}
+.audit-attrs dt { color: var(--text-tertiary); }
+.audit-attrs dd { margin: 0; word-break: break-word; }
+
+.audit-raw summary { font-size: 12px; color: var(--text-secondary); cursor: pointer; }
+.audit-raw summary:hover { color: var(--text-primary); }
+.audit-raw pre {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11.5px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 560px) {
+  .audit-main { padding: 12px 13px; }
+  .audit-detail { padding-left: 13px; padding-right: 13px; }
+  .audit-day { padding-left: 13px; }
+}
