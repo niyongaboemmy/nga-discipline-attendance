@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { usePermissions } from '../hooks/usePermissions';
-import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw, Undo2, Info } from 'lucide-react';
+import {
+  Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw, Undo2, Info,
+  LayoutDashboard, PenLine, Users, CalendarDays, Sun, BookOpen, Search, X, Command, Sparkles,
+} from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { AttendanceCoverage } from './AttendanceCoverage';
@@ -53,6 +56,23 @@ export const MarkAttendance: React.FC = () => {
   // The monitoring view is the default landing: you check what's missing
   // before deciding what to record.
   const [tab, setTab] = useState<'missing' | 'record'>('missing');
+  // Badge on the Missing tab, so the outstanding count stays visible while
+  // you're recording rather than only on the dashboard you left.
+  const [missingCount, setMissingCount] = useState<number | null>(null);
+  const [studentQuery, setStudentQuery] = useState('');
+
+  const loadMissingCount = useCallback(async () => {
+    if (!can('ATTENDANCE_VIEW_ALL')) return;
+    try {
+      const res = await apiGet<{ totals: { classes: number; homeroomTaken: number } }>(
+        `/api/attendance/coverage?date=${new Date().toISOString().split('T')[0]}`
+      );
+      const t = res.data?.totals;
+      setMissingCount(t ? t.classes - t.homeroomTaken : null);
+    } catch { setMissingCount(null); }
+  }, [can]);
+
+  useEffect(() => { loadMissingCount(); }, [loadMissingCount]);
 
   useEffect(() => {
     (async () => {
@@ -162,11 +182,13 @@ export const MarkAttendance: React.FC = () => {
   // Number keys set the focused row's status and advance, so a full register
   // can be taken from the keyboard instead of aiming at four small targets
   // per student — the pattern desktop school MIS have used for years.
-  const onRowKeyDown = (e: React.KeyboardEvent, index: number) => {
+  // `list` is the rows actually on screen — with a search active, "row 3" is
+  // the third visible student, not the third in the full roster.
+  const onRowKeyDown = (e: React.KeyboardEvent, index: number, list: Student[]) => {
     const idx = ['1', '2', '3', '4'].indexOf(e.key);
     if (idx === -1) return;
     e.preventDefault();
-    const student = students[index];
+    const student = list[index];
     if (!student) return;
     setStatus(student.id, STATUSES[idx].key);
     const next = document.querySelector<HTMLElement>(`[data-mark-row="${index + 1}"]`);
@@ -233,6 +255,15 @@ export const MarkAttendance: React.FC = () => {
   }));
   const exceptions = counts.filter((c) => c.key !== 'present' && c.n > 0);
 
+  const visibleStudents = useMemo(() => {
+    const q = studentQuery.trim().toLowerCase();
+    if (!q) return students;
+    return students.filter((s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q));
+  }, [students, studentQuery]);
+
+  const className_ = classes.find((c) => c.id === selectedClass)?.name;
+  const subjectName = subjects.find((s) => s.id === subjectId)?.name;
+
   return (
     <DashboardLayout>
       <div className="page-header">
@@ -246,21 +277,26 @@ export const MarkAttendance: React.FC = () => {
         </div>
       </div>
 
-      <div className="segmented mb-4" role="tablist" aria-label="Attendance views">
+      <div className="att-tabs mb-4" role="tablist" aria-label="Attendance views">
         <button
           role="tab"
           aria-selected={tab === 'missing'}
-          className={`segmented-btn${tab === 'missing' ? ' is-active' : ''}`}
-          onClick={() => setTab('missing')}
+          className={`att-tab${tab === 'missing' ? ' is-active' : ''}`}
+          onClick={() => { setTab('missing'); loadMissingCount(); }}
         >
+          <LayoutDashboard size={15} />
           Missing attendance
+          {missingCount != null && missingCount > 0 && (
+            <span className="att-tab-badge" aria-label={`${missingCount} outstanding`}>{missingCount}</span>
+          )}
         </button>
         <button
           role="tab"
           aria-selected={tab === 'record'}
-          className={`segmented-btn${tab === 'record' ? ' is-active' : ''}`}
+          className={`att-tab${tab === 'record' ? ' is-active' : ''}`}
           onClick={() => setTab('record')}
         >
+          <PenLine size={15} />
           Record attendance
         </button>
       </div>
@@ -280,7 +316,10 @@ export const MarkAttendance: React.FC = () => {
       <div className="mark-grid">
         {/* Left: session config */}
         <aside className="card card-pad mark-config">
-          <span className="section-title">Session</span>
+          <div className="mark-config-head">
+            <span className="mark-config-icon"><CalendarDays size={15} /></span>
+            <span className="section-title">Session</span>
+          </div>
           <div className="field mt-4">
             <label className="label">Session type</label>
             <div className="segmented">
@@ -354,12 +393,22 @@ export const MarkAttendance: React.FC = () => {
           </div>
 
           <div className="nav-divider" style={{ margin: '20px 0' }} />
-          <span className="label">Mark all as</span>
-          <div className="flex flex-wrap gap-2 mt-2">
-            <button type="button" className="chip" onClick={() => markAll('present')}>Present</button>
-            <button type="button" className="chip" onClick={() => markAll('late')}>Late</button>
-            <button type="button" className="chip" onClick={() => markAll('absent')}>Absent</button>
-            <button type="button" className="chip" onClick={() => markAll('excused')}>Excused</button>
+          <span className="label">Mark everyone as</span>
+          {/* A whole-class shortcut is the common case (nearly everyone is
+              present), so it gets colour and equal-width targets rather than
+              four wrapping grey chips. */}
+          <div className="mark-all mt-2">
+            {STATUSES.map((st) => (
+              <button
+                key={st.key}
+                type="button"
+                className={`mark-all-btn is-${st.key}`}
+                disabled={students.length === 0}
+                onClick={() => markAll(st.key)}
+              >
+                {st.icon}<span>{st.label}</span>
+              </button>
+            ))}
           </div>
 
           {existing && !message && (
@@ -390,20 +439,72 @@ export const MarkAttendance: React.FC = () => {
         {/* Right: student list */}
         <section className="card mark-list">
           <div className="card-header mark-head">
-            <span className="section-title">
-              Students {students.length > 0 && `(${students.length})`}
-            </span>
+            <div className="mark-head-main">
+              <span className="section-title">
+                <Users size={15} /> Students {students.length > 0 && <span className="mark-total">{students.length}</span>}
+              </span>
+              {/* What you're about to save, spelled out — the session lives in
+                  the left panel, and it's easy to record the right register
+                  against the wrong day or period. */}
+              <div className="mark-session-chips">
+                {className_ && <span className="mark-chip"><Users size={11} />{className_}</span>}
+                {sessionType === 'subject' && subjectName && (
+                  <span className="mark-chip"><BookOpen size={11} />{subjectName}</span>
+                )}
+                <span className="mark-chip"><CalendarDays size={11} />
+                  <time dateTime={sessionDate}>
+                    {new Date(sessionDate).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </time>
+                </span>
+                <span className="mark-chip"><Sun size={11} />{period}</span>
+              </div>
+            </div>
             {students.length > 0 && (
-              <div className="mark-counts" role="status" aria-live="polite">
-                {counts.map((c) => (
-                  <span key={c.key} className={`mark-count is-${c.key}${c.n === 0 ? ' is-zero' : ''}`}>
-                    {c.icon}<strong>{c.n}</strong>
-                    <span className="hide-mobile">{c.label}</span>
-                  </span>
-                ))}
+              <div className="mark-head-tools">
+                <div className="rp-search mark-search">
+                  <Search className="field-icon" size={15} />
+                  <input
+                    className="input"
+                    placeholder="Find a student…"
+                    value={studentQuery}
+                    aria-label="Find a student"
+                    onChange={(e) => setStudentQuery(e.target.value)}
+                  />
+                  {studentQuery && (
+                    <button className="rp-search-clear" onClick={() => setStudentQuery('')} aria-label="Clear search">
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+                <div className="mark-counts" role="status" aria-live="polite">
+                  {counts.map((c) => (
+                    <span key={c.key} className={`mark-count is-${c.key}${c.n === 0 ? ' is-zero' : ''}`}>
+                      {c.icon}<strong>{c.n}</strong>
+                      <span className="hide-mobile">{c.label}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </div>
+
+          {/* One glance at the shape of the class: the bar is the register. */}
+          {students.length > 0 && (
+            <div
+              className="mark-bar"
+              role="img"
+              aria-label={counts.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(', ')}
+            >
+              {counts.filter((c) => c.n > 0).map((c) => (
+                <span
+                  key={c.key}
+                  className={`is-${c.key}`}
+                  style={{ width: `${(c.n / students.length) * 100}%` }}
+                  title={`${c.n} ${c.label.toLowerCase()}`}
+                />
+              ))}
+            </div>
+          )}
 
           <div className="mark-list-body">
             {loadingStudents ? (
@@ -411,15 +512,26 @@ export const MarkAttendance: React.FC = () => {
                 {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="rp-skeleton" />)}
               </div>
             ) : students.length === 0 ? (
-              <div className="empty-state" style={{ padding: '52px 0' }}>
-                <Info size={26} />
+              <div className="empty-state mark-empty">
+                <span className="mark-empty-icon"><Users size={24} /></span>
                 <span className="text-sm">No students in this class for the selected academic year.</span>
                 <span className="text-xs text-secondary mt-1">
                   Check the year in the top bar, or assign students to this class group in the MIS.
                 </span>
+                <button className="btn btn-outline btn-sm mt-3" onClick={() => setTab('missing')}>
+                  <LayoutDashboard size={14} /> Back to the dashboard
+                </button>
+              </div>
+            ) : visibleStudents.length === 0 ? (
+              <div className="empty-state mark-empty">
+                <span className="mark-empty-icon"><Search size={22} /></span>
+                <span className="text-sm">No student matches “{studentQuery}”.</span>
+                <button className="btn btn-outline btn-sm mt-3" onClick={() => setStudentQuery('')}>
+                  <X size={14} /> Clear search
+                </button>
               </div>
             ) : (
-              students.map((s, index) => {
+              visibleStudents.map((s, index) => {
                 const rec = attendance[s.id];
                 const isException = rec && rec.status !== 'present';
                 return (
@@ -428,7 +540,7 @@ export const MarkAttendance: React.FC = () => {
                     className={`mark-row${isException ? ' is-exception' : ''}`}
                     data-mark-row={index}
                     tabIndex={0}
-                    onKeyDown={(e) => onRowKeyDown(e, index)}
+                    onKeyDown={(e) => onRowKeyDown(e, index, visibleStudents)}
                     aria-label={`${s.name}, marked ${rec?.status ?? 'present'}. Press 1 to 4 to change.`}
                   >
                     <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
@@ -469,11 +581,18 @@ export const MarkAttendance: React.FC = () => {
 
           {students.length > 0 && (
             <div className="mark-footer">
-              <span className="text-sm text-secondary">
-                {exceptions.length === 0
-                  ? `All ${students.length} present`
-                  : `${students.length} students · ${exceptions.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(', ')}`}
-              </span>
+              <div className="mark-footer-summary">
+                <span className="text-sm">
+                  {exceptions.length === 0 ? (
+                    <><Sparkles size={13} /> All {students.length} present</>
+                  ) : (
+                    <>{students.length} students · {exceptions.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(', ')}</>
+                  )}
+                </span>
+                <span className="mark-kbd-hint hide-mobile">
+                  <Command size={11} /> Focus a row, then press <kbd>1</kbd>–<kbd>4</kbd>
+                </span>
+              </div>
               <div className="flex gap-2 flex-wrap">
                 <button type="button" className="btn btn-outline" onClick={() => navigate('/dashboard')}>Cancel</button>
                 <button

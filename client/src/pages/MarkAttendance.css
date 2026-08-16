@@ -83,3 +83,158 @@
   .mark-note-placeholder { display: none; }
   .mark-counts { width: 100%; }
 }
+
+/* ==========================================================================
+   Tabs
+   ========================================================================== */
+.att-tabs {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.att-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+.att-tab:hover { color: var(--text-primary); }
+.att-tab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.att-tab-badge {
+  min-width: 19px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Session panel
+   ========================================================================== */
+.mark-config-head { display: flex; align-items: center; gap: 9px; }
+.mark-config-icon {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 9px;
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.mark-all { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.mark-all-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.mark-all-btn:hover:not(:disabled) { transform: translateY(-1px); border-color: currentColor; }
+.mark-all-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.mark-all-btn.is-present:hover:not(:disabled) { color: var(--success); background: var(--success-light); }
+.mark-all-btn.is-late:hover:not(:disabled)    { color: var(--warning); background: var(--warning-light); }
+.mark-all-btn.is-absent:hover:not(:disabled)  { color: var(--danger);  background: var(--danger-light); }
+.mark-all-btn.is-excused:hover:not(:disabled) { color: var(--info);    background: var(--info-light); }
+
+/* ==========================================================================
+   Roster header
+   ========================================================================== */
+.mark-head-main { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.mark-head-main .section-title { display: flex; align-items: center; gap: 7px; }
+.mark-total {
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+.mark-session-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.mark-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.mark-chip svg { color: var(--text-tertiary); }
+.mark-head-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.mark-search { min-width: 190px; }
+
+/* Stacked register bar — the class at a glance. */
+.mark-bar {
+  display: flex;
+  height: 4px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.mark-bar > span { transition: width var(--transition-normal); }
+.mark-bar .is-present { background: var(--success); }
+.mark-bar .is-late    { background: var(--warning); }
+.mark-bar .is-absent  { background: var(--danger); }
+.mark-bar .is-excused { background: var(--info); }
+
+.mark-row { transition: background var(--transition-fast); }
+.mark-row:hover { background: var(--bg-hover); }
+
+.mark-empty { padding: 52px 20px; }
+.mark-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-full);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-tertiary);
+}
+
+.mark-footer-summary { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mark-footer-summary .text-sm { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.mark-kbd-hint { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-tertiary); }
+.mark-kbd-hint kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+@media (max-width: 720px) {
+  .mark-head-tools { width: 100%; justify-content: flex-start; }
+  .mark-search { width: 100%; min-width: 0; }
+  .mark-all { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
