@@ -43,6 +43,8 @@ export const AdminDashboard: React.FC = () => {
   // 'all' | a role level | 'unassigned' — also what the stat cards set.
   const [segment, setSegment] = useState<'all' | 'student' | 'teacher' | 'admin' | 'unassigned'>('all');
   const [sortAsc, setSortAsc] = useState(true);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 12;
   const [savingId, setSavingId] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   // A role change requested via the dropdown, awaiting confirmation.
@@ -139,8 +141,25 @@ export const AdminDashboard: React.FC = () => {
       .filter((u) => (segment === 'all' ? true : u.role === segment))
       .filter((u) =>
         !q || [u.name, u.email || '', u.id].some((f) => f.toLowerCase().includes(q)))
-      .sort((a, b) => (sortAsc ? 1 : -1) * a.name.localeCompare(b.name));
+      .sort((a, b) => {
+        // Accounts still awaiting a role are the actionable ones, so they
+        // lead regardless of the name sort direction.
+        const aPending = a.role === 'unassigned' ? 0 : 1;
+        const bPending = b.role === 'unassigned' ? 0 : 1;
+        if (aPending !== bPending) return aPending - bPending;
+        return (sortAsc ? 1 : -1) * a.name.localeCompare(b.name);
+      });
   }, [users, search, segment, sortAsc]);
+
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const paged = useMemo(
+    () => visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [visible, page]
+  );
+
+  // Any change to the filters can shrink the list past the current page.
+  useEffect(() => { setPage(1); }, [search, segment, sortAsc]);
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
 
   const currentRoleName = (u: ManagedUser) => roles.find((r) => r.id === u.role_id)?.name || (u.role === 'unassigned' ? 'Unassigned' : u.role);
 
@@ -294,7 +313,7 @@ export const AdminDashboard: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map((u) => (
+                    {paged.map((u) => (
                       <tr key={u.id} className={u.role === 'unassigned' ? 'is-unassigned' : undefined}>
                         <td>
                           <div className="flex items-center gap-3">
@@ -329,9 +348,38 @@ export const AdminDashboard: React.FC = () => {
                 </table>
               </div>
             )}
-            <div className="card-footer flex justify-between text-xs text-secondary">
-              <span>{visible.length} of {users.length} users</span>
-              <span>Backend access updates immediately; the user's own screen refreshes on next sign-in</span>
+            <div className="card-footer admin-pager">
+              <span className="text-xs text-secondary">
+                {visible.length === 0
+                  ? 'No users'
+                  : `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, visible.length)} of ${visible.length}`}
+                {visible.length !== users.length && ` (filtered from ${users.length})`}
+              </span>
+
+              {pageCount > 1 && (
+                <nav className="admin-pager-nav" aria-label="User list pages">
+                  <button
+                    className="btn btn-outline btn-sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                  >
+                    Previous
+                  </button>
+                  <span className="text-xs text-secondary" aria-live="polite">
+                    Page {page} of {pageCount}
+                  </span>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                    disabled={page === pageCount}
+                  >
+                    Next
+                  </button>
+                </nav>
+              )}
+            </div>
+            <div className="card-footer text-xs text-secondary">
+              Backend access updates immediately; the user’s own screen refreshes on next sign-in.
             </div>
           </section>
         </>
