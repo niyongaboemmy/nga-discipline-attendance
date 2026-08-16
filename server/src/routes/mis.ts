@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { config } from '../config.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission } from '../middleware/authorize.js';
-import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
+import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 
 /**
  * MIS roster proxy.
@@ -165,38 +165,53 @@ router.get('/students', async (req: any, res) => {
   if (!misToken) return;
   const classId = req.query.class_id as string | undefined;
 
+  // A class group is a permanent label reused every year, so its membership
+  // accumulates one cohort per academic year. Scoping to the selected year
+  // is what keeps Mark Attendance showing this year's students instead of a
+  // previous cohort.
+  const { academicYearId } = resolveAcademicPeriod(req as AuthenticatedRequest);
+  const yearParam = academicYearId != null ? String(academicYearId) : undefined;
+
   try {
     if (classId) {
       // Roster for one class group (Mark Attendance). Permission-free.
       const rows = await misGetList(
         misToken,
-        `/academics/class-groups/${encodeURIComponent(classId)}/students`
+        `/academics/class-groups/${encodeURIComponent(classId)}/students`,
+        { academic_year_id: yearParam }
       );
       return res.json({ success: true, data: rows.map(normalizeFlatPerson) });
     }
 
-    // School-wide list (Directory). /users is the complete source but needs
-    // MANAGE_USERS, so fall back to walking the class-group rosters, which
-    // any authenticated MIS user may read.
+    // School-wide list (Directory). Built from the per-year class-group
+    // rosters so it reflects the selected academic year; /users is not
+    // year-aware at all (it lists every account ever created), so it's only
+    // a last resort when class-group data is unavailable.
+    const classGroups = await misGetListOrNull(misToken, '/academics/class-groups');
+    if (classGroups && classGroups.length > 0) {
+      const rosters = await Promise.all(
+        classGroups.map((c: any) =>
+          misGetListOrNull(
+            misToken,
+            `/academics/class-groups/${encodeURIComponent(String(c.class_group_id ?? c.id))}/students`,
+            { academic_year_id: yearParam }
+          ).then((r) => r ?? [])
+        )
+      );
+      return res.json({
+        success: true,
+        data: dedupeById(rosters.flat().map(normalizeFlatPerson)),
+      });
+    }
+
     const viaUsers = await misGetListOrNull(misToken, '/users', {
       userRole: MIS_STUDENT_ROLE_ID,
       limit: '1000',
     });
-    if (viaUsers) {
-      return res.json({ success: true, data: dedupeById(viaUsers.map(normalizeMisUser)) });
-    }
-
-    const classGroups = await misGetList(misToken, '/academics/class-groups');
-    const rosters = await Promise.all(
-      classGroups.map((c: any) =>
-        misGetListOrNull(
-          misToken,
-          `/academics/class-groups/${encodeURIComponent(String(c.class_group_id ?? c.id))}/students`
-        ).then((r) => r ?? [])
-      )
-    );
-    const students = dedupeById(rosters.flat().map(normalizeFlatPerson));
-    return res.json({ success: true, data: students });
+    return res.json({
+      success: true,
+      data: viaUsers ? dedupeById(viaUsers.map(normalizeMisUser)) : [],
+    });
   } catch (error) {
     sendMisError(res, classId ? `/academics/class-groups/${classId}/students` : '/users', error);
   }
@@ -239,7 +254,10 @@ router.get('/schedule', async (req: any, res) => {
   const role = (req as AuthenticatedRequest).user?.role;
 
   try {
-    const { academicTermId } = await resolveCurrentAcademicPeriod(misToken);
+    // The user's selected term, not the MIS's globally-current one -- this
+    // used to call resolveCurrentAcademicPeriod(misToken), so switching the
+    // period in the top bar left the timetable showing the current term.
+    const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
     const termId = academicTermId != null ? String(academicTermId) : undefined;
 
     // /calendar/slots is the admin-wide view and 403s for teachers and

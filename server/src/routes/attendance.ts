@@ -75,6 +75,12 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
            status = excluded.status,
            notes = excluded.notes,
            marked_by = excluded.marked_by,
+           -- Re-marking a session must restamp the period too. Without
+           -- these, a record first marked under one term kept that term
+           -- forever, so corrections made after a term switch stayed
+           -- filed under the old period and vanished from the new one.
+           academic_year_id = excluded.academic_year_id,
+           academic_term_id = excluded.academic_term_id,
            updated_at = CURRENT_TIMESTAMP`,
         studentId,
         studentName,
@@ -97,7 +103,7 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
     // Trigger low attendance notification evaluation in background
     // (scoped to this session type so subject-attendance drops don't get
     // conflated with homeroom drops for the same class).
-    triggerLowAttendanceCheck(classId, className, sessionType);
+    triggerLowAttendanceCheck(classId, className, sessionType, academicTermId);
 
     return res.json({
       success: true,
@@ -406,18 +412,29 @@ router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (r
 });
 
 // Helper background logic to analyze attendance drop and push system alerts
-async function triggerLowAttendanceCheck(classId: string, className: string, sessionType: string = 'homeroom') {
+async function triggerLowAttendanceCheck(
+  classId: string,
+  className: string,
+  sessionType: string = 'homeroom',
+  academicTermId?: number
+) {
   const db = getDb();
   try {
-    // Select all students and count their presence vs absence
+    // Scoped to the term the session belongs to. Averaging over every term
+    // ever recorded meant a student's past-term absences dragged their
+    // current-term percentage down (and vice versa), so the 80% warning
+    // fired against a figure shown nowhere in the UI. NULL term rows are
+    // included when we have a term, matching the read paths' convention for
+    // records written before period tracking existed.
     const stats = await db.all(
       `SELECT student_id, student_name,
               SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present,
               COUNT(*) as total
        FROM attendance_records
        WHERE class_id = ? AND session_type = ?
+         AND (? IS NULL OR academic_term_id = ? OR academic_term_id IS NULL)
        GROUP BY student_id`,
-      classId, sessionType
+      classId, sessionType, academicTermId ?? null, academicTermId ?? null
     );
 
     for (const student of stats) {
