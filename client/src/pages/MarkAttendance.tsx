@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -255,11 +255,14 @@ export const MarkAttendance: React.FC = () => {
   }));
   const exceptions = counts.filter((c) => c.key !== 'present' && c.n > 0);
 
-  const visibleStudents = useMemo(() => {
-    const q = studentQuery.trim().toLowerCase();
-    if (!q) return students;
-    return students.filter((s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q));
-  }, [students, studentQuery]);
+  // Deliberately not useMemo: this sits below the `loadingClasses` early
+  // return, so a hook here runs on some renders and not others — which is
+  // exactly the "rendered more hooks than during the previous render" crash.
+  // Filtering one class roster is far too cheap to be worth memoising.
+  const q = studentQuery.trim().toLowerCase();
+  const visibleStudents = q
+    ? students.filter((s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q))
+    : students;
 
   const className_ = classes.find((c) => c.id === selectedClass)?.name;
   const subjectName = subjects.find((s) => s.id === subjectId)?.name;
