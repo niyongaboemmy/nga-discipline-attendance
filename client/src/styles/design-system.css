@@ -2059,3 +2059,86 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   .audit-detail { padding-left: 13px; padding-right: 13px; }
   .audit-day { padding-left: 13px; }
 }
+
+/* ==========================================================================
+   Leaves & Excuses
+   ========================================================================== */
+.excuse-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.excuse-form-card { position: sticky; top: calc(var(--navbar-height) + 20px); }
+
+/* Status counts double as filters. */
+.excuse-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.excuse-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+.excuse-stat:hover { transform: translateY(-1px); border-color: var(--border-strong); }
+.excuse-stat strong { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.excuse-stat.is-pending.is-active  { border-color: var(--warning); background: var(--warning-light); color: var(--warning); }
+.excuse-stat.is-approved.is-active { border-color: var(--success); background: var(--success-light); color: var(--success); }
+.excuse-stat.is-rejected.is-active { border-color: var(--danger);  background: var(--danger-light);  color: var(--danger); }
+.excuse-stat.is-active strong { color: inherit; }
+
+.excuse-history-head { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+
+.excuse-list { list-style: none; margin: 0; padding: 0; }
+.excuse-item {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  /* A left edge keyed to status makes the outcome readable while scanning,
+     without relying on colour alone — the badge carries icon + text too. */
+  border-left: 3px solid transparent;
+}
+.excuse-item:last-child { border-bottom: none; }
+.excuse-item.is-pending  { border-left-color: var(--warning); }
+.excuse-item.is-approved { border-left-color: var(--success); }
+.excuse-item.is-rejected { border-left-color: var(--danger); }
+.excuse-item:hover { background: var(--bg-hover); }
+
+.excuse-item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.excuse-course { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+.excuse-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.excuse-desc {
+  margin-top: 9px;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.excuse-foot { margin-top: 8px; font-size: 11px; color: var(--text-tertiary); }
+
+.field-error { margin-top: 4px; font-size: 11.5px; color: var(--danger); }
+
+@media (max-width: 940px) {
+  .excuse-layout { grid-template-columns: 1fr; }
+  .excuse-form-card { position: static; }
+}
+@media (max-width: 560px) {
+  .excuse-summary { width: 100%; }
+  .excuse-history-head .rp-search { width: 100%; min-width: 0 !important; }
+}

@@ -371,6 +371,23 @@ router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, r
   const db = getDb();
   const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
   try {
+    // One pending request per class/date. Nothing prevented a student from
+    // submitting the same excuse repeatedly, which floods the reviewer's
+    // queue with duplicates of the same absence. A *decided* request can
+    // still be resubmitted — a rejection is often "send better evidence",
+    // and blocking that would leave the student no route back.
+    const duplicate = await db.get(
+      `SELECT id FROM excuse_requests
+       WHERE student_id = ? AND class_name = ? AND session_date = ? AND status = 'pending'`,
+      studentId, className, sessionDate
+    );
+    if (duplicate) {
+      return res.status(409).json({
+        success: false,
+        message: 'You already have a pending request for this class on that date. Wait for it to be reviewed.',
+      });
+    }
+
     const result = await db.run(
       `INSERT INTO excuse_requests (student_id, student_name, class_name, session_date, reason, description, status, academic_year_id, academic_term_id)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
