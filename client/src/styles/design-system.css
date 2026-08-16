@@ -2142,3 +2142,115 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   .excuse-summary { width: 100%; }
   .excuse-history-head .rp-search { width: 100%; min-width: 0 !important; }
 }
+
+/* ==========================================================================
+   Attendance coverage (Missing attendance)
+   ========================================================================== */
+.cov-date { position: relative; min-width: 168px; }
+.cov-date .field-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; }
+.cov-date input { height: 34px; padding-left: 32px; font-size: 13px; }
+
+.cov-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.cov-kpi {
+  padding: 15px 17px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+.cov-kpi.is-alert { border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-light); }
+.cov-kpi-value {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.cov-kpi-of { font-size: 15px; font-weight: 600; color: var(--text-tertiary); }
+.cov-kpi-label { display: block; margin-top: 2px; font-size: 12px; color: var(--text-secondary); }
+
+.cov-bar {
+  margin-top: 10px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+.cov-bar > span { display: block; height: 100%; background: var(--success); border-radius: inherit; transition: width var(--transition-normal); }
+
+.cov-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+.cov-note svg { flex-shrink: 0; margin-top: 2px; }
+
+/* Glyph + colour, never colour alone. */
+.cov-dot {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+}
+.cov-dot.is-done { background: var(--success-light); color: var(--success); }
+.cov-dot.is-missing { background: var(--danger-light); color: var(--danger); }
+
+.cov-list { list-style: none; margin: 0; padding: 0; }
+.cov-row { border-bottom: 1px solid var(--border); }
+.cov-row:last-child { border-bottom: none; }
+.cov-row.is-open { background: var(--bg-subtle); }
+.cov-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 18px;
+  text-align: left;
+}
+.cov-main:hover { background: var(--bg-hover); }
+.cov-body { flex: 1; min-width: 0; }
+.cov-name { display: block; font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+.cov-meta { display: block; margin-top: 2px; font-size: 11.5px; color: var(--text-secondary); }
+.cov-take { flex-shrink: 0; }
+
+.cov-detail { padding: 4px 18px 16px 52px; }
+.cov-progress { margin-bottom: 10px; }
+.cov-progress .cov-bar { margin-top: 6px; max-width: 320px; }
+
+.cov-subjects { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.cov-subject {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--danger-light);
+}
+.cov-subject.is-done { background: transparent; }
+.cov-subject:hover { background: var(--bg-hover); }
+.cov-subject-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.cov-subject-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+.cov-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-secondary); }
+.cov-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+
+@media (max-width: 640px) {
+  .cov-main { padding: 12px 13px; flex-wrap: wrap; }
+  .cov-detail { padding: 4px 13px 14px; }
+  .cov-take { width: 100%; margin-top: 8px; }
+  .cov-date { width: 100%; }
+}

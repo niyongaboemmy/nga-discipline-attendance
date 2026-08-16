@@ -64,7 +64,7 @@ async function misGet(
   return body && typeof body === 'object' && 'data' in body ? body.data : body;
 }
 
-async function misGetList(
+export async function misGetList(
   misToken: string,
   path: string,
   query?: Record<string, string | undefined>
@@ -197,7 +197,7 @@ router.get('/class-subjects', async (req: any, res) => {
 });
 
 /** class_group_id -> grade_id, via the class-group list. */
-async function resolveGradeId(misToken: string, classId: string): Promise<number | null> {
+export async function resolveGradeId(misToken: string, classId: string): Promise<number | null> {
   const classGroups = await misGetList(misToken, '/academics/class-groups');
   const match = classGroups.find(
     (c: any) => String(c.class_group_id ?? c.id) === String(classId)

@@ -6,6 +6,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw, Undo2, Info } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
+import { AttendanceCoverage } from './AttendanceCoverage';
 import './MarkAttendance.css';
 
 interface ClassData { id: string; name: string; department: string; }
@@ -49,6 +50,9 @@ export const MarkAttendance: React.FC = () => {
   const [dirty, setDirty] = useState(false);
   // Snapshot taken at save time so the confirmation can offer an undo.
   const [undoSnapshot, setUndoSnapshot] = useState<Record<string, AttendanceState> | null>(null);
+  // The monitoring view is the default landing: you check what's missing
+  // before deciding what to record.
+  const [tab, setTab] = useState<'missing' | 'record'>('missing');
 
   useEffect(() => {
     (async () => {
@@ -233,11 +237,46 @@ export const MarkAttendance: React.FC = () => {
     <DashboardLayout>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Mark Attendance</h1>
-          <p className="page-subtitle">Select a session, then record each student’s status.</p>
+          <h1 className="page-title">Attendance</h1>
+          <p className="page-subtitle">
+            {tab === 'missing'
+              ? 'See which registers still need taking, then jump straight in.'
+              : 'Select a session, then record each student’s status.'}
+          </p>
         </div>
       </div>
 
+      <div className="segmented mb-4" role="tablist" aria-label="Attendance views">
+        <button
+          role="tab"
+          aria-selected={tab === 'missing'}
+          className={`segmented-btn${tab === 'missing' ? ' is-active' : ''}`}
+          onClick={() => setTab('missing')}
+        >
+          Missing attendance
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'record'}
+          className={`segmented-btn${tab === 'record' ? ' is-active' : ''}`}
+          onClick={() => setTab('record')}
+        >
+          Record attendance
+        </button>
+      </div>
+
+      {tab === 'missing' && (
+        <AttendanceCoverage
+          onTakeRegister={({ classId, subjectId }) => {
+            setSelectedClass(classId);
+            if (subjectId != null) { setSessionType('subject'); setSubjectId(subjectId); }
+            else { setSessionType('homeroom'); setSubjectId(''); }
+            setTab('record');
+          }}
+        />
+      )}
+
+      {tab === 'record' && (
       <div className="mark-grid">
         {/* Left: session config */}
         <aside className="card card-pad mark-config">
@@ -460,6 +499,7 @@ export const MarkAttendance: React.FC = () => {
           )}
         </section>
       </div>
+      )}
     </DashboardLayout>
   );
 };

@@ -5,7 +5,7 @@ import { authorizePermission, selfOrPermission } from '../middleware/authorize.j
 import { recordAudit } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
-import { isSubjectOnClassCurriculum } from './mis.js';
+import { isSubjectOnClassCurriculum, resolveGradeId, misGetList } from './mis.js';
 
 const router = Router();
 
@@ -139,6 +139,162 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
       success: false,
       message: error.message || 'Error occurred while saving attendance records.',
     });
+  }
+});
+
+/**
+ * Register coverage — which registers have NOT been taken.
+ *
+ * Denominator note, because it drives everything here: the obvious source
+ * for "what was scheduled" is the synced timetable, but it can't be used.
+ * Its `period` values are clock times ("09:00") while attendance records
+ * store session names ("Morning"), so the two can't be joined, and every
+ * slot currently synced belongs to a previous term. Coverage is therefore
+ * measured against the class group's *grade curriculum* — the subjects the
+ * class is meant to be taught — which is live MIS data and is also what the
+ * page promises ("progress against the subjects in the class's grade").
+ *
+ * The consequence to be honest about in the UI: this reports curriculum
+ * coverage for the day, not "you missed period 3", because nothing in the
+ * data says which subjects were timetabled for a given day.
+ */
+router.get('/coverage', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const date = String(req.query.date || new Date().toISOString().split('T')[0]);
+  const classId = req.query.classId ? String(req.query.classId) : null;
+
+  if (!DATE_RE.test(date)) {
+    return res.status(400).json({ success: false, message: 'Invalid date. Expected YYYY-MM-DD.' });
+  }
+
+  const db = getDb();
+  const misToken = authReq.user?.misToken;
+
+  try {
+    // What was actually recorded that day, per class and per subject.
+    const recorded = await db.all(
+      `SELECT class_id, class_name, session_type, subject_id,
+              COUNT(*) AS students, MAX(updated_at) AS last_marked, MAX(marked_by) AS marked_by
+       FROM attendance_records
+       WHERE session_date = ?
+       GROUP BY class_id, session_type, subject_id`,
+      date
+    );
+
+    const byClass = new Map<string, { homeroom: any | null; subjects: Map<number, any>; className: string }>();
+    for (const r of recorded) {
+      if (!byClass.has(r.class_id)) {
+        byClass.set(r.class_id, { homeroom: null, subjects: new Map(), className: r.class_name });
+      }
+      const entry = byClass.get(r.class_id)!;
+      if (r.session_type === 'homeroom') entry.homeroom = r;
+      else if (r.subject_id != null) entry.subjects.set(Number(r.subject_id), r);
+    }
+
+    // ---- Detail for one class: every curriculum subject, taken or not ----
+    if (classId) {
+      const entry = byClass.get(classId);
+      let curriculum: Array<{ id: number; name: string; code: string | null }> = [];
+      if (misToken) {
+        try {
+          const gradeId = await resolveGradeId(misToken, classId);
+          if (gradeId != null) {
+            const rows = await misGetList(misToken, `/academics/grades/${gradeId}/subjects`);
+            curriculum = rows.map((x: any) => ({
+              id: Number(x.subject_id),
+              name: x.subject_name ?? x.name,
+              code: x.subject_code ?? x.code ?? null,
+            }));
+          }
+        } catch (err) {
+          console.error('Coverage: curriculum lookup failed:', (err as Error).message);
+        }
+      }
+
+      const subjects = curriculum.map((sub) => {
+        const hit = entry?.subjects.get(sub.id);
+        return {
+          ...sub,
+          recorded: !!hit,
+          students: hit?.students ?? 0,
+          lastMarkedAt: hit?.last_marked ?? null,
+        };
+      });
+      // A subject marked but no longer on the curriculum still happened —
+      // surface it rather than hiding a real register.
+      for (const [id, hit] of entry?.subjects ?? []) {
+        if (!subjects.some((x) => x.id === id)) {
+          subjects.push({
+            id, name: `Subject #${id}`, code: null,
+            recorded: true, students: hit.students, lastMarkedAt: hit.last_marked,
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          date,
+          classId,
+          curriculumKnown: curriculum.length > 0,
+          homeroom: entry?.homeroom
+            ? { recorded: true, students: entry.homeroom.students, lastMarkedAt: entry.homeroom.last_marked }
+            : { recorded: false, students: 0, lastMarkedAt: null },
+          subjects,
+        },
+      });
+    }
+
+    // ---- Overview across every class group ----
+    let classes: Array<{ id: string; name: string; department: string }> = [];
+    if (misToken) {
+      try {
+        const rows = await misGetList(misToken, '/academics/class-groups');
+        classes = rows.map((c: any) => ({
+          id: String(c.class_group_id ?? c.id),
+          name: c.name,
+          department: c.program_name || c.grade_name || '',
+        }));
+      } catch (err) {
+        console.error('Coverage: class list failed:', (err as Error).message);
+      }
+    }
+    // Fall back to whatever has been marked, so the page still works when
+    // the MIS is unreachable.
+    if (classes.length === 0) {
+      classes = [...byClass.entries()].map(([id, v]) => ({ id, name: v.className, department: '' }));
+    }
+
+    const items = classes.map((c) => {
+      const entry = byClass.get(c.id);
+      return {
+        classId: c.id,
+        className: c.name,
+        department: c.department,
+        homeroomRecorded: !!entry?.homeroom,
+        homeroomStudents: entry?.homeroom?.students ?? 0,
+        subjectsRecorded: entry ? entry.subjects.size : 0,
+        lastMarkedAt: entry?.homeroom?.last_marked
+          ?? [...(entry?.subjects.values() ?? [])].map((x: any) => x.last_marked).sort().pop()
+          ?? null,
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        date,
+        classes: items,
+        totals: {
+          classes: items.length,
+          homeroomTaken: items.filter((i) => i.homeroomRecorded).length,
+          classesWithAnySubject: items.filter((i) => i.subjectsRecorded > 0).length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error building attendance coverage:', error);
+    return res.status(500).json({ success: false, message: 'Could not build the coverage report.' });
   }
 });
 
