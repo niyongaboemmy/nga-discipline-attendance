@@ -99,18 +99,6 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
       </div>
 
       <div className="systems-menu-grid">
-        <a
-          href="/welcome"
-          onClick={(e) => { e.preventDefault(); onClose(); }}
-          className="systems-menu-item is-current"
-          aria-current="page"
-        >
-          <span className="systems-menu-tile">
-            <img src="/icon.png" alt="" />
-          </span>
-          <span className="systems-menu-label">Tendo</span>
-        </a>
-
         {misHomeUrl && (
           <a
             href={misHomeUrl}
