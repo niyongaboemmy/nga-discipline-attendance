@@ -43,3 +43,43 @@
   .mark-row { flex-wrap: wrap; }
   .mark-note { width: 100%; }
 }
+
+/* ---- Live status counts in the roster header ---- */
+.mark-head { flex-wrap: wrap; gap: 10px; }
+.mark-counts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mark-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  transition: opacity var(--transition-fast);
+}
+.mark-count strong { font-variant-numeric: tabular-nums; }
+.mark-count.is-zero { opacity: 0.45; }
+.mark-count.is-present:not(.is-zero) { color: var(--success); background: var(--success-light); border-color: transparent; }
+.mark-count.is-late:not(.is-zero)    { color: var(--warning); background: var(--warning-light); border-color: transparent; }
+.mark-count.is-absent:not(.is-zero)  { color: var(--danger);  background: var(--danger-light);  border-color: transparent; }
+.mark-count.is-excused:not(.is-zero) { color: var(--info);    background: var(--info-light);    border-color: transparent; }
+
+/* Rows are focusable so 1-4 can set a status and advance. */
+.mark-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+/* Anyone not simply present is the exception worth seeing at a glance. */
+.mark-row.is-exception { background: color-mix(in srgb, var(--warning) 6%, transparent); }
+.mark-note-placeholder { display: block; }
+
+@media (max-width: 720px) {
+  /* Four ~30px targets per row is below the reliable tap size, so on a
+     phone the note collapses and the status buttons take the full width. */
+  .mark-note-placeholder { display: none; }
+  .mark-counts { width: 100%; }
+}

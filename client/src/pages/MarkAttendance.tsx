@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { usePermissions } from '../hooks/usePermissions';
-import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw } from 'lucide-react';
+import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw, Undo2, Info } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import './MarkAttendance.css';
@@ -43,6 +43,12 @@ export const MarkAttendance: React.FC = () => {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Whether this exact session already has marks on the server, so an
+  // overwrite is announced rather than silent (POST /mark upserts).
+  const [existing, setExisting] = useState<{ count: number; markedByName: string | null; lastMarkedAt: string | null } | null>(null);
+  const [dirty, setDirty] = useState(false);
+  // Snapshot taken at save time so the confirmation can offer an undo.
+  const [undoSnapshot, setUndoSnapshot] = useState<Record<string, AttendanceState> | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -106,12 +112,62 @@ export const MarkAttendance: React.FC = () => {
     })();
   }, [selectedClass]);
 
-  const setStatus = (id: string, status: Status) =>
+  const setStatus = (id: string, status: Status) => {
     setAttendance((p) => ({ ...p, [id]: { ...p[id], status } }));
-  const setNote = (id: string, notes: string) =>
+    setDirty(true);
+  };
+  const setNote = (id: string, notes: string) => {
     setAttendance((p) => ({ ...p, [id]: { ...p[id], notes } }));
-  const markAll = (status: Status) =>
+    setDirty(true);
+  };
+  const markAll = (status: Status) => {
     setAttendance((p) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { ...v, status }])));
+    setDirty(true);
+  };
+
+  // Does this session already have marks? POST /mark upserts, so without
+  // this the teacher silently replaces someone else's register.
+  useEffect(() => {
+    if (!selectedClass || !sessionDate) { setExisting(null); return; }
+    if (sessionType === 'subject' && !subjectId) { setExisting(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const qs = new URLSearchParams({
+          classId: selectedClass, date: sessionDate, period, sessionType,
+        });
+        if (sessionType === 'subject' && subjectId) qs.set('subjectId', String(subjectId));
+        const res = await apiGet<{ exists: boolean; count: number; markedByName: string | null; lastMarkedAt: string | null }>(
+          `/api/attendance/session-status?${qs.toString()}`
+        );
+        if (cancelled) return;
+        setExisting(res.data?.exists ? res.data : null);
+      } catch { if (!cancelled) setExisting(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedClass, sessionDate, period, sessionType, subjectId]);
+
+  // A half-marked register is easy to lose to a stray navigation.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  // Number keys set the focused row's status and advance, so a full register
+  // can be taken from the keyboard instead of aiming at four small targets
+  // per student — the pattern desktop school MIS have used for years.
+  const onRowKeyDown = (e: React.KeyboardEvent, index: number) => {
+    const idx = ['1', '2', '3', '4'].indexOf(e.key);
+    if (idx === -1) return;
+    e.preventDefault();
+    const student = students[index];
+    if (!student) return;
+    setStatus(student.id, STATUSES[idx].key);
+    const next = document.querySelector<HTMLElement>(`[data-mark-row="${index + 1}"]`);
+    next?.focus();
+  };
 
   /** `andContinue`: after saving, either navigate away (the old only option)
    *  or stay on the page with the roster reset for another period — a
@@ -125,29 +181,53 @@ export const MarkAttendance: React.FC = () => {
     }
     setSaving(true); setMessage(null);
     const activeClass = classes.find((c) => c.id === selectedClass);
+    const snapshot = attendance;
     try {
       await apiPost('/api/attendance/mark', {
         classId: selectedClass, className: activeClass?.name ?? 'Unknown Class',
         date: sessionDate, period, records: Object.values(attendance),
         sessionType, subjectId: sessionType === 'subject' ? subjectId : null,
       });
+      setDirty(false);
+      setExisting({ count: students.length, markedByName: 'you', lastMarkedAt: new Date().toISOString() });
       if (andContinue) {
-        setMessage({ type: 'success', text: 'Saved. Roster reset — ready for the next period.' });
+        // Keep the marks recoverable: "reset to all present" is destructive
+        // if the teacher only meant to save.
+        setUndoSnapshot(snapshot);
+        setMessage({ type: 'success', text: `Saved ${students.length} record${students.length === 1 ? '' : 's'}. Roster reset for the next period.` });
         resetRoster(students);
       } else {
+        setUndoSnapshot(null);
         setMessage({ type: 'success', text: 'Attendance recorded successfully.' });
         setTimeout(() => navigate('/dashboard'), 1200);
       }
     } catch (err) {
-      setMessage({ type: 'error', text: err instanceof ApiError ? err.message : 'Network error. Could not reach the server.' });
+      setMessage({
+        type: 'error',
+        text: err instanceof ApiError ? err.message : 'Could not reach the server — your marks are still here, try saving again.',
+      });
     } finally { setSaving(false); }
+  };
+
+  const restoreSnapshot = () => {
+    if (!undoSnapshot) return;
+    setAttendance(undoSnapshot);
+    setUndoSnapshot(null);
+    setMessage(null);
+    setDirty(true);
   };
 
   if (loadingClasses) {
     return <DashboardLayout><div style={{ padding: '80px 0' }}><LoadingSpinner /></div></DashboardLayout>;
   }
 
-  const markedCount = Object.keys(attendance).length;
+  // Every student starts Present, so "n of n marked" was always complete and
+  // told the teacher nothing. A breakdown is what they actually verify.
+  const counts = STATUSES.map((st) => ({
+    ...st,
+    n: Object.values(attendance).filter((a) => a.status === st.key).length,
+  }));
+  const exceptions = counts.filter((c) => c.key !== 'present' && c.n > 0);
 
   return (
     <DashboardLayout>
@@ -243,29 +323,75 @@ export const MarkAttendance: React.FC = () => {
             <button type="button" className="chip" onClick={() => markAll('excused')}>Excused</button>
           </div>
 
+          {existing && !message && (
+            <div className="alert alert-warning mt-4">
+              <Info size={16} />
+              <span>
+                This session already has <strong>{existing.count}</strong> record
+                {existing.count === 1 ? '' : 's'}
+                {existing.markedByName ? <> marked by <strong>{existing.markedByName}</strong></> : null}.
+                Saving will overwrite them.
+              </span>
+            </div>
+          )}
+
           {message && (
             <div className={`alert mt-4 ${message.type === 'success' ? 'alert-success' : 'alert-danger'}`}>
-              <AlertCircle size={16} /> <span>{message.text}</span>
+              <AlertCircle size={16} />
+              <span>{message.text}</span>
+              {undoSnapshot && message.type === 'success' && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={restoreSnapshot}>
+                  <Undo2 size={14} /> Undo reset
+                </button>
+              )}
             </div>
           )}
         </aside>
 
         {/* Right: student list */}
         <section className="card mark-list">
-          <div className="card-header">
-            <span className="section-title">Students {students.length > 0 && `(${students.length})`}</span>
+          <div className="card-header mark-head">
+            <span className="section-title">
+              Students {students.length > 0 && `(${students.length})`}
+            </span>
+            {students.length > 0 && (
+              <div className="mark-counts" role="status" aria-live="polite">
+                {counts.map((c) => (
+                  <span key={c.key} className={`mark-count is-${c.key}${c.n === 0 ? ' is-zero' : ''}`}>
+                    {c.icon}<strong>{c.n}</strong>
+                    <span className="hide-mobile">{c.label}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="mark-list-body">
             {loadingStudents ? (
-              <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+              <div className="flex flex-col gap-2" style={{ padding: '12px 16px' }}>
+                {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="rp-skeleton" />)}
+              </div>
             ) : students.length === 0 ? (
-              <div className="empty-state">No students registered for this class.</div>
+              <div className="empty-state" style={{ padding: '52px 0' }}>
+                <Info size={26} />
+                <span className="text-sm">No students in this class for the selected academic year.</span>
+                <span className="text-xs text-secondary mt-1">
+                  Check the year in the top bar, or assign students to this class group in the MIS.
+                </span>
+              </div>
             ) : (
-              students.map((s) => {
+              students.map((s, index) => {
                 const rec = attendance[s.id];
+                const isException = rec && rec.status !== 'present';
                 return (
-                  <div key={s.id} className="mark-row">
+                  <div
+                    key={s.id}
+                    className={`mark-row${isException ? ' is-exception' : ''}`}
+                    data-mark-row={index}
+                    tabIndex={0}
+                    onKeyDown={(e) => onRowKeyDown(e, index)}
+                    aria-label={`${s.name}, marked ${rec?.status ?? 'present'}. Press 1 to 4 to change.`}
+                  >
                     <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
                       <div className="avatar avatar-square">{initials(s.name)}</div>
                       <div style={{ minWidth: 0 }}>
@@ -285,12 +411,17 @@ export const MarkAttendance: React.FC = () => {
                         </button>
                       ))}
                     </div>
-                    <input
-                      className="input mark-note"
-                      placeholder="Note…"
-                      value={rec?.notes ?? ''}
-                      onChange={(e) => setNote(s.id, e.target.value)}
-                    />
+                    {isException ? (
+                      <input
+                        className="input mark-note"
+                        placeholder={rec?.status === 'late' ? 'Minutes late / reason…' : 'Reason…'}
+                        value={rec?.notes ?? ''}
+                        aria-label={`Note for ${s.name}`}
+                        onChange={(e) => setNote(s.id, e.target.value)}
+                      />
+                    ) : (
+                      <span className="mark-note-placeholder" aria-hidden="true" />
+                    )}
                   </div>
                 );
               })
@@ -299,7 +430,11 @@ export const MarkAttendance: React.FC = () => {
 
           {students.length > 0 && (
             <div className="mark-footer">
-              <span className="text-sm text-secondary">{markedCount} of {students.length} marked</span>
+              <span className="text-sm text-secondary">
+                {exceptions.length === 0
+                  ? `All ${students.length} present`
+                  : `${students.length} students · ${exceptions.map((c) => `${c.n} ${c.label.toLowerCase()}`).join(', ')}`}
+              </span>
               <div className="flex gap-2 flex-wrap">
                 <button type="button" className="btn btn-outline" onClick={() => navigate('/dashboard')}>Cancel</button>
                 <button

@@ -143,6 +143,50 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
 });
 
 // View attendance history (Teacher/Admin only)
+/**
+ * Has this exact session already been marked?
+ *
+ * POST /mark upserts (ON CONFLICT DO UPDATE), so re-submitting silently
+ * replaces an existing register with no indication that prior marks were
+ * overwritten. This lets the client warn first — it reports what's already
+ * recorded rather than deciding anything itself.
+ */
+router.get('/session-status', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+  const { classId, date, period = 'Morning', sessionType = 'homeroom' } = req.query;
+  const subjectId = req.query.subjectId ? Number(req.query.subjectId) : null;
+
+  if (!classId || !date) {
+    return res.status(400).json({ success: false, message: 'classId and date are required.' });
+  }
+  if (!DATE_RE.test(String(date))) {
+    return res.status(400).json({ success: false, message: 'Invalid date. Expected YYYY-MM-DD.' });
+  }
+
+  try {
+    const db = getDb();
+    const row = await db.get(
+      `SELECT COUNT(*) AS count, MAX(updated_at) AS last_marked, MAX(marked_by) AS marked_by
+       FROM attendance_records
+       WHERE class_id = ? AND session_date = ? AND period = ? AND session_type = ?
+         AND (subject_id IS ? OR subject_id = ?)`,
+      classId, date, period, sessionType, subjectId, subjectId
+    );
+    const count = row?.count ?? 0;
+    let markedByName: string | null = null;
+    if (count > 0 && row?.marked_by) {
+      const actor = await db.get('SELECT name FROM users WHERE id = ?', row.marked_by);
+      markedByName = actor?.name ?? null;
+    }
+    return res.json({
+      success: true,
+      data: { exists: count > 0, count, lastMarkedAt: row?.last_marked ?? null, markedByName },
+    });
+  } catch (error) {
+    console.error('Error checking session status:', error);
+    return res.status(500).json({ success: false, message: 'Could not check this session.' });
+  }
+});
+
 router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: any, res: Response) => {
   const { classId, dateFrom, dateTo, search, status, sessionType, subjectId } = req.query;
   const db = getDb();
