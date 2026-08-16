@@ -8,6 +8,7 @@ import { ProtectedRoute } from './components/common/ProtectedRoute';
 // Import Pages
 import { Login } from './pages/Login';
 import { SSOCallback } from './pages/SSOCallback';
+import { Welcome } from './pages/Welcome';
 import { Dashboard } from './pages/Dashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { RolesPermissions } from './pages/RolesPermissions';
@@ -40,6 +41,16 @@ export const App: React.FC = () => {
           <Route path="/" element={<Login />} />
           <Route path="/sso/callback" element={<SSOCallback />} />
           <Route path="/callback" element={<SSOCallback />} />
+
+          {/* Shared post-login landing for every assigned role */}
+          <Route
+            path="/welcome"
+            element={
+              <ProtectedRoute>
+                <Welcome />
+              </ProtectedRoute>
+            }
+          />
 
           {/* Unassigned users land here until an admin grants a role */}
           <Route

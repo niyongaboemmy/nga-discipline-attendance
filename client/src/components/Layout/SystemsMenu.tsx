@@ -100,7 +100,7 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
 
       <div className="systems-menu-grid">
         <a
-          href="/dashboard"
+          href="/welcome"
           onClick={(e) => { e.preventDefault(); onClose(); }}
           className="systems-menu-item is-current"
           aria-current="page"

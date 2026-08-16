@@ -161,7 +161,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu }) => {
           />
         </div>
 
-        <NavLink to="/dashboard" className="topnav-brand">
+        <NavLink to="/welcome" className="topnav-brand">
           <img src="/icon.png" alt="Tendo logo" />
           <span className="wordmark">Tendo</span>
         </NavLink>

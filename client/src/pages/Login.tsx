@@ -1,10 +1,24 @@
-import React from 'react';
-import { useAuth } from '../context/AuthContext';
+import React, { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth, homeRouteForRole } from '../context/AuthContext';
 import { ArrowRight, Sun, Moon, Info, ExternalLink } from 'lucide-react';
 import './Login.css';
 
 export const Login: React.FC = () => {
-  const { theme, toggleTheme, login } = useAuth();
+  const { theme, toggleTheme, login, isAuthenticated, user, loading } = useAuth();
+  const navigate = useNavigate();
+
+  // A valid session landing on "/" (stale bookmark, browser back, a stray
+  // internal link) used to render this public card regardless — silently
+  // "logged in but on the login screen" was the actual bug behind reports
+  // that the app "isn't auto-logging in".
+  useEffect(() => {
+    if (!loading && isAuthenticated && user) {
+      navigate(homeRouteForRole(user.role), { replace: true });
+    }
+  }, [loading, isAuthenticated, user, navigate]);
+
+  if (loading || (isAuthenticated && user)) return null;
 
   return (
     <div className="login-page">
