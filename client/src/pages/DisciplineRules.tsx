@@ -10,7 +10,7 @@ import { disciplineApi, type DisciplineRule, type RuleInput } from '../api/disci
 import { ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { RuleImportModal } from '../components/discipline/RuleImportModal';
-import { Plus, Trash2, Pencil, Gavel, Award, ShieldCheck, Upload } from 'lucide-react';
+import { Plus, Trash2, Pencil, Gavel, Award, ShieldCheck, Upload, Sparkles } from 'lucide-react';
 
 const emptyForm: RuleInput = {
   type: 'demerit', category: '', title: '', description: '', defaultPoints: 5, fineAmount: 0, severity: 'minor',
@@ -36,7 +36,8 @@ export const DisciplineRules: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [importing, setImporting] = useState(false);
+  // null = closed; otherwise which add-flow is open (spreadsheet or AI).
+  const [addMode, setAddMode] = useState<'file' | 'ai' | null>(null);
   const [form, setForm] = useState<RuleInput>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [retireTarget, setRetireTarget] = useState<DisciplineRule | null>(null);
@@ -187,8 +188,11 @@ export const DisciplineRules: React.FC = () => {
         </div>
         {canManage && (
           <div className="flex items-center gap-2">
-            <button className="btn btn-outline" onClick={() => setImporting(true)}>
+            <button className="btn btn-outline" onClick={() => setAddMode('file')}>
               <Upload size={16} /> Import
+            </button>
+            <button className="btn btn-outline" onClick={() => setAddMode('ai')}>
+              <Sparkles size={16} /> Describe with AI
             </button>
             <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
               <Plus size={16} /> New rule
@@ -197,10 +201,11 @@ export const DisciplineRules: React.FC = () => {
         )}
       </div>
 
-      {canManage && (
+      {canManage && addMode && (
         <RuleImportModal
-          open={importing}
-          onClose={() => setImporting(false)}
+          open
+          mode={addMode}
+          onClose={() => setAddMode(null)}
           onImported={load}
         />
       )}

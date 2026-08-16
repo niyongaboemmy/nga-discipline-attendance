@@ -138,9 +138,13 @@ interface RuleImportModalProps {
   onClose: () => void;
   /** Called after a successful import so the page can refresh its list. */
   onImported: () => void;
+  /** Which way of adding rules this was opened for. Both share the preview
+   *  and commit path, but they're separate entry points on the page rather
+   *  than a switcher buried inside one dialog. */
+  mode: Mode;
 }
 
-export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose, onImported }) => {
+export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose, onImported, mode }) => {
   const [fileName, setFileName] = useState<string | null>(null);
   const [rows, setRows] = useState<RowResult[] | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -148,7 +152,6 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
   const [report, setReport] = useState<ImportReport | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [mode, setMode] = useState<Mode>('file');
   const [prompt, setPrompt] = useState('');
   const [providerUsed, setProviderUsed] = useState<string | null>(null);
 
@@ -364,7 +367,7 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
     <Modal
       open={open}
       onClose={close}
-      title="Import discipline rules"
+      title={mode === 'ai' ? 'Draft rules with AI' : 'Import discipline rules'}
       maxWidth={820}
       footer={
         <>
@@ -377,31 +380,14 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
               onClick={submit}
               disabled={busy || validRows.length === 0}
             >
-              {busy ? 'Working…' : `Import ${validRows.length || ''} rule${validRows.length === 1 ? '' : 's'}`}
+              {busy
+                ? 'Working…'
+                : `${mode === 'ai' ? 'Add' : 'Import'} ${validRows.length || ''} rule${validRows.length === 1 ? '' : 's'}`}
             </button>
           )}
         </>
       }
     >
-      {!report && (
-        <div className="segmented mb-3">
-          <button
-            type="button"
-            className={`segmented-btn${mode === 'file' ? ' is-active' : ''}`}
-            onClick={() => { setMode('file'); setRows(null); setParseError(null); }}
-          >
-            <FileSpreadsheet size={14} /> From a spreadsheet
-          </button>
-          <button
-            type="button"
-            className={`segmented-btn${mode === 'ai' ? ' is-active' : ''}`}
-            onClick={() => { setMode('ai'); setRows(null); setParseError(null); setFileName(null); }}
-          >
-            <Sparkles size={14} /> Describe with AI
-          </button>
-        </div>
-      )}
-
       {/* AI drafting */}
       {!report && mode === 'ai' && (
         <div className="field">
