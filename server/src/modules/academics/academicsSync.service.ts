@@ -13,7 +13,9 @@ import { config } from '../../config.js';
  * Field names from the upstream MIS aren't guaranteed by a shared contract
  * test, so extraction below is defensive (tries a few common key spellings)
  * — the same posture already used in routes/mis.ts and utils/misAcademics.ts
- * for this integration.
+ * for this integration. The MIS paths themselves (class-groups,
+ * calendar/slots) are hardcoded, not env-overridable, now that they're
+ * confirmed against the MIS's actual routes rather than guessed.
  */
 
 async function fetchMisList(path: string, misToken: string, query?: Record<string, string>): Promise<any[]> {
@@ -87,12 +89,16 @@ export async function syncAcademicPeriods(db: Database, misToken: string): Promi
 }
 
 export async function syncRosterSchedule(db: Database, misToken: string): Promise<{ subjects: number; assignments: number }> {
-  const classes = await fetchMisList(process.env.MIS_CLASSES_PATH || '/classes', misToken);
+  // The real MIS route is /academics/class-groups (confirmed against
+  // nga_central_mis/backend/src/routes/academics.ts) -- the earlier /classes
+  // default here didn't exist anywhere on the MIS and 404'd every sync,
+  // which is why the local subjects cache stayed empty.
+  const classes = await fetchMisList('/academics/class-groups', misToken);
   const subjectIds = new Set<number>();
   let assignmentCount = 0;
 
   const classesWithIds = classes
-    .map((cls) => ({ cls, classId: pick(cls, 'class_id', 'id'), className: pick(cls, 'class_name', 'name') }))
+    .map((cls) => ({ cls, classId: pick(cls, 'class_group_id', 'id'), className: pick(cls, 'name', 'class_name') }))
     .filter((e) => e.classId != null);
 
   // One MIS round trip per class — independent of each other, so fetch
@@ -100,9 +106,12 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
   // classes otherwise pays dozens of sequential network round trips here).
   // A per-class failure degrades to an empty list rather than aborting the
   // whole sync, matching the previous per-class try/catch behavior.
+  //
+  // Real route is /calendar/slots (see calendarController.ts's
+  // getCalendarSlots), keyed by class_group_id -- not the guessed /schedule.
   const scheduleLists = await Promise.all(
     classesWithIds.map((e) =>
-      fetchMisList(process.env.MIS_SCHEDULE_PATH || '/schedule', misToken, { class_id: String(e.classId) })
+      fetchMisList('/calendar/slots', misToken, { class_group_id: String(e.classId) })
         .catch((err) => {
           console.error(`Roster sync: failed to fetch schedule for class ${e.classId}:`, (err as Error).message);
           return [] as any[];
@@ -116,7 +125,8 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
 
     for (const entry of entries) {
       const subjectId = pick(entry, 'subject_id', 'subjectId');
-      const teacherId = pick(entry, 'teacher_id', 'teacherId', 'staff_id');
+      // getCalendarSlots returns the teacher as user_id, not teacher_id.
+      const teacherId = pick(entry, 'user_id', 'teacher_id', 'teacherId', 'staff_id');
       if (subjectId == null || teacherId == null) continue;
 
       const subjectName = pick(entry, 'subject_name', 'subjectName') ?? `Subject ${subjectId}`;
@@ -131,7 +141,13 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
 
       const academicTermId = pick(entry, 'academic_term_id', 'academicTermId');
       const dayOfWeek = pick(entry, 'day_of_week', 'dayOfWeek');
-      const period = pick(entry, 'period', 'slot');
+      // getCalendarSlots has no single "period" field, just start/end times.
+      const period = pick(entry, 'start_time', 'period', 'slot');
+      // instructor_name/instructor_lastname are UserProfile's first/last
+      // name split across two columns, not one combined teacher_name field.
+      const combinedInstructorName =
+        [entry.instructor_name, entry.instructor_lastname].filter(Boolean).join(' ') || null;
+      const teacherName = pick(entry, 'teacher_name', 'teacherName') ?? combinedInstructorName;
 
       await db.run(
         `INSERT INTO class_subject_assignments
@@ -141,7 +157,7 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
            class_name=excluded.class_name, subject_name=excluded.subject_name,
            teacher_id=excluded.teacher_id, teacher_name=excluded.teacher_name, synced_at=CURRENT_TIMESTAMP`,
         String(classId), className, Number(subjectId), subjectName,
-        String(teacherId), pick(entry, 'teacher_name', 'teacherName'),
+        String(teacherId), teacherName,
         academicTermId != null ? Number(academicTermId) : null,
         dayOfWeek != null ? Number(dayOfWeek) : null,
         period
