@@ -2,6 +2,10 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import request from 'supertest';
 import { Database } from 'sqlite';
 import { setupTestDb, createTestUser, authHeader } from './testUtils.js';
+// vi.mock is hoisted above this import, so app.ts picks up the mock below.
+// (A top-level `await import` would read more obviously, but tsc compiles
+// this directory too and rejects top-level await under this module target.)
+import { app } from '../app.js';
 
 // Mocked so the suite never makes a real provider call (no keys, no cost, no
 // flakiness). The contract under test is this route's handling of whatever
@@ -13,8 +17,6 @@ vi.mock('../services/aiProviders/index.js', () => ({
   generateStructuredContent: (...args: any[]) => mockGenerate(...args),
   isAnyProviderConfigured: () => mockConfigured(),
 }));
-
-const { app } = await import('../app.js');
 
 describe('POST /api/discipline/rules/ai-draft', () => {
   let db: Database;
