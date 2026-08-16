@@ -35,6 +35,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<Envelop
     },
   });
 
+  // A 401 means the stored session is dead (expired, or its user row no
+  // longer exists). Clear it and bounce to the login screen rather than
+  // letting every page render its own error against a session that can
+  // never recover on its own.
+  if (res.status === 401 && localStorage.getItem('sso_token')) {
+    localStorage.removeItem('sso_token');
+    localStorage.removeItem('sso_user');
+    localStorage.removeItem('sso_permissions');
+    localStorage.removeItem('sso_role_permissions');
+    window.location.href = '/';
+  }
+
   let body: Envelope<T>;
   try {
     body = await res.json();

@@ -26,6 +26,13 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
+            # DATABASE_PATH deliberately points OUTSIDE this git working
+            # tree. attendance.db used to live at server/data/ *and* be
+            # tracked in git, so the `git reset --hard` above overwrote the
+            # live production database with the repo's dev copy on every
+            # deploy -- wiping real records and logging everyone out (their
+            # session's user row vanished, so every request 403'd). The file
+            # is now gitignored and stored where git can't reach it.
             cat > server/.env <<EOF
             PORT=5171
             NODE_ENV=production
@@ -33,7 +40,7 @@ jobs:
             SSO_CLIENT_ID=discipline_attendance
             SSO_CLIENT_SECRET="${SSO_CLIENT_SECRET}"
             JWT_SECRET="${JWT_SECRET}"
-            DATABASE_PATH=./data/attendance.db
+            DATABASE_PATH=/opt/apps/tendo-data/attendance.db
             CORS_ORIGINS=https://tendo.amashuri.com
             ADMIN_EMAILS=emmanuelniyongabo44@gmail.com
             EOF
