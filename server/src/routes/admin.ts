@@ -18,16 +18,35 @@ router.use(authMiddleware);
 async function syncMisUsers(misToken?: string) {
   if (!misToken) return;
   try {
-    const resp = await fetch(`${config.ngaMisBaseUrl}/users`, {
-      headers: { Authorization: `Bearer ${misToken}` },
+    // limit=1000: the MIS defaults to 10 per page, so without this only the
+    // first 10 users were ever considered for import.
+    const url = new URL(`${config.ngaMisBaseUrl}/users`);
+    url.searchParams.set('limit', '1000');
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json' },
     });
+    // Non-admin MIS accounts get 403 here (GET /users needs MANAGE_USERS);
+    // the local roster below is still served, so this stays best-effort.
     if (!resp.ok) return;
     const body = (await resp.json()) as any;
     const list: any[] = Array.isArray(body) ? body : body.data || body.users || [];
     const db = getDb();
-    for (const u of list) {
-      const id = u.id || u.uuid || u.email;
-      if (!id) continue;
+    for (const entry of list) {
+      // MIS returns nested { user, profile, roles, permissions } records and
+      // its PK is user_id, not id. Reading u.id/u.name/u.email off the top
+      // level (as this did) yielded undefined for every field, so the id
+      // check below rejected every row and nothing was ever imported.
+      const user = entry.user || entry;
+      const profile = entry.profile || {};
+      const id = user.user_id ?? user.id ?? user.email;
+      if (id == null) continue;
+      const name =
+        [profile.first_name ?? user.first_name, profile.last_name ?? user.last_name]
+          .filter(Boolean)
+          .join(' ')
+          .trim() ||
+        user.username ||
+        'Unknown';
       await db.run(
         `INSERT INTO users (id, name, email, role, source)
          VALUES (?, ?, ?, 'unassigned', 'mis')
@@ -35,7 +54,7 @@ async function syncMisUsers(misToken?: string) {
            name = excluded.name,
            email = COALESCE(excluded.email, users.email),
            updated_at = CURRENT_TIMESTAMP`,
-        id, u.name || u.username || 'Unknown', u.email || null
+        String(id), name, user.email || null
       );
     }
   } catch (err) {

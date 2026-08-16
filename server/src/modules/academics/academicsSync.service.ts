@@ -89,13 +89,30 @@ export async function syncAcademicPeriods(db: Database, misToken: string): Promi
 }
 
 export async function syncRosterSchedule(db: Database, misToken: string): Promise<{ subjects: number; assignments: number }> {
-  // The real MIS route is /academics/class-groups (confirmed against
-  // nga_central_mis/backend/src/routes/academics.ts) -- the earlier /classes
-  // default here didn't exist anywhere on the MIS and 404'd every sync,
-  // which is why the local subjects cache stayed empty.
-  const classes = await fetchMisList('/academics/class-groups', misToken);
   const subjectIds = new Set<number>();
   let assignmentCount = 0;
+
+  // Seed the subject cache from /academics/subjects first. That endpoint is
+  // readable by any authenticated MIS user, whereas the timetable below
+  // (/calendar/slots) needs calendar-admin permissions and 403s for
+  // teachers -- so deriving subjects only from the timetable left the
+  // "Subject / course" picker empty ("No subjects synced yet") for exactly
+  // the people who mark attendance. Subjects now populate regardless.
+  for (const s of await fetchMisList('/academics/subjects', misToken)) {
+    const id = pick(s, 'subject_id', 'id');
+    if (id == null) continue;
+    await db.run(
+      `INSERT INTO subjects (id, name, code, synced_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code, synced_at=CURRENT_TIMESTAMP`,
+      Number(id), pick(s, 'name', 'subject_name') ?? `Subject ${id}`, pick(s, 'code', 'subject_code')
+    );
+    subjectIds.add(Number(id));
+  }
+
+  // The real MIS route is /academics/class-groups (confirmed against
+  // nga_central_mis/backend/src/routes/academics.ts) -- the earlier /classes
+  // default here didn't exist anywhere on the MIS and 404'd every sync.
+  const classes = await fetchMisList('/academics/class-groups', misToken);
 
   const classesWithIds = classes
     .map((cls) => ({ cls, classId: pick(cls, 'class_group_id', 'id'), className: pick(cls, 'name', 'class_name') }))

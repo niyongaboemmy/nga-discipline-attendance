@@ -8,24 +8,35 @@ import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
  * MIS roster proxy.
  *
  * Reads class groups, students, staff and timetables from the NGA Central
- * MIS on behalf of the signed-in user. Every request is authenticated
- * locally (JWT) and forwarded to the MIS with that user's MIS access token,
- * so the MIS enforces its own authorization on the underlying records.
+ * MIS on behalf of the signed-in user, forwarding that user's own MIS
+ * access token so the MIS enforces its own authorization.
  *
- * The upstream paths below (class-groups, class-groups/:id/students,
- * calendar/slots, users) are the MIS's real routes -- confirmed against
- * nga_central_mis/backend/src/routes/academics.ts, calendar.ts and users.ts.
- * An earlier version of this file guessed at flat `/classes`, `/students`,
- * `/staff`, `/schedule` paths that don't exist anywhere on the MIS (every
- * one of them 404s), which is why roster data never loaded.
+ * IMPORTANT: forwarding the *end user's* token means we only get what that
+ * user may read on the MIS, and most MIS endpoints are admin-gated.
+ * Verified against the live MIS, a teacher or student token gets 403 on
+ * `/users` (needs MANAGE_USERS) and `/calendar/slots` (needs calendar-admin
+ * permissions) — which is why the Directory and schedule views failed for
+ * everyone who isn't a MIS administrator. Each handler below therefore
+ * prefers the richest endpoint the caller can actually read and degrades to
+ * a permission-free equivalent, rather than hard-failing:
+ *
+ *   students  : /users?userRole=6  ->  per-class-group rosters
+ *   staff     : /users             ->  /academics/teacher-assignments
+ *   schedule  : role-specific calendar -> /calendar/slots
+ *
+ * The permission-free paths (/academics/*, /users/search) are readable by
+ * any authenticated MIS user.
  */
 const router = Router();
 
 router.use(authMiddleware);
 router.use(authorizePermission('ROSTER_VIEW'));
 
-// Backend day_of_week convention (see nga_central_mis's calendarConstants.ts):
-// 0=Sunday, 1=Monday, ..., 6=Saturday (standard JS Date#getDay()).
+// MIS role_id for STUDENT (see nga_central_mis Role table).
+const MIS_STUDENT_ROLE_ID = '6';
+
+// Backend day_of_week convention (nga_central_mis calendarConstants.ts):
+// 0=Sunday .. 6=Saturday (standard JS Date#getDay()).
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 class MisRequestError extends Error {
@@ -34,12 +45,11 @@ class MisRequestError extends Error {
   }
 }
 
-/** GET from the MIS with the caller's misToken, returning its list payload. */
-async function fetchMisList(
+async function misGet(
   misToken: string,
   path: string,
   query?: Record<string, string | undefined>
-): Promise<any[]> {
+): Promise<any> {
   const url = new URL(`${config.ngaMisBaseUrl}${path}`);
   for (const [key, value] of Object.entries(query || {})) {
     if (value) url.searchParams.set(key, value);
@@ -51,7 +61,33 @@ async function fetchMisList(
     throw new MisRequestError(resp.status, `MIS returned ${resp.status} for ${path}.`);
   }
   const body = (await resp.json()) as any;
-  return Array.isArray(body) ? body : body.data ?? body.results ?? [];
+  return body && typeof body === 'object' && 'data' in body ? body.data : body;
+}
+
+async function misGetList(
+  misToken: string,
+  path: string,
+  query?: Record<string, string | undefined>
+): Promise<any[]> {
+  const data = await misGet(misToken, path, query);
+  return Array.isArray(data) ? data : [];
+}
+
+/** Same as misGetList but yields null on 403/404 so callers can fall back to
+ *  an endpoint this user is actually allowed to read. */
+async function misGetListOrNull(
+  misToken: string,
+  path: string,
+  query?: Record<string, string | undefined>
+): Promise<any[] | null> {
+  try {
+    return await misGetList(misToken, path, query);
+  } catch (error) {
+    if (error instanceof MisRequestError && (error.status === 403 || error.status === 404)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 function sendMisError(res: Response, path: string, error: unknown) {
@@ -77,34 +113,42 @@ function requireMisToken(req: AuthenticatedRequest, res: Response): string | nul
   return misToken;
 }
 
-/** A flat class-group-students row -> {id, name, email}. */
-function normalizeFlatStudent(s: any) {
+const fullName = (...parts: any[]) => parts.filter(Boolean).join(' ').trim();
+
+/** Flat MIS person row (class-group roster, /users/search) -> {id,name,email}. */
+function normalizeFlatPerson(s: any) {
   return {
     id: String(s.user_id ?? s.id),
-    name: [s.first_name, s.last_name].filter(Boolean).join(' ') || s.username || 'Unknown',
+    name: fullName(s.first_name, s.last_name) || s.username || 'Unknown',
     email: s.email || s.username || '',
   };
 }
 
-/** A nested { user, profile, roles } row from GET /users -> {id, name, email}. */
+/** Nested { user, profile } record from GET /users -> {id,name,email}. */
 function normalizeMisUser(entry: any) {
   const user = entry.user || entry;
   const profile = entry.profile || {};
   return {
     id: String(user.user_id ?? user.id),
     name:
-      [profile.first_name ?? user.first_name, profile.last_name ?? user.last_name]
-        .filter(Boolean)
-        .join(' ') || user.username || 'Unknown',
+      fullName(profile.first_name ?? user.first_name, profile.last_name ?? user.last_name) ||
+      user.username ||
+      'Unknown',
     email: user.email || user.username || '',
   };
+}
+
+function dedupeById<T extends { id: string }>(rows: T[]): T[] {
+  const seen = new Map<string, T>();
+  for (const row of rows) if (!seen.has(row.id)) seen.set(row.id, row);
+  return [...seen.values()];
 }
 
 router.get('/classes', async (req: any, res) => {
   const misToken = requireMisToken(req, res);
   if (!misToken) return;
   try {
-    const rows = await fetchMisList(misToken, '/academics/class-groups');
+    const rows = await misGetList(misToken, '/academics/class-groups');
     const data = rows.map((c: any) => ({
       id: String(c.class_group_id ?? c.id),
       name: c.name,
@@ -120,18 +164,39 @@ router.get('/students', async (req: any, res) => {
   const misToken = requireMisToken(req, res);
   if (!misToken) return;
   const classId = req.query.class_id as string | undefined;
+
   try {
     if (classId) {
-      // Roster for one class group, e.g. Mark Attendance's homeroom picker.
-      const rows = await fetchMisList(
+      // Roster for one class group (Mark Attendance). Permission-free.
+      const rows = await misGetList(
         misToken,
         `/academics/class-groups/${encodeURIComponent(classId)}/students`
       );
-      return res.json({ success: true, data: rows.map(normalizeFlatStudent) });
+      return res.json({ success: true, data: rows.map(normalizeFlatPerson) });
     }
-    // No class specified -- a school-wide listing (e.g. the Directory page).
-    const rows = await fetchMisList(misToken, '/users', { userRole: '6', limit: '1000' });
-    return res.json({ success: true, data: rows.map(normalizeMisUser) });
+
+    // School-wide list (Directory). /users is the complete source but needs
+    // MANAGE_USERS, so fall back to walking the class-group rosters, which
+    // any authenticated MIS user may read.
+    const viaUsers = await misGetListOrNull(misToken, '/users', {
+      userRole: MIS_STUDENT_ROLE_ID,
+      limit: '1000',
+    });
+    if (viaUsers) {
+      return res.json({ success: true, data: dedupeById(viaUsers.map(normalizeMisUser)) });
+    }
+
+    const classGroups = await misGetList(misToken, '/academics/class-groups');
+    const rosters = await Promise.all(
+      classGroups.map((c: any) =>
+        misGetListOrNull(
+          misToken,
+          `/academics/class-groups/${encodeURIComponent(String(c.class_group_id ?? c.id))}/students`
+        ).then((r) => r ?? [])
+      )
+    );
+    const students = dedupeById(rosters.flat().map(normalizeFlatPerson));
+    return res.json({ success: true, data: students });
   } catch (error) {
     sendMisError(res, classId ? `/academics/class-groups/${classId}/students` : '/users', error);
   }
@@ -141,15 +206,27 @@ router.get('/staff', async (req: any, res) => {
   const misToken = requireMisToken(req, res);
   if (!misToken) return;
   try {
-    // MIS's /users only filters by a single role at a time, and "staff"
-    // spans several (teacher, admin, accountant, ...) -- fetch broadly and
-    // exclude students instead of trying to enumerate every staff role id.
-    const rows = await fetchMisList(misToken, '/users', { limit: '1000' });
-    const staffOnly = rows.filter(
-      (entry: any) =>
-        !(entry.roles || []).some((r: any) => String(r.name).toUpperCase() === 'STUDENT')
+    // /users spans every staff role at once but needs MANAGE_USERS; the
+    // teacher-assignment list is permission-free and names every teacher
+    // actually assigned to teach something.
+    const viaUsers = await misGetListOrNull(misToken, '/users', { limit: '1000' });
+    if (viaUsers) {
+      const staffOnly = viaUsers.filter(
+        (entry: any) =>
+          !(entry.roles || []).some((r: any) => String(r.name).toUpperCase() === 'STUDENT')
+      );
+      return res.json({ success: true, data: dedupeById(staffOnly.map(normalizeMisUser)) });
+    }
+
+    const assignments = await misGetList(misToken, '/academics/teacher-assignments');
+    const staff = dedupeById(
+      assignments.map((a: any) => ({
+        id: String(a.user_id),
+        name: a.teacher_name || a.teacher_username || 'Unknown',
+        email: a.teacher_username || '',
+      }))
     );
-    res.json({ success: true, data: staffOnly.map(normalizeMisUser) });
+    return res.json({ success: true, data: staff });
   } catch (error) {
     sendMisError(res, '/users', error);
   }
@@ -158,32 +235,54 @@ router.get('/staff', async (req: any, res) => {
 router.get('/schedule', async (req: any, res) => {
   const misToken = requireMisToken(req, res);
   if (!misToken) return;
+  const classId = req.query.class_id as string | undefined;
+  const role = (req as AuthenticatedRequest).user?.role;
+
   try {
     const { academicTermId } = await resolveCurrentAcademicPeriod(misToken);
-    const rows = await fetchMisList(misToken, '/calendar/slots', {
-      class_group_id: req.query.class_id as string | undefined,
-      academic_term_id: academicTermId != null ? String(academicTermId) : undefined,
-    });
+    const termId = academicTermId != null ? String(academicTermId) : undefined;
+
+    // /calendar/slots is the admin-wide view and 403s for teachers and
+    // students; each role has its own permitted calendar endpoint, which
+    // returns { slots, upcoming, term_id } rather than a bare array.
+    let slots: any[] | null = null;
+    if (role === 'student') {
+      const own = await misGetOrNullObject(misToken, '/calendar/student-calendar', {
+        academic_term_id: termId,
+      });
+      slots = own?.slots ?? null;
+    } else if (role === 'teacher') {
+      const own = await misGetOrNullObject(misToken, '/calendar/my-calendar', {
+        academic_term_id: termId,
+        class_group_id: classId,
+      });
+      slots = own?.slots ?? null;
+    }
+    if (slots === null) {
+      slots =
+        (await misGetListOrNull(misToken, '/calendar/slots', {
+          class_group_id: classId,
+          academic_term_id: termId,
+        })) ?? [];
+    }
 
     const byDay = new Map<number, any[]>();
-    for (const slot of rows) {
+    for (const slot of slots) {
       const day = Number(slot.day_of_week);
       if (Number.isNaN(day)) continue;
-      const period = {
+      if (!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day)!.push({
         time:
           slot.start_time && slot.end_time
             ? `${slot.start_time} - ${slot.end_time}`
             : slot.start_time || '',
         subject: slot.subject_name || 'Subject',
         room: slot.location || '',
-        teacher:
-          [slot.instructor_name, slot.instructor_lastname].filter(Boolean).join(' ') || '',
-      };
-      if (!byDay.has(day)) byDay.set(day, []);
-      byDay.get(day)!.push(period);
+        teacher: fullName(slot.instructor_name, slot.instructor_lastname),
+      });
     }
 
-    const data = Array.from(byDay.keys())
+    const data = [...byDay.keys()]
       .sort((a, b) => a - b)
       .map((day) => ({
         day: DAY_NAMES[day] ?? `Day ${day}`,
@@ -192,8 +291,25 @@ router.get('/schedule', async (req: any, res) => {
 
     res.json({ success: true, data });
   } catch (error) {
-    sendMisError(res, '/calendar/slots', error);
+    sendMisError(res, '/calendar', error);
   }
 });
+
+/** Object-returning variant of misGetListOrNull (the per-role calendar
+ *  endpoints return `{ slots, upcoming, term_id }`, not an array). */
+async function misGetOrNullObject(
+  misToken: string,
+  path: string,
+  query?: Record<string, string | undefined>
+): Promise<any | null> {
+  try {
+    return await misGet(misToken, path, query);
+  } catch (error) {
+    if (error instanceof MisRequestError && (error.status === 403 || error.status === 404)) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 export default router;
