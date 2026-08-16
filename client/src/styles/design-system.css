@@ -700,7 +700,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   left: 0;
   right: 0;
   width: 100%;
-  z-index: 200;
+  z-index: var(--z-navbar);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -761,7 +761,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow-popover);
-  z-index: 500;
+  z-index: var(--z-popover);
 }
 .menu--right { left: auto; right: 0; }
 .menu-header {
@@ -1077,7 +1077,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .sidebar-scrim {
   position: fixed;
   inset: 0;
-  z-index: 210;
+  z-index: var(--z-sidebar-scrim);
   background: rgba(15, 16, 24, 0.4);
   animation: fade-in 0.15s ease-out;
 }
@@ -1089,7 +1089,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   top: var(--navbar-height);
   left: 0;
   bottom: 0;
-  z-index: 220;
+  z-index: var(--z-sidebar-drawer);
   width: 280px;
   max-width: 85vw;
   display: flex;
@@ -1113,7 +1113,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow-popover);
-  z-index: 500;
+  z-index: var(--z-popover);
   overflow: hidden;
 }
 @media (max-width: 640px) {
@@ -1343,7 +1343,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 
 .ss-panel {
   position: absolute;
-  z-index: 600;
+  z-index: var(--z-dropdown);
   top: calc(100% + 5px);
   left: 0;
   right: 0;
@@ -1593,7 +1593,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: var(--navbar-height);
-  z-index: 20;
+  z-index: var(--z-sticky);
   background: var(--bg-card);
 }
 .rp-search { position: relative; flex: 1; min-width: 200px; max-width: 380px; }
@@ -1668,7 +1668,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .rp-savebar {
   position: sticky;
   bottom: 0;
-  z-index: 25;
+  z-index: var(--z-sticky);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1850,4 +1850,71 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   background: var(--primary-light);
   border-color: color-mix(in srgb, var(--primary) 40%, transparent);
   color: var(--primary);
+}
+
+/* ==========================================================================
+   Admin Console
+   ========================================================================== */
+.admin-tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.admin-tool {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  transition: border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.admin-tool:hover:not(:disabled) {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+  text-decoration: none;
+}
+.admin-tool:disabled { opacity: 0.65; }
+.admin-tool-icon {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--primary-light);
+  color: var(--primary);
+}
+.admin-tool-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.admin-tool-title { font-size: 13.5px; font-weight: 650; color: var(--text-primary); letter-spacing: -0.01em; }
+.admin-tool-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+.admin-tool-go { flex-shrink: 0; color: var(--text-tertiary); }
+.admin-tool:hover .admin-tool-go { color: var(--primary); }
+
+/* Stat cards double as table filters, so they need affordance + pressed state. */
+.admin-stat { cursor: pointer; text-align: left; width: 100%; }
+.admin-stat:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.admin-stat.is-selected {
+  border-color: var(--accent-color, var(--primary));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color, var(--primary)) 16%, transparent);
+}
+
+.admin-users-head { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.admin-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+.admin-sort:hover { color: var(--text-primary); }
+
+/* A user with no role can't do anything yet — make that scannable rather
+   than something you have to read every badge to find. */
+.table tr.is-unassigned td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+
+@media (max-width: 640px) {
+  .admin-users-head .rp-search { width: 100%; min-width: 0 !important; }
 }

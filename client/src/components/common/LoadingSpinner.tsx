@@ -31,7 +31,9 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ size = 'md', ful
     return (
       <div
         className="flex items-center justify-center"
-        style={{ position: 'fixed', inset: 0, background: 'var(--bg-page)', zIndex: 9999 }}
+        // --z-overlay, not an arbitrary 9999: this sat above dialogs, so a
+        // full-page load could paint over an open one.
+        style={{ position: 'fixed', inset: 0, background: 'var(--bg-page)', zIndex: 'var(--z-overlay)' as any }}
         role="status"
         aria-label="Loading Tendo"
       >

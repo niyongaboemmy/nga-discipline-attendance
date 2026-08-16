@@ -107,6 +107,22 @@
   --font-size-base-wide: 14.5px; /* applied above 1920px viewport, same as siblings */
 
   /* --- Layout metrics --- */
+  /* --- Layering ---------------------------------------------------------
+     One ordered scale for everything that overlaps, so a new overlay can be
+     placed by reading this list instead of guessing a number. Dialogs sit at
+     the top deliberately: a full-page spinner used to be hardcoded at 9999
+     and would cover an open dialog. Toasts sit above dialogs so feedback
+     about an action stays visible while its dialog is still open. */
+  --z-sticky: 20;          /* in-page sticky toolbars / save bars */
+  --z-navbar: 200;
+  --z-sidebar-scrim: 210;
+  --z-sidebar-drawer: 220;
+  --z-popover: 500;        /* menus, popovers */
+  --z-dropdown: 600;       /* select panels */
+  --z-overlay: 900;        /* full-page blocking spinner */
+  --z-modal: 1000;         /* dialogs — above all page chrome */
+  --z-toast: 1100;         /* above dialogs, so confirmations are readable */
+
   --navbar-height: 64px;
   --sidebar-width: 256px;      /* w-64 */
   --sidebar-width-collapsed: 80px; /* w-20 */

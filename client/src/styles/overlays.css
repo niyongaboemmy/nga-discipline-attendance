@@ -4,7 +4,7 @@
   position: fixed;
   top: 20px;
   right: 20px;
-  z-index: 1000;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -43,29 +43,90 @@
 .modal-scrim {
   position: fixed;
   inset: 0;
-  z-index: 1100;
+  z-index: var(--z-modal);
   background: rgba(15, 16, 24, 0.40);
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 20px;
+  overflow-y: auto;
   animation: fade-in 0.15s ease-out;
 }
 .modal-card {
   width: 100%;
   max-width: 420px;
+  /* Centred via auto margins rather than align-items:center, so a dialog
+     taller than the viewport scrolls with its top intact instead of being
+     cut off at both ends. */
+  margin: auto;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-popover);
-  padding: 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22), var(--shadow-popover);
+  padding: 20px 22px;
   animation: rise-in 200ms var(--ease-out) both;
 }
-.modal-title { font-size: 17px; font-weight: 700; font-family: var(--font-display); }
-.modal-message { font-size: 14px; color: var(--text-secondary); margin-top: 8px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+[data-theme="dark"] .modal-card { box-shadow: 0 26px 70px rgba(0, 0, 0, 0.62); }
+.modal-card:focus { outline: none; }
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-shrink: 0;
+}
+.modal-title {
+  font-size: 17px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+.modal-subtitle { font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; }
+.modal-close {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -4px -6px 0 0;
+  border-radius: var(--radius-full);
+  color: var(--text-tertiary);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.modal-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Deliberately NOT a scroll container. `overflow` here would clip any
+   absolutely-positioned child that escapes the box — notably the
+   SearchableSelect panel in the New role dialog. Tall dialogs scroll via
+   .modal-scrim instead; content that needs its own scroll (the import
+   preview) caps its own height. */
+.modal-body { flex: 1; margin-top: 12px; }
+.modal-message { font-size: 14px; color: var(--text-secondary); }
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .modal-scrim { padding: 12px; }
+  .modal-card { border-radius: var(--radius-lg); }
+  .modal-actions { flex-direction: column-reverse; }
+  .modal-actions .btn { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-scrim, .modal-card { animation: none; }
+}
 
 /* Print: when printing a report, hide the app chrome and show only the print area. */
 @media print {

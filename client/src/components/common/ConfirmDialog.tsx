@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react';
+import React from 'react';
+import { Dialog } from './Dialog';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -13,32 +14,37 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
+/** Fixed title/message/confirm-cancel shape used across the app, built on
+ *  the shared `Dialog` primitive so its overlay behaviour can't drift from
+ *  `Modal`'s. While an action is in flight the dialog stops being
+ *  dismissible — Escape or a stray backdrop click shouldn't close a
+ *  half-finished delete. */
 export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   open, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel',
   danger = false, loading = false, onConfirm, onCancel,
-}) => {
-  // Close on Escape.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onCancel]);
-
-  if (!open) return null;
-
-  return (
-    <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-      <div className="modal-card" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="modal-title">{title}</div>
-        <div className="modal-message">{message}</div>
-        <div className="modal-actions">
-          <button className="btn btn-outline" onClick={onCancel} disabled={loading}>{cancelLabel}</button>
-          <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={onConfirm} disabled={loading}>
-            {loading ? 'Working…' : confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+}) => (
+  <Dialog
+    open={open}
+    onClose={onCancel}
+    title={title}
+    maxWidth={420}
+    dismissible={!loading}
+    hideClose
+    footer={
+      <>
+        <button className="btn btn-outline" onClick={onCancel} disabled={loading}>
+          {cancelLabel}
+        </button>
+        <button
+          className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`}
+          onClick={onConfirm}
+          disabled={loading}
+        >
+          {loading ? 'Working…' : confirmLabel}
+        </button>
+      </>
+    }
+  >
+    <p className="modal-message">{message}</p>
+  </Dialog>
+);

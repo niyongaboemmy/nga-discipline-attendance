@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Users, GraduationCap, Briefcase, ShieldCheck, HelpCircle, Search, Check, AlertCircle, Inbox, KeyRound, RefreshCw } from 'lucide-react';
+import { Users, GraduationCap, Briefcase, ShieldCheck, HelpCircle, Search, Check, AlertCircle, Inbox, KeyRound, RefreshCw, X, ArrowUpDown, ChevronRight } from 'lucide-react';
 import { useAuth, type Role } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
@@ -40,6 +40,9 @@ export const AdminDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  // 'all' | a role level | 'unassigned' — also what the stat cards set.
+  const [segment, setSegment] = useState<'all' | 'student' | 'teacher' | 'admin' | 'unassigned'>('all');
+  const [sortAsc, setSortAsc] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   // A role change requested via the dropdown, awaiting confirmation.
@@ -130,20 +133,28 @@ export const AdminDashboard: React.FC = () => {
     setPending({ id: u.id, name: u.name, fromRoleId: u.role_id, toRoleId, toName });
   };
 
-  const visible = useMemo(
-    () => users.filter((u) =>
-      [u.name, u.email || '', u.id].some((f) => f.toLowerCase().includes(search.toLowerCase()))),
-    [users, search],
-  );
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return users
+      .filter((u) => (segment === 'all' ? true : u.role === segment))
+      .filter((u) =>
+        !q || [u.name, u.email || '', u.id].some((f) => f.toLowerCase().includes(q)))
+      .sort((a, b) => (sortAsc ? 1 : -1) * a.name.localeCompare(b.name));
+  }, [users, search, segment, sortAsc]);
 
   const currentRoleName = (u: ManagedUser) => roles.find((r) => r.id === u.role_id)?.name || (u.role === 'unassigned' ? 'Unassigned' : u.role);
 
-  const cards = overview ? [
-    { label: 'Total Users', value: overview.total, icon: <Users size={18} />, accent: 'var(--primary)', tag: 'Roster' },
-    { label: 'Students', value: overview.students, icon: <GraduationCap size={18} />, accent: 'var(--success)', tag: 'Role' },
-    { label: 'Teachers', value: overview.teachers, icon: <Briefcase size={18} />, accent: 'var(--info)', tag: 'Role' },
-    { label: 'Admins', value: overview.admins, icon: <ShieldCheck size={18} />, accent: 'var(--accent)', tag: 'Role' },
-    { label: 'Unassigned', value: overview.unassigned, icon: <HelpCircle size={18} />, accent: 'var(--warning)', tag: 'Action Needed' },
+  // Each card doubles as a filter for the table below — the counts were
+  // previously decorative, so seeing "3 unassigned" meant then hunting for
+  // them by hand.
+  const cards: Array<{
+    key: typeof segment; label: string; value: number; icon: React.ReactNode; accent: string;
+  }> = overview ? [
+    { key: 'all', label: 'Total users', value: overview.total, icon: <Users size={18} />, accent: 'var(--primary)' },
+    { key: 'student', label: 'Students', value: overview.students, icon: <GraduationCap size={18} />, accent: 'var(--success)' },
+    { key: 'teacher', label: 'Teachers', value: overview.teachers, icon: <Briefcase size={18} />, accent: 'var(--info)' },
+    { key: 'admin', label: 'Admins', value: overview.admins, icon: <ShieldCheck size={18} />, accent: 'var(--accent)' },
+    { key: 'unassigned', label: 'Unassigned', value: overview.unassigned, icon: <HelpCircle size={18} />, accent: 'var(--warning)' },
   ] : [];
 
   return (
@@ -163,31 +174,30 @@ export const AdminDashboard: React.FC = () => {
         </HeroBanner>
       )}
 
-      {can(['ROLES_PERMISSIONS_VIEW', 'ROLES_PERMISSIONS_MANAGE']) && (
-        <div className="card card-pad mb-4 flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <KeyRound size={20} color="var(--accent)" />
-            <div>
-              <div className="font-semibold text-sm">Roles &amp; Permissions</div>
-              <div className="text-xs text-secondary">Create custom roles and fine-tune what each one can do.</div>
-            </div>
-          </div>
-          <Link to="/admin/roles" className="btn btn-outline btn-sm">Manage roles</Link>
-        </div>
-      )}
-
-      {can('ROSTER_SYNC') && (
-        <div className="card card-pad mb-4 flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <RefreshCw size={20} color="var(--accent)" />
-            <div>
-              <div className="font-semibold text-sm">Academic period &amp; roster sync</div>
-              <div className="text-xs text-secondary">Pull academic years/terms and the subject/timetable cache from the MIS — needed for subject/course attendance.</div>
-            </div>
-          </div>
-          <button className="btn btn-outline btn-sm" onClick={syncFromMis} disabled={syncing}>
-            <RefreshCw size={14} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} /> {syncing ? 'Syncing…' : 'Sync now'}
-          </button>
+      {(can(['ROLES_PERMISSIONS_VIEW', 'ROLES_PERMISSIONS_MANAGE']) || can('ROSTER_SYNC')) && (
+        <div className="admin-tools mb-5">
+          {can(['ROLES_PERMISSIONS_VIEW', 'ROLES_PERMISSIONS_MANAGE']) && (
+            <Link to="/admin/roles" className="admin-tool">
+              <span className="admin-tool-icon"><KeyRound size={17} /></span>
+              <span className="admin-tool-body">
+                <span className="admin-tool-title">Roles &amp; Permissions</span>
+                <span className="admin-tool-desc">Create custom roles and fine-tune what each one can do.</span>
+              </span>
+              <ChevronRight size={16} className="admin-tool-go" />
+            </Link>
+          )}
+          {can('ROSTER_SYNC') && (
+            <button className="admin-tool" onClick={syncFromMis} disabled={syncing}>
+              <span className="admin-tool-icon">
+                <RefreshCw size={17} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />
+              </span>
+              <span className="admin-tool-body">
+                <span className="admin-tool-title">{syncing ? 'Syncing from MIS…' : 'Sync roster & academic period'}</span>
+                <span className="admin-tool-desc">Pull years, terms and the subject timetable — needed for subject attendance.</span>
+              </span>
+              <ChevronRight size={16} className="admin-tool-go" />
+            </button>
+          )}
         </div>
       )}
 
@@ -199,16 +209,25 @@ export const AdminDashboard: React.FC = () => {
       ) : (
         <>
           {/* System overview */}
-          <div className="grid mb-6" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '16px' }}>
+          <div className="grid mb-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(168px, 1fr))', gap: '14px' }}>
             {cards.map((c) => (
-              <div key={c.label} className="stat-card" style={{ ['--accent-color' as string]: c.accent }}>
+              <button
+                key={c.label}
+                className={`stat-card admin-stat${segment === c.key ? ' is-selected' : ''}`}
+                style={{ ['--accent-color' as string]: c.accent }}
+                onClick={() => setSegment(c.key)}
+                aria-pressed={segment === c.key}
+                title={c.key === 'all' ? 'Show all users' : `Show only ${c.label.toLowerCase()}`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="stat-icon">{c.icon}</span>
-                  <span className="stat-tag">{c.tag}</span>
+                  {c.key === 'unassigned' && c.value > 0 && (
+                    <span className="badge badge-warning">Needs action</span>
+                  )}
                 </div>
                 <div className="stat-value">{c.value}</div>
                 <span className="stat-label">{c.label}</span>
-              </div>
+              </button>
             ))}
           </div>
 
@@ -216,25 +235,67 @@ export const AdminDashboard: React.FC = () => {
 
           {/* User management */}
           <section className="card">
-            <div className="card-header">
-              <span className="section-title">User management</span>
-              <div className="input-with-icon" style={{ width: '260px', maxWidth: '50%' }}>
-                <Search className="field-icon" size={16} />
-                <input className="input" placeholder="Search users…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <div className="card-header admin-users-head">
+              <div>
+                <span className="section-title">User management</span>
+                <div className="text-xs text-secondary mt-1">
+                  {segment === 'all'
+                    ? `${users.length} account${users.length === 1 ? '' : 's'}`
+                    : `Filtered to ${segment}`}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {(segment !== 'all' || search) && (
+                  <button className="rp-chip is-on" onClick={() => { setSegment('all'); setSearch(''); }}>
+                    <X size={12} /> Clear filters
+                  </button>
+                )}
+                <div className="rp-search" style={{ minWidth: 220 }}>
+                  <Search className="field-icon" size={15} />
+                  <input
+                    className="input"
+                    placeholder="Search name, email or ID…"
+                    value={search}
+                    aria-label="Search users"
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button className="rp-search-clear" onClick={() => setSearch('')} aria-label="Clear search">
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
             {visible.length === 0 ? (
-              <div className="empty-state"><Inbox size={28} /><span className="text-sm">No users found.</span></div>
+              <div className="empty-state" style={{ padding: '52px 0' }}>
+                <Inbox size={28} />
+                <span className="text-sm">No users match these filters.</span>
+                <button className="btn btn-outline btn-sm mt-3" onClick={() => { setSegment('all'); setSearch(''); }}>
+                  Clear filters
+                </button>
+              </div>
             ) : (
               <div className="table-wrap">
                 <table className="table table--hover">
                   <thead>
-                    <tr><th>User</th><th>Email</th><th>Status</th><th>Role</th><th></th></tr>
+                    <tr>
+                      <th>
+                        <button
+                          className="admin-sort"
+                          onClick={() => setSortAsc((v) => !v)}
+                          aria-label={`Sort by name, currently ${sortAsc ? 'ascending' : 'descending'}`}
+                        >
+                          User <ArrowUpDown size={12} />
+                        </button>
+                      </th>
+                      <th>Email</th><th>Status</th><th>Role</th><th></th>
+                    </tr>
                   </thead>
                   <tbody>
                     {visible.map((u) => (
-                      <tr key={u.id}>
+                      <tr key={u.id} className={u.role === 'unassigned' ? 'is-unassigned' : undefined}>
                         <td>
                           <div className="flex items-center gap-3">
                             <div className="avatar avatar-square avatar-sm">{initials(u.name)}</div>
