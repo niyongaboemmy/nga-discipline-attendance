@@ -1,9 +1,11 @@
-import { Database } from 'sqlite';
-
 /**
  * Shared conduct/discipline logic — the single source of truth for point values,
  * category/sanction vocabularies, and score computation. Imported by the
  * discipline route so the API (not the client) owns these rules.
+ *
+ * NOTE: these hardcoded tiers remain the fallback path for legacy (pre-rules-
+ * catalog) records. New writes should prefer `discipline_rules` — see
+ * modules/discipline/rules.repository.ts.
  */
 
 // Point magnitudes per tier. Always positive; the sign is applied in
@@ -81,30 +83,7 @@ export function computeConductScore(records: Array<{ type: string; points: numbe
   return Math.max(0, Math.min(100, score));
 }
 
-/**
- * Append a row to the audit_log. Best-effort: failures are logged but never block
- * the primary action (a missing audit row must not fail a role change, etc.).
- */
-export async function recordAudit(
-  db: Database,
-  actor: { id: string; name?: string },
-  action: string,
-  entityType: string,
-  entityId: string | number | null,
-  details?: unknown
-): Promise<void> {
-  try {
-    await db.run(
-      `INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, details)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      actor.id,
-      actor.name || null,
-      action,
-      entityType,
-      entityId === null ? null : String(entityId),
-      details === undefined ? null : JSON.stringify(details)
-    );
-  } catch (err) {
-    console.error('Failed to write audit_log entry:', err);
-  }
-}
+// recordAudit now lives in shared/audit.ts (used across all modules, not just
+// discipline). Re-exported here so existing `from '../utils/conduct.js'`
+// imports keep working.
+export { recordAudit } from '../shared/audit.js';

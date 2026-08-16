@@ -2,18 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { User, Bell, Palette, Shield, Moon, Sun } from 'lucide-react';
+import { apiGet, apiPut, ApiError } from '../api/client';
+import { User, Bell } from 'lucide-react';
 
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
 interface NotifPrefs { emailNotifications: boolean; absenceAlerts: boolean; weeklySummary: boolean }
 const DEFAULT_PREFS: NotifPrefs = { emailNotifications: true, absenceAlerts: true, weeklySummary: false };
 
-type Tab = 'account' | 'notifications' | 'appearance' | 'security';
+type Tab = 'account' | 'notifications';
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
-  { key: 'account', label: 'Account', icon: <User size={18} /> },
+  { key: 'account', label: 'Account & security', icon: <User size={18} /> },
   { key: 'notifications', label: 'Notifications', icon: <Bell size={18} /> },
-  { key: 'appearance', label: 'Appearance', icon: <Palette size={18} /> },
-  { key: 'security', label: 'Security', icon: <Shield size={18} /> },
 ];
 
 const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void }> = ({ checked, onChange }) => (
@@ -33,8 +31,13 @@ const Row: React.FC<{ title: string; desc: string; children: React.ReactNode }> 
   </div>
 );
 
+/** Two tabs, not four: Appearance was a straight duplicate of the navbar's
+ *  theme toggle (removed — one place to change theme, not two), and
+ *  Security was a single read-only row that now lives inside Account since
+ *  both are "info synced from the MIS", not separate concerns worth their
+ *  own tab. */
 export const Settings: React.FC = () => {
-  const { user, theme, toggleTheme } = useAuth();
+  const { user } = useAuth();
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('account');
 
@@ -47,15 +50,10 @@ export const Settings: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/settings', { headers: authHeaders() });
-        if (res.ok) {
-          const result = await res.json();
-          if (result.success) {
-            const p = { ...DEFAULT_PREFS, ...result.data.preferences };
-            setNotif(p);
-            setSavedNotif(p);
-          }
-        }
+        const res = await apiGet<{ preferences: Partial<NotifPrefs> }>('/api/settings');
+        const p = { ...DEFAULT_PREFS, ...res.data?.preferences };
+        setNotif(p);
+        setSavedNotif(p);
       } catch (err) { console.error('Error loading settings:', err); }
     })();
   }, []);
@@ -63,20 +61,11 @@ export const Settings: React.FC = () => {
   const saveNotif = async () => {
     setSaving(true);
     try {
-      const res = await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ preferences: notif }),
-      });
-      const result = await res.json();
-      if (res.ok && result.success) {
-        setSavedNotif(notif);
-        toast.success('Preferences saved');
-      } else {
-        toast.error('Could not save', result.message);
-      }
-    } catch {
-      toast.error('Network error', 'Could not reach the server.');
+      await apiPut('/api/settings', { preferences: notif });
+      setSavedNotif(notif);
+      toast.success('Preferences saved');
+    } catch (err) {
+      toast.error('Could not save', err instanceof ApiError ? err.message : 'Network error. Could not reach the server.');
     } finally { setSaving(false); }
   };
 
@@ -107,6 +96,12 @@ export const Settings: React.FC = () => {
               <Row title="Account ID" desc=""><span className="mono text-sm">{user?.id}</span></Row>
               <Row title="Email" desc=""><span className="text-sm">{user?.email || '—'}</span></Row>
               <Row title="Role" desc=""><span className="badge badge-primary">{user?.role}</span></Row>
+              <Row title="Single sign-on" desc="Your session is secured via Discipline OAuth2">
+                <span className="badge badge-success">Active</span>
+              </Row>
+              <Row title="Password" desc="Managed by Discipline">
+                <a href="https://mis.amashuri.com/login" target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">Manage in MIS</a>
+              </Row>
             </>
           )}
 
@@ -128,32 +123,6 @@ export const Settings: React.FC = () => {
                   {saving ? 'Saving…' : 'Save changes'}
                 </button>
               </div>
-            </>
-          )}
-
-          {tab === 'appearance' && (
-            <>
-              <span className="section-title">Appearance</span>
-              <p className="text-sm text-secondary mt-1 mb-3">Customize how the portal looks.</p>
-              <Row title="Theme" desc={`Currently using ${theme} mode`}>
-                <button className="btn btn-outline" onClick={toggleTheme}>
-                  {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-                  Switch to {theme === 'light' ? 'dark' : 'light'}
-                </button>
-              </Row>
-            </>
-          )}
-
-          {tab === 'security' && (
-            <>
-              <span className="section-title">Security</span>
-              <p className="text-sm text-secondary mt-1 mb-3">Authentication is managed through NGA MIS single sign-on.</p>
-              <Row title="Single sign-on" desc="Your session is secured via Discipline OAuth2">
-                <span className="badge badge-success">Active</span>
-              </Row>
-              <Row title="Password" desc="Managed by Discipline">
-                <a href="https://mis.amashuri.com/login" target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">Manage in MIS</a>
-              </Row>
             </>
           )}
         </div>

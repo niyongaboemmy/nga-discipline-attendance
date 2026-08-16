@@ -33,6 +33,8 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'DISCIPLINE_VIEW_ALL', category: PERMISSION_CATEGORIES.DISCIPLINE, description: "View any student's discipline records." },
   { key: 'DISCIPLINE_VIEW_OWN', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'View your own discipline records.' },
   { key: 'DISCIPLINE_REVIEW', category: PERMISSION_CATEGORIES.DISCIPLINE, description: "Update a discipline record's review status/sanction." },
+  { key: 'DISCIPLINE_ADJUST', category: PERMISSION_CATEGORIES.DISCIPLINE, description: "Add or reduce a student's points against a specific discipline rule." },
+  { key: 'DISCIPLINE_RULES_MANAGE', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Create, edit, and retire discipline rules in the rules catalog.' },
 
   { key: 'STAFF_ATTENDANCE_CLOCK', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'Clock yourself in/out as staff.' },
   { key: 'STAFF_ATTENDANCE_VIEW_OWN', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'View your own staff attendance log.' },
@@ -51,6 +53,7 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'ACADEMIC_PERIOD_SWITCH', category: PERMISSION_CATEGORIES.ACADEMICS, description: 'Switch your own session to a different academic year/term.' },
 
   { key: 'ROSTER_VIEW', category: PERMISSION_CATEGORIES.ROSTER, description: 'View classes, students, staff, and schedules from the MIS.' },
+  { key: 'ROSTER_SYNC', category: PERMISSION_CATEGORIES.ROSTER, description: 'Sync the local academic year/term and subject/timetable cache from the MIS.' },
 
   { key: 'NOTIFICATIONS_MANAGE', category: PERMISSION_CATEGORIES.NOTIFICATIONS, description: 'View and manage your own in-app notifications.' },
 
@@ -79,6 +82,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', s
     'DISCIPLINE_LOG',
     'DISCIPLINE_VIEW_ALL',
     'DISCIPLINE_REVIEW',
+    'DISCIPLINE_ADJUST',
     'STAFF_ATTENDANCE_CLOCK',
     'STAFF_ATTENDANCE_VIEW_OWN',
     'REPORTS_VIEW',
@@ -91,12 +95,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', s
     'ATTENDANCE_MARK', 'ATTENDANCE_VIEW_ALL', 'ATTENDANCE_VIEW_OWN',
     'EXCUSES_SUBMIT', 'EXCUSES_VIEW_OWN', 'EXCUSES_REVIEW',
     'DISCIPLINE_LOG', 'DISCIPLINE_VIEW_ALL', 'DISCIPLINE_VIEW_OWN', 'DISCIPLINE_REVIEW',
+    'DISCIPLINE_ADJUST', 'DISCIPLINE_RULES_MANAGE',
     'STAFF_ATTENDANCE_CLOCK', 'STAFF_ATTENDANCE_VIEW_OWN', 'STAFF_ATTENDANCE_VIEW_ALL',
     'REPORTS_VIEW',
     'USERS_VIEW', 'USERS_MANAGE', 'AUDIT_VIEW',
     'ROLES_PERMISSIONS_VIEW', 'ROLES_PERMISSIONS_MANAGE',
     'ACADEMIC_PERIOD_VIEW', 'ACADEMIC_PERIOD_SWITCH',
-    'ROSTER_VIEW',
+    'ROSTER_VIEW', 'ROSTER_SYNC',
     'NOTIFICATIONS_MANAGE',
     'SETTINGS_MANAGE',
   ],

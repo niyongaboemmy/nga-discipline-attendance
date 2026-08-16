@@ -3,7 +3,6 @@ import {
   CheckSquare,
   History,
   Clock,
-  Calendar,
   FileText,
   BarChart3,
   Users,
@@ -14,6 +13,7 @@ import {
   History as AuditIcon,
   Award,
   KeyRound,
+  BookOpen,
   Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -35,9 +35,12 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'teacher', 'student'] },
 
-  // Admin
+  // Admin — Discipline Rules lives here, not under Discipline: it's catalog
+  // governance (admin job). Teachers pick rules inline from the same catalog
+  // while logging an incident, so they don't need a standalone nav entry.
   { label: 'Admin Console', path: '/admin', icon: ShieldCheck, roles: ['admin'], section: 'Administration' },
   { label: 'Roles & Permissions', path: '/admin/roles', icon: KeyRound, roles: ['admin'], section: 'Administration' },
+  { label: 'Discipline Rules', path: '/discipline/rules', icon: BookOpen, roles: ['admin'], section: 'Administration' },
   { label: 'Audit Log', path: '/admin/audit', icon: AuditIcon, roles: ['admin'], section: 'Administration' },
 
   // Attendance (staff)
@@ -45,9 +48,8 @@ export const navItems: NavItem[] = [
   { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
 
-  // Attendance (student)
+  // Attendance (student) — My Attendance now includes a Schedule tab.
   { label: 'My Attendance', path: '/attendance/me', icon: History, roles: ['student'], section: 'Attendance' },
-  { label: 'Schedule', path: '/schedule', icon: Calendar, roles: ['student'], section: 'Attendance' },
   { label: 'Leaves & Excuses', path: '/excuses', icon: FileText, roles: ['student'], section: 'Attendance' },
 
   // Discipline (staff)
@@ -58,10 +60,9 @@ export const navItems: NavItem[] = [
   // Discipline (student)
   { label: 'My Conduct', path: '/discipline/me', icon: Award, roles: ['student'], section: 'Discipline' },
 
-  // Insights
+  // Insights — Analytics removed: its content now lives in My Attendance / My Conduct.
   { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['admin', 'teacher'], section: 'Insights' },
   { label: 'Directory', path: '/directory', icon: Users, roles: ['admin', 'teacher'], section: 'Insights' },
-  { label: 'Insights & Analytics', path: '/analytics', icon: BarChart3, roles: ['student'], section: 'Insights' },
 
   // Common
   { label: 'Settings', path: '/settings', icon: SettingsIcon, roles: ['admin', 'teacher', 'student'] },

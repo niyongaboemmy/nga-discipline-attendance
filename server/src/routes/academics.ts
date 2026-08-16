@@ -4,6 +4,8 @@ import { config } from '../config.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission } from '../middleware/authorize.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
+import { getDb } from '../database.js';
+import { syncAll } from '../modules/academics/academicsSync.service.js';
 
 /**
  * Academic year/term integration with the NGA Central MIS.
@@ -121,6 +123,38 @@ router.post('/switch', authorizePermission('ACADEMIC_PERIOD_SWITCH'), async (req
   } catch (error) {
     console.error('Academics switch error:', (error as Error).message);
     return res.status(502).json({ success: false, message: 'Could not reach the NGA Central MIS. Please try again.' });
+  }
+});
+
+// Locally cached subjects (synced from the MIS schedule — see /sync below).
+// Used by the client's homeroom/subject attendance toggle (A.1.2) without a
+// round-trip to the MIS on every page load.
+router.get('/subjects', authorizePermission('ROSTER_VIEW'), async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const subjects = await getDb().all(`SELECT id, name, code FROM subjects ORDER BY name`);
+    return res.json({ success: true, data: subjects });
+  } catch (error) {
+    console.error('Error listing cached subjects:', error);
+    return res.status(500).json({ success: false, message: 'Error fetching subjects.' });
+  }
+});
+
+/**
+ * Refresh the local academic-year/term + subject/timetable cache from the
+ * MIS (Phase 1 + Phase 3). Admin maintenance action — not called on every
+ * request, since the underlying MIS data changes rarely within a term.
+ */
+router.post('/sync', authorizePermission('ROSTER_SYNC'), async (req: AuthenticatedRequest, res: Response) => {
+  const misToken = req.user?.misToken;
+  if (!misToken) {
+    return res.status(403).json({ success: false, message: 'This session is not linked to the MIS.' });
+  }
+  try {
+    const result = await syncAll(getDb(), misToken);
+    return res.json({ success: true, data: result, message: 'Academic period and roster cache synced.' });
+  } catch (error) {
+    console.error('Academics sync error:', (error as Error).message);
+    return res.status(502).json({ success: false, message: 'Could not sync from the NGA Central MIS. Please try again.' });
   }
 });
 

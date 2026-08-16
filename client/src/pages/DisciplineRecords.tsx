@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { ErrorState } from '../components/common/ErrorState';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../context/ToastContext';
 import { usePermissions } from '../hooks/usePermissions';
-import { Gavel, Award, AlertCircle, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
+import { apiGet, apiPut, ApiError } from '../api/client';
+import { Gavel, Award, Inbox, ChevronLeft, ChevronRight, MoreVertical, FileBarChart, Download } from 'lucide-react';
 
 interface DisciplineRecord {
   id: number;
@@ -40,7 +43,6 @@ const SANCTION_LABEL: Record<string, string> = {
   suspension: 'Suspension', community_service: 'Community service', counseling: 'Counseling',
 };
 
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
 const PAGE_SIZE = 25;
 
 export const DisciplineRecords: React.FC = () => {
@@ -53,14 +55,16 @@ export const DisciplineRecords: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [dismissTarget, setDismissTarget] = useState<DisciplineRecord | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
 
   const [filters, setFilters] = useState({ type: '', status: '', search: '' });
   const [offset, setOffset] = useState(0);
 
   const loadOverview = useCallback(async () => {
     try {
-      const res = await fetch('/api/discipline/overview', { headers: authHeaders() });
-      if (res.ok) { const r = await res.json(); if (r.success) setOverview(r.data); }
+      const res = await apiGet<Overview>('/api/discipline/overview');
+      setOverview(res.data ?? null);
     } catch { /* non-fatal */ }
   }, []);
 
@@ -71,14 +75,14 @@ export const DisciplineRecords: React.FC = () => {
       if (filters.type) qs.set('type', filters.type);
       if (filters.status) qs.set('status', filters.status);
       if (filters.search) qs.set('search', filters.search);
-      const res = await fetch(`/api/discipline?${qs.toString()}`, { headers: authHeaders() });
-      if (!res.ok) throw new Error('Could not load discipline records.');
-      const r = await res.json();
-      if (!r.success) throw new Error(r.message || 'Server error.');
-      setRecords(r.data);
-      setTotal(r.total ?? r.data.length);
-    } catch (err) { setError((err as Error).message); }
-    finally { setLoading(false); }
+      const res = await apiGet<DisciplineRecord[]>(`/api/discipline?${qs.toString()}`);
+      setRecords(res.data || []);
+      setTotal(res.total ?? res.data?.length ?? 0);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load discipline records.');
+    } finally {
+      setLoading(false);
+    }
   }, [filters, offset]);
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
@@ -89,28 +93,45 @@ export const DisciplineRecords: React.FC = () => {
     return () => clearTimeout(t);
   }, [loadRecords]);
 
+  // Close the row-actions popover on an outside click.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (tableRef.current && !tableRef.current.contains(e.target as Node)) setMenuOpenId(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   const updateStatus = async (rec: DisciplineRecord, status: string) => {
     setBusyId(rec.id);
+    setMenuOpenId(null);
     try {
-      const res = await fetch(`/api/discipline/${rec.id}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ status }),
-      });
-      const r = await res.json();
-      if (res.ok && r.success) {
-        setRecords((list) => list.map((x) => (x.id === rec.id ? r.data : x)));
-        loadOverview();
-        toast.success('Record updated', `${rec.student_name} · ${status.replace('_', ' ')}`);
-      } else {
-        toast.error('Could not update', r.message);
-      }
-    } catch {
-      toast.error('Network error', 'Could not update the record.');
-    } finally { setBusyId(null); }
+      const res = await apiPut<DisciplineRecord>(`/api/discipline/${rec.id}/status`, { status });
+      setRecords((list) => list.map((x) => (x.id === rec.id ? res.data! : x)));
+      loadOverview();
+      toast.success('Record updated', `${rec.student_name} · ${status.replace('_', ' ')}`);
+    } catch (err) {
+      toast.error('Could not update', err instanceof ApiError ? err.message : 'Could not update the record.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const setFilter = (patch: Partial<typeof filters>) => { setOffset(0); setFilters((f) => ({ ...f, ...patch })); };
+
+  const exportCSV = () => {
+    let csv = 'Student Name,Student ID,Type,Category,Severity,Points,Title,Date,Sanction,Status\n';
+    records.forEach((r) => {
+      csv += `"${r.student_name}",${r.student_id},${r.type},"${r.category}",${r.severity ?? ''},${r.points},"${r.title}",${r.incident_date},${r.sanction},${r.status}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `discipline-records-${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const stats = overview?.totals;
   const page = Math.floor(offset / PAGE_SIZE) + 1;
@@ -123,6 +144,9 @@ export const DisciplineRecords: React.FC = () => {
           <h1 className="page-title">Discipline Records</h1>
           <p className="page-subtitle">Review conduct records, sanctions, and their status.</p>
         </div>
+        <button className="btn btn-outline" onClick={exportCSV} disabled={!records.length}>
+          <Download size={16} /> Export CSV
+        </button>
       </div>
 
       {/* Overview cards */}
@@ -165,12 +189,12 @@ export const DisciplineRecords: React.FC = () => {
         </div>
       </div>
 
-      <div className="card">
+      {error && <div className="mb-4"><ErrorState message={error} onRetry={loadRecords} /></div>}
+
+      <div className="card" ref={tableRef}>
         <div className="card-header"><span className="section-title">Records {total > 0 && `(${total})`}</span></div>
         {loading ? (
           <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
-        ) : error ? (
-          <div className="empty-state"><AlertCircle size={28} /><span className="text-sm">{error}</span></div>
         ) : records.length === 0 ? (
           <div className="empty-state"><Inbox size={28} /><span className="text-sm">No discipline records match your filters.</span></div>
         ) : (
@@ -179,7 +203,7 @@ export const DisciplineRecords: React.FC = () => {
               <thead>
                 <tr>
                   <th>Student</th><th>Type</th><th>Category</th><th>Date</th>
-                  <th>Sanction</th><th>Status</th><th>Actions</th>
+                  <th>Sanction</th><th>Status</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -202,21 +226,40 @@ export const DisciplineRecords: React.FC = () => {
                     <td>{new Date(r.incident_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
                     <td className={r.sanction === 'none' ? 'text-tertiary' : ''}>{SANCTION_LABEL[r.sanction] ?? r.sanction}</td>
                     <td><span className={`badge ${STATUS_BADGE[r.status]}`}>{STATUS_LABEL[r.status]}</span></td>
-                    <td>
-                      {r.type === 'demerit' ? (
-                        <div className="flex gap-1 flex-wrap">
-                          {r.status === 'open' && (
-                            <button className="btn btn-outline btn-sm" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => updateStatus(r, 'under_review')}>Review</button>
+                    <td style={{ position: 'relative', textAlign: 'right' }}>
+                      <button
+                        className="icon-btn"
+                        aria-label="Row actions"
+                        onClick={() => setMenuOpenId((id) => (id === r.id ? null : r.id))}
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                      {menuOpenId === r.id && (
+                        <div className="menu menu--right animate-fade-in" style={{ position: 'absolute', right: 8, top: '100%', zIndex: 20 }}>
+                          <Link to={`/reports/student/${r.student_id}`} className="menu-item" onClick={() => setMenuOpenId(null)}>
+                            <FileBarChart size={16} /><span>View full report</span>
+                          </Link>
+                          {r.type === 'demerit' && r.status === 'open' && (
+                            <button className="menu-item" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => updateStatus(r, 'under_review')}>
+                              Mark under review
+                            </button>
                           )}
-                          {(r.status === 'open' || r.status === 'under_review') && (
+                          {r.type === 'demerit' && (r.status === 'open' || r.status === 'under_review') && (
                             <>
-                              <button className="btn btn-outline btn-sm" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => updateStatus(r, 'resolved')}>Resolve</button>
-                              <button className="btn btn-outline btn-sm" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => setDismissTarget(r)}>Dismiss</button>
+                              <button className="menu-item" disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')} onClick={() => updateStatus(r, 'resolved')}>
+                                Resolve
+                              </button>
+                              <button
+                                className="menu-item menu-item--danger"
+                                disabled={busyId === r.id || !can('DISCIPLINE_REVIEW')}
+                                onClick={() => { setDismissTarget(r); setMenuOpenId(null); }}
+                              >
+                                Dismiss
+                              </button>
                             </>
                           )}
-                          {(r.status === 'resolved' || r.status === 'dismissed') && <span className="text-xs text-tertiary">Closed</span>}
                         </div>
-                      ) : <span className="text-xs text-tertiary">—</span>}
+                      )}
                     </td>
                   </tr>
                 ))}

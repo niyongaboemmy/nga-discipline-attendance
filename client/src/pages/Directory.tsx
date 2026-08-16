@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { ErrorState } from '../components/common/ErrorState';
+import { apiGet, ApiError } from '../api/client';
 import { Search, GraduationCap, Briefcase, Mail, Inbox, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface DirectoryMember { id: string; name: string; email: string; role?: string; }
@@ -15,18 +17,22 @@ export const Directory: React.FC = () => {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const endpoint = activeTab === 'students' ? '/api/mis/students' : '/api/mis/staff';
-        const res = await fetch(endpoint, { headers: { Authorization: `Bearer ${localStorage.getItem('sso_token')}` } });
-        if (res.ok) { const result = await res.json(); if (result.success) setMembers(result.data); }
-      } catch (err) { console.error('Error fetching directory:', err); }
-      finally { setLoading(false); }
-    })();
-  }, [activeTab]);
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const endpoint = activeTab === 'students' ? '/api/mis/students' : '/api/mis/staff';
+      const res = await apiGet<DirectoryMember[]>(endpoint);
+      setMembers(res.data || []);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : `Could not load the ${activeTab} directory.`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeTab]);
 
   useEffect(() => { setPage(0); }, [activeTab, search]);
 
@@ -60,6 +66,8 @@ export const Directory: React.FC = () => {
           <input className="input" placeholder="Search by name, ID, or email…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
       </div>
+
+      {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
 
       {/* Table */}
       <div className="card">

@@ -17,7 +17,10 @@ router.use(authMiddleware);
 // Mark attendance (Teacher/Admin only)
 router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const { classId, className, date, period = 'Morning', records } = req.body;
+  const {
+    classId, className, date, period = 'Morning', records,
+    sessionType = 'homeroom', subjectId = null,
+  } = req.body;
 
   if (!classId || !className || !date || !records || !Array.isArray(records)) {
     return res.status(400).json({
@@ -27,6 +30,13 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
   }
   if (!DATE_RE.test(String(date))) {
     return res.status(400).json({ success: false, message: 'Invalid date. Expected YYYY-MM-DD.' });
+  }
+  if (sessionType !== 'homeroom' && sessionType !== 'subject') {
+    return res.status(400).json({ success: false, message: "Invalid sessionType. Expected 'homeroom' or 'subject'." });
+  }
+  // A.1.2: course/subject attendance must be tied to a specific subject.
+  if (sessionType === 'subject' && !subjectId) {
+    return res.status(400).json({ success: false, message: 'subjectId is required when sessionType is "subject".' });
   }
   // Validate every record up front so the transaction can't fail halfway through
   // on the DB CHECK constraint (which would surface as an opaque 500).
@@ -59,9 +69,9 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
 
       await db.run(
         `INSERT INTO attendance_records
-         (student_id, student_name, class_id, class_name, session_date, period, status, notes, marked_by, academic_year_id, academic_term_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-         ON CONFLICT(student_id, class_id, session_date, period) DO UPDATE SET
+         (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, notes, marked_by, academic_year_id, academic_term_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(student_id, class_id, session_date, session_type, subject_id, period) DO UPDATE SET
            status = excluded.status,
            notes = excluded.notes,
            marked_by = excluded.marked_by,
@@ -72,6 +82,8 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
         className,
         date,
         period,
+        sessionType,
+        subjectId,
         status,
         notes,
         teacherId,
@@ -83,7 +95,9 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
     await db.run('COMMIT');
 
     // Trigger low attendance notification evaluation in background
-    triggerLowAttendanceCheck(classId, className);
+    // (scoped to this session type so subject-attendance drops don't get
+    // conflated with homeroom drops for the same class).
+    triggerLowAttendanceCheck(classId, className, sessionType);
 
     return res.json({
       success: true,
@@ -101,7 +115,7 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
 
 // View attendance history (Teacher/Admin only)
 router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: any, res: Response) => {
-  const { classId, dateFrom, dateTo, search, status } = req.query;
+  const { classId, dateFrom, dateTo, search, status, sessionType, subjectId } = req.query;
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
 
@@ -116,6 +130,14 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
   if (classId) {
     query += ' AND class_id = ?';
     params.push(classId);
+  }
+  if (sessionType) {
+    query += ' AND session_type = ?';
+    params.push(sessionType);
+  }
+  if (subjectId) {
+    query += ' AND subject_id = ?';
+    params.push(subjectId);
   }
   if (status && status !== 'all') {
     query += ' AND status = ?';
@@ -165,13 +187,16 @@ router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN'), async (req: any, r
   const { academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
+    // Homeroom-only: a student's "overall attendance" (A.1.1) is the homeroom
+    // signal. Without this, a subject-session row (A.1.2) for the same day
+    // would double-count against the same rate calculation client-side.
     const records = academicTermId != null
       ? await db.all(
-          'SELECT * FROM attendance_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC',
+          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC",
           studentId, academicTermId
         )
       : await db.all(
-          'SELECT * FROM attendance_records WHERE student_id = ? ORDER BY session_date DESC',
+          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' ORDER BY session_date DESC",
           studentId
         );
     return res.json({
@@ -195,13 +220,16 @@ router.get('/student/:id', selfOrPermission('id', 'ATTENDANCE_VIEW_ALL'), async 
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(authReq);
   try {
+    // Homeroom-only, matching /me and the reports overview — otherwise a
+    // student's own attendance rate and their instructor-facing StudentReport
+    // rate would disagree once subject/course sessions are also recorded.
     const records = academicTermId != null
       ? await db.all(
-          'SELECT * FROM attendance_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC',
+          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC",
           studentId, academicTermId
         )
       : await db.all(
-          'SELECT * FROM attendance_records WHERE student_id = ? ORDER BY session_date DESC',
+          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' ORDER BY session_date DESC",
           studentId
         );
     return res.json({
@@ -378,7 +406,7 @@ router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (r
 });
 
 // Helper background logic to analyze attendance drop and push system alerts
-async function triggerLowAttendanceCheck(classId: string, className: string) {
+async function triggerLowAttendanceCheck(classId: string, className: string, sessionType: string = 'homeroom') {
   const db = getDb();
   try {
     // Select all students and count their presence vs absence
@@ -386,10 +414,10 @@ async function triggerLowAttendanceCheck(classId: string, className: string) {
       `SELECT student_id, student_name,
               SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present,
               COUNT(*) as total
-       FROM attendance_records 
-       WHERE class_id = ? 
+       FROM attendance_records
+       WHERE class_id = ? AND session_type = ?
        GROUP BY student_id`,
-      classId
+      classId, sessionType
     );
 
     for (const student of stats) {

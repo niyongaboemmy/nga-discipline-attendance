@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Gavel, Award, ShieldCheck, AlertTriangle, MapPin } from 'lucide-react';
+import { ErrorState } from '../components/common/ErrorState';
+import { Gavel, Award, ShieldCheck, AlertTriangle, MapPin, Info } from 'lucide-react';
+import { disciplineApi, type TermBalance } from '../api/discipline';
+import { apiGet, ApiError } from '../api/client';
 
 interface DisciplineRecord {
   id: number;
@@ -22,28 +25,39 @@ const SANCTION_LABEL: Record<string, string> = {
   suspension: 'Suspension', community_service: 'Community service', counseling: 'Counseling',
 };
 
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
-
 const scoreTone = (score: number) => (score >= 85 ? 'var(--success)' : score >= 70 ? 'var(--warning)' : 'var(--danger)');
 const standing = (score: number) => (score >= 85 ? 'Excellent standing' : score >= 70 ? 'Watch list' : 'Needs attention');
 
 export const MyConduct: React.FC = () => {
   const [records, setRecords] = useState<DisciplineRecord[]>([]);
   const [score, setScore] = useState(100);
+  const [termBalance, setTermBalance] = useState<TermBalance | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/api/discipline/me', { headers: authHeaders() });
-        if (res.ok) {
-          const r = await res.json();
-          if (r.success) { setRecords(r.data.records); setScore(r.data.conductScore); }
-        }
-      } catch (err) { console.error('Error fetching conduct records:', err); }
-      finally { setLoading(false); }
-    })();
-  }, []);
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiGet<{ records: DisciplineRecord[]; conductScore: number }>('/api/discipline/me');
+      if (res.data) { setRecords(res.data.records); setScore(res.data.conductScore); }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load your conduct records.');
+    }
+
+    // B.3: this term's ledger balance, scoped independently of the record
+    // list above (which already filters by term, but the ledger view is
+    // the explicit per-term source of truth — see modules/discipline/ledger.service.ts).
+    // Kept non-fatal: a failure here shouldn't blank out the rest of the page.
+    try {
+      const balanceRes = await disciplineApi.myTermBalance();
+      setTermBalance(balanceRes.data ?? null);
+    } catch (err) { console.error('Error fetching term balance:', err); }
+
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
 
   const merits = records.filter((r) => r.type === 'merit');
   const demerits = records.filter((r) => r.type === 'demerit');
@@ -62,6 +76,8 @@ export const MyConduct: React.FC = () => {
 
       {loading ? (
         <div style={{ padding: '80px 0' }}><LoadingSpinner /></div>
+      ) : error ? (
+        <ErrorState message={error} onRetry={load} />
       ) : (
         <>
           {/* Score summary */}
@@ -90,6 +106,32 @@ export const MyConduct: React.FC = () => {
               ))}
             </div>
           </div>
+
+          {termBalance && (
+            <div className="card card-pad mb-4">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                <span className="section-title" style={{ margin: 0 }}>This term's balance</span>
+                <span className="text-xs text-secondary">{termBalance.eventCount} record{termBalance.eventCount === 1 ? '' : 's'} this term</span>
+              </div>
+              <p className="text-xs text-secondary mb-3 flex items-center gap-1">
+                <Info size={12} /> This is the official ledger total for the current term — the same number your teachers and admins see. The score above is your overall standing across every record listed below.
+              </p>
+              <div className="grid grid-stats" style={{ gap: '12px' }}>
+                <div>
+                  <div className="text-2xl font-bold" style={{ color: scoreTone(termBalance.balance) }}>{termBalance.balance}</div>
+                  <div className="text-xs text-secondary">Term balance / 100</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-success">+{termBalance.meritPoints}</div>
+                  <div className="text-xs text-secondary">Merit points this term</div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-danger">−{termBalance.demeritPoints}</div>
+                  <div className="text-xs text-secondary">Demerit points this term</div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {score < 70 && (
             <div className="alert alert-danger mb-4">

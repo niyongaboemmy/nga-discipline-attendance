@@ -11,8 +11,8 @@ export const Login: React.FC = () => {
       {/* Top bar */}
       <header className="login-topbar">
         <div className="login-topbar-brand">
-          <img src="/logo.png" alt="Discipline logo" />
-          <span>Discipline</span>
+          <img src="/icon.png" alt="Tendo logo" />
+          <span>Tendo</span>
         </div>
         <div className="login-topbar-actions">
           <button className="icon-btn" onClick={toggleTheme} aria-label="Toggle theme">
@@ -28,10 +28,10 @@ export const Login: React.FC = () => {
       <main className="login-main">
         <div className="login-card">
           <div className="login-logo-badge">
-            <img src="/logo.png" alt="Discipline" />
+            <img src="/icon.png" alt="Tendo" />
           </div>
 
-          <h1 className="login-title">Welcome to Discipline</h1>
+          <h1 className="login-title">Welcome to Tendo</h1>
           <p className="login-sub">Discipline &amp; Attendance Management Portal</p>
 
           <div className="login-info">
@@ -50,7 +50,7 @@ export const Login: React.FC = () => {
         </div>
       </main>
 
-      <footer className="login-page-foot">© {new Date().getFullYear()} Discipline</footer>
+      <footer className="login-page-foot">© {new Date().getFullYear()} Tendo</footer>
     </div>
   );
 };

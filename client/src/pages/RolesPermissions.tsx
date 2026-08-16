@@ -2,8 +2,11 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { Modal } from '../components/common/Modal';
+import { ErrorState } from '../components/common/ErrorState';
 import { useToast } from '../context/ToastContext';
-import { Plus, Trash2, Save, Lock, AlertCircle, KeyRound } from 'lucide-react';
+import { apiGet, apiPost, apiPut, apiDelete, ApiError } from '../api/client';
+import { Plus, Trash2, Save, Lock, KeyRound, Search } from 'lucide-react';
 
 interface PermissionDef { key: string; category: string; description: string; }
 interface RoleDetail {
@@ -17,7 +20,6 @@ interface RoleDetail {
 }
 
 const LEVELS: RoleDetail['level'][] = ['STUDENT', 'TEACHER', 'ADMIN'];
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
 
 export const RolesPermissions: React.FC = () => {
   const toast = useToast();
@@ -41,24 +43,22 @@ export const RolesPermissions: React.FC = () => {
   const [newDescription, setNewDescription] = useState('');
 
   const [deleteTarget, setDeleteTarget] = useState<RoleDetail | null>(null);
+  const [permissionFilter, setPermissionFilter] = useState('');
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
       const [rolesRes, permsRes] = await Promise.all([
-        fetch('/api/roles-permissions/roles', { headers: authHeaders() }),
-        fetch('/api/roles-permissions/permissions', { headers: authHeaders() }),
+        apiGet<RoleDetail[]>('/api/roles-permissions/roles'),
+        apiGet<{ grouped: Record<string, PermissionDef[]> }>('/api/roles-permissions/permissions'),
       ]);
-      const rolesJson = await rolesRes.json();
-      const permsJson = await permsRes.json();
-      if (!rolesRes.ok || !rolesJson.success) throw new Error(rolesJson.message || 'Failed to load roles.');
-      if (!permsRes.ok || !permsJson.success) throw new Error(permsJson.message || 'Failed to load permissions.');
-      setRoles(rolesJson.data);
-      setGrouped(permsJson.data.grouped);
-      if (rolesJson.data.length > 0) setSelectedId((cur) => cur ?? rolesJson.data[0].id);
+      const rolesData = rolesRes.data || [];
+      setRoles(rolesData);
+      setGrouped(permsRes.data?.grouped || {});
+      if (rolesData.length > 0) setSelectedId((cur) => cur ?? rolesData[0].id);
     } catch (err) {
-      setError((err as Error).message || 'Could not reach the server.');
+      setError(err instanceof ApiError ? err.message : 'Could not reach the server.');
     } finally {
       setLoading(false);
     }
@@ -89,18 +89,14 @@ export const RolesPermissions: React.FC = () => {
     if (!selectedRole) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/roles-permissions/roles/${selectedRole.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ name, description, permissionKeys: Array.from(permissionKeys) }),
+      const res = await apiPut<RoleDetail>(`/api/roles-permissions/roles/${selectedRole.id}`, {
+        name, description, permissionKeys: Array.from(permissionKeys),
       });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.message || 'Could not save role.');
-      toast.success('Role saved', `"${result.data.name}" was updated.`);
-      setRoles((list) => list.map((r) => (r.id === selectedRole.id ? result.data : r)));
+      toast.success('Role saved', `"${res.data!.name}" was updated.`);
+      setRoles((list) => list.map((r) => (r.id === selectedRole.id ? res.data! : r)));
       setDirty(false);
     } catch (err) {
-      toast.error('Could not save role', (err as Error).message);
+      toast.error('Could not save role', err instanceof ApiError ? err.message : 'Network error.');
     } finally {
       setSaving(false);
     }
@@ -110,20 +106,16 @@ export const RolesPermissions: React.FC = () => {
     if (!newName.trim()) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/roles-permissions/roles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ name: newName, level: newLevel, description: newDescription, permissionKeys: [] }),
+      const res = await apiPost<RoleDetail>('/api/roles-permissions/roles', {
+        name: newName, level: newLevel, description: newDescription, permissionKeys: [],
       });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.message || 'Could not create role.');
-      toast.success('Role created', `"${result.data.name}" is ready to configure.`);
-      setRoles((list) => [...list, result.data]);
-      setSelectedId(result.data.id);
+      toast.success('Role created', `"${res.data!.name}" is ready to configure.`);
+      setRoles((list) => [...list, res.data!]);
+      setSelectedId(res.data!.id);
       setCreating(false);
       setNewName(''); setNewDescription(''); setNewLevel('TEACHER');
     } catch (err) {
-      toast.error('Could not create role', (err as Error).message);
+      toast.error('Could not create role', err instanceof ApiError ? err.message : 'Network error.');
     } finally {
       setSaving(false);
     }
@@ -133,19 +125,30 @@ export const RolesPermissions: React.FC = () => {
     if (!deleteTarget) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/roles-permissions/roles/${deleteTarget.id}`, { method: 'DELETE', headers: authHeaders() });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.message || 'Could not delete role.');
+      await apiDelete(`/api/roles-permissions/roles/${deleteTarget.id}`);
       toast.success('Role deleted', `"${deleteTarget.name}" was removed.`);
       setRoles((list) => list.filter((r) => r.id !== deleteTarget.id));
       if (selectedId === deleteTarget.id) setSelectedId(null);
       setDeleteTarget(null);
     } catch (err) {
-      toast.error('Could not delete role', (err as Error).message);
+      toast.error('Could not delete role', err instanceof ApiError ? err.message : 'Network error.');
     } finally {
       setSaving(false);
     }
   };
+
+  // Filters the grouped permission checkboxes by key/description; empty
+  // categories after filtering are hidden rather than shown as blank headers.
+  const filteredGrouped = useMemo(() => {
+    if (!permissionFilter.trim()) return grouped;
+    const q = permissionFilter.toLowerCase();
+    const result: Record<string, PermissionDef[]> = {};
+    for (const [category, perms] of Object.entries(grouped)) {
+      const matches = perms.filter((p) => p.key.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
+      if (matches.length) result[category] = matches;
+    }
+    return result;
+  }, [grouped, permissionFilter]);
 
   return (
     <DashboardLayout>
@@ -162,8 +165,7 @@ export const RolesPermissions: React.FC = () => {
       {loading ? (
         <div style={{ padding: '80px 0' }}><LoadingSpinner /></div>
       ) : error ? (
-        <div className="card"><div className="empty-state"><AlertCircle size={28} /><span className="text-sm">{error}</span>
-          <button className="btn btn-outline btn-sm mt-2" onClick={load}>Retry</button></div></div>
+        <ErrorState message={error} onRetry={load} />
       ) : (
         <div className="grid grid-sidebar" style={{ ['--sidebar-col-width' as string]: '260px', gap: '20px', alignItems: 'start' }}>
           {/* Role list */}
@@ -227,8 +229,15 @@ export const RolesPermissions: React.FC = () => {
                 </div>
               </div>
 
+              <div className="input-with-icon mb-4" style={{ maxWidth: '320px' }}>
+                <Search className="field-icon" size={16} />
+                <input className="input" placeholder="Filter permissions…" value={permissionFilter} onChange={(e) => setPermissionFilter(e.target.value)} />
+              </div>
+
               <div className="flex flex-col gap-4">
-                {Object.entries(grouped).map(([category, perms]) => (
+                {Object.keys(filteredGrouped).length === 0 ? (
+                  <p className="text-sm text-secondary">No permissions match "{permissionFilter}".</p>
+                ) : Object.entries(filteredGrouped).map(([category, perms]) => (
                   <div key={category}>
                     <div className="section-title text-sm mb-2">{category}</div>
                     <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '8px' }}>
@@ -257,33 +266,27 @@ export const RolesPermissions: React.FC = () => {
         </div>
       )}
 
-      {/* Create-role modal (reuses ConfirmDialog's overlay pattern via a simple inline modal) */}
-      {creating && (
-        <div className="modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) setCreating(false); }}>
-          <div className="modal-card" role="dialog" aria-modal="true" aria-label="New role">
-            <div className="card-header"><span className="section-title text-base">New role</span></div>
-            <div className="card-pad flex flex-col gap-3">
-              <label className="text-sm font-medium">Name
-                <input className="input mt-1" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Discipline Coordinator" />
-              </label>
-              <label className="text-sm font-medium">Level
-                <select className="select mt-1" value={newLevel} onChange={(e) => setNewLevel(e.target.value as RoleDetail['level'])}>
-                  {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </label>
-              <label className="text-sm font-medium">Description
-                <textarea className="input mt-1" rows={2} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
-              </label>
-              <div className="flex justify-end gap-2 mt-2">
-                <button className="btn btn-outline btn-sm" onClick={() => setCreating(false)}>Cancel</button>
-                <button className="btn btn-primary btn-sm" onClick={createRole} disabled={!newName.trim() || saving}>
-                  {saving ? 'Creating…' : 'Create role'}
-                </button>
-              </div>
-            </div>
+      <Modal open={creating} title="New role" onClose={() => setCreating(false)}>
+        <div className="flex flex-col gap-3">
+          <label className="text-sm font-medium">Name
+            <input className="input mt-1" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Discipline Coordinator" />
+          </label>
+          <label className="text-sm font-medium">Level
+            <select className="select mt-1" value={newLevel} onChange={(e) => setNewLevel(e.target.value as RoleDetail['level'])}>
+              {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-medium">Description
+            <textarea className="input mt-1" rows={2} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
+          </label>
+          <div className="flex justify-end gap-2 mt-2">
+            <button className="btn btn-outline btn-sm" onClick={() => setCreating(false)}>Cancel</button>
+            <button className="btn btn-primary btn-sm" onClick={createRole} disabled={!newName.trim() || saving}>
+              {saving ? 'Creating…' : 'Create role'}
+            </button>
           </div>
         </div>
-      )}
+      </Modal>
 
       <ConfirmDialog
         open={!!deleteTarget}

@@ -5,9 +5,13 @@ import { PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, SYSTEM_ROLES } from './constants
 
 let db: Database;
 
-export async function initDatabase() {
+/** `filenameOverride` lets tests point at `:memory:` without touching the
+ *  process-wide config/env (config.databasePath stays the on-disk default
+ *  for the real server). */
+export async function initDatabase(filenameOverride?: string) {
+  const filename = filenameOverride ?? config.databasePath;
   db = await open({
-    filename: config.databasePath,
+    filename,
     driver: sqlite3.Database,
   });
 
@@ -233,10 +237,16 @@ export async function initDatabase() {
   await seedRbac();
   await backfillUserRoleIds();
 
+  await migrateAcademicPeriodCache(db);
+  await migrateRosterCache(db);
+  await migrateDisciplineRules(db);
+  await migrateAttendanceSessionType(db);
+  await migrateStaffType(db);
+
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
   // and the admin MIS sync (routes/admin.ts); all operational records start empty.
 
-  console.log('Database initialized successfully at:', config.databasePath);
+  console.log('Database initialized successfully at:', filename);
 }
 
 /**
@@ -307,6 +317,215 @@ async function backfillUserRoleIds() {
       systemRole.id, roleValue
     );
   }
+}
+
+/**
+ * Phase 1: local cache of the MIS's Academic Year/Term entities. This app
+ * never creates years/terms — the MIS remains the source of truth — but
+ * caching them locally turns `academic_year_id`/`academic_term_id` (bare
+ * nullable ints since the original migration) into values that can be
+ * joined against a real row, and lets reporting group by term name instead
+ * of a raw id. Populated by modules/academics/academicsSync.service.ts.
+ */
+async function migrateAcademicPeriodCache(db: Database) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS academic_years (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      start_date DATE,
+      end_date DATE,
+      is_current INTEGER NOT NULL DEFAULT 0,
+      synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS academic_terms (
+      id INTEGER PRIMARY KEY,
+      academic_year_id INTEGER NOT NULL REFERENCES academic_years(id),
+      name TEXT NOT NULL,
+      start_date DATE,
+      end_date DATE,
+      is_current INTEGER NOT NULL DEFAULT 0,
+      synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_academic_terms_year ON academic_terms(academic_year_id);
+  `);
+}
+
+/**
+ * Phase 3 (roster cache half): local cache of Subjects and the
+ * class-group/subject/teacher timetable assignment, sourced from the MIS
+ * schedule proxy (routes/mis.ts `/schedule`, write-through cached by
+ * modules/academics/academicsSync.service.ts). This is what lets attendance
+ * distinguish "homeroom" from "subject" sessions (A.1.1 vs A.1.2) and lets
+ * teacher attendance be derived from their assigned-subject calendar (A.2).
+ */
+async function migrateRosterCache(db: Database) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS subjects (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      code TEXT,
+      synced_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS class_subject_assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      class_id TEXT NOT NULL,
+      class_name TEXT,
+      subject_id INTEGER NOT NULL REFERENCES subjects(id),
+      subject_name TEXT,
+      teacher_id TEXT NOT NULL,
+      teacher_name TEXT,
+      academic_term_id INTEGER,
+      day_of_week INTEGER,
+      period TEXT,
+      synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(class_id, subject_id, academic_term_id, day_of_week, period)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_csa_class ON class_subject_assignments(class_id, academic_term_id);
+    CREATE INDEX IF NOT EXISTS idx_csa_teacher ON class_subject_assignments(teacher_id, academic_term_id);
+  `);
+}
+
+/**
+ * Phase 2: discipline rules catalog + per-term point/fine versioning, plus
+ * the `rule_id` link on `discipline_records`. `category`/`severity`/`points`
+ * stay on `discipline_records` as a snapshot at time of recording (so a
+ * later rule-value edit never rewrites history) — see
+ * modules/discipline/rules.repository.ts.
+ */
+async function migrateDisciplineRules(db: Database) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS discipline_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL CHECK(type IN ('demerit','merit')),
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      default_points INTEGER NOT NULL CHECK(default_points > 0),
+      fine_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+      severity TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS discipline_rule_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id INTEGER NOT NULL REFERENCES discipline_rules(id) ON DELETE CASCADE,
+      academic_term_id INTEGER,
+      points INTEGER NOT NULL,
+      fine_amount DECIMAL(10,2),
+      effective_from DATE NOT NULL DEFAULT (date('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_discipline_rules_type ON discipline_rules(type, is_active);
+    CREATE INDEX IF NOT EXISTS idx_rule_versions_rule ON discipline_rule_versions(rule_id);
+  `);
+
+  const cols = await db.all(`PRAGMA table_info(discipline_records)`);
+  if (!cols.some((c: any) => c.name === 'rule_id')) {
+    await db.run(`ALTER TABLE discipline_records ADD COLUMN rule_id INTEGER REFERENCES discipline_rules(id)`);
+  }
+  await db.run(`CREATE INDEX IF NOT EXISTS idx_discipline_records_rule ON discipline_records(rule_id)`);
+  // Backs modules/discipline/ledger.service.ts's per-student and roster-wide
+  // term-balance aggregation (WHERE student_id = ? AND academic_term_id = ?
+  // OR IS NULL ... GROUP BY student_id) — hit on every student's conduct
+  // page load and every admin discipline-stats view.
+  await db.run(`CREATE INDEX IF NOT EXISTS idx_discipline_records_student_term ON discipline_records(student_id, academic_term_id)`);
+
+  // Term balance ledger (B.0/B.3) used to be backed by a `discipline_term_balance`
+  // VIEW here, grouped by (student_id, academic_year_id, academic_term_id).
+  // That grouping made the codebase-wide "legacy NULL-term rows stay visible
+  // under any period filter" convention impossible to apply correctly — a
+  // plain WHERE on the view matched the current-term group and the legacy
+  // NULL group as two *separate* rows instead of merging them. It also
+  // silently excluded dismissed records while utils/conduct.ts's
+  // computeConductScore (still used by /api/discipline/me) does not,
+  // so the two "conduct score" numbers shown together on MyConduct could
+  // visibly disagree. modules/discipline/ledger.service.ts now aggregates
+  // discipline_records directly instead, so this view has no consumers —
+  // dropped rather than carried forward as a second, differently-scoped
+  // definition of the same thing.
+  await db.exec(`DROP VIEW IF EXISTS discipline_term_balance`);
+}
+
+/**
+ * Phase 3 (attendance half): distinguish homeroom (A.1.1) from subject/course
+ * (A.1.2) attendance. This requires replacing the original
+ * UNIQUE(student_id, class_id, session_date, period) constraint — a subject
+ * session and a homeroom session can otherwise collide on the same
+ * student/class/date/period. SQLite can't ALTER a UNIQUE constraint in place,
+ * so this is a one-time guarded table rebuild (detected via the absence of
+ * the `session_type` column), not a plain ADD COLUMN.
+ */
+async function migrateAttendanceSessionType(db: Database) {
+  const cols = await db.all(`PRAGMA table_info(attendance_records)`);
+  if (cols.some((c: any) => c.name === 'session_type')) return; // already migrated
+
+  await db.run('BEGIN TRANSACTION');
+  try {
+    await db.exec(`
+      CREATE TABLE attendance_records_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id TEXT NOT NULL,
+        student_name TEXT NOT NULL,
+        class_id TEXT NOT NULL,
+        class_name TEXT NOT NULL,
+        session_date DATE NOT NULL,
+        period TEXT,
+        session_type TEXT NOT NULL CHECK(session_type IN ('homeroom','subject')) DEFAULT 'homeroom',
+        subject_id INTEGER REFERENCES subjects(id),
+        status TEXT NOT NULL CHECK(status IN ('present','absent','late','excused')),
+        notes TEXT,
+        marked_by TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        academic_year_id INTEGER,
+        academic_term_id INTEGER,
+        UNIQUE(student_id, class_id, session_date, session_type, subject_id, period)
+      );
+
+      INSERT INTO attendance_records_new
+        (id, student_id, student_name, class_id, class_name, session_date, period,
+         session_type, subject_id, status, notes, marked_by, created_at, updated_at,
+         academic_year_id, academic_term_id)
+      SELECT
+        id, student_id, student_name, class_id, class_name, session_date, period,
+        'homeroom', NULL, status, notes, marked_by, created_at, updated_at,
+        academic_year_id, academic_term_id
+      FROM attendance_records;
+
+      DROP TABLE attendance_records;
+      ALTER TABLE attendance_records_new RENAME TO attendance_records;
+
+      CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance_records(student_id);
+      CREATE INDEX IF NOT EXISTS idx_attendance_class_date ON attendance_records(class_id, session_date);
+      CREATE INDEX IF NOT EXISTS idx_attendance_records_academic_term ON attendance_records(academic_term_id);
+      CREATE INDEX IF NOT EXISTS idx_attendance_subject ON attendance_records(subject_id, class_id, session_date);
+    `);
+    await db.run('COMMIT');
+    console.log('Migrated attendance_records to session_type/subject_id schema.');
+  } catch (err) {
+    await db.run('ROLLBACK');
+    throw err;
+  }
+}
+
+/** Phase 3 (staff half): distinguish teachers (whose "attendance" is really
+ *  calendar-derived — see A.2) from other staff (A.3, simple daily clock).
+ *  Additive — no rebuild needed since there's no constraint to widen. */
+async function migrateStaffType(db: Database) {
+  const cols = await db.all(`PRAGMA table_info(staff_attendance)`);
+  if (!cols.some((c: any) => c.name === 'staff_type')) {
+    await db.run(
+      `ALTER TABLE staff_attendance ADD COLUMN staff_type TEXT NOT NULL DEFAULT 'other' CHECK(staff_type IN ('teacher','other'))`
+    );
+  }
+  await db.run(`CREATE INDEX IF NOT EXISTS idx_staff_attendance_type ON staff_attendance(staff_type, date)`);
 }
 
 export function getDb() {

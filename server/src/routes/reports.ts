@@ -13,7 +13,13 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
   const db = getDb();
   const today = new Date().toISOString().split('T')[0];
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
-  const periodFilter = academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
+  // Scoped to homeroom sessions only — since attendance_records can now also
+  // hold subject/course rows (A.1.2) for the same student/date, an unscoped
+  // query here would double-count a student who was marked for both a
+  // homeroom and a subject session on the same day. "Overall attendance"
+  // (A.1.1) is the homeroom signal; subject-level rates live behind
+  // /api/attendance/subject/:subjectId instead.
+  const periodFilter = (academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '') + " AND session_type = 'homeroom'";
   const periodParams = academicTermId != null ? [academicTermId] : [];
 
   try {
@@ -124,7 +130,8 @@ router.get('/class/:id', authorizePermission('REPORTS_VIEW'), async (req: any, r
   const classId = req.params.id;
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
-  const periodFilter = academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
+  // Same homeroom-only scoping as /overview — see comment there.
+  const periodFilter = (academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '') + " AND session_type = 'homeroom'";
   const periodParams = academicTermId != null ? [academicTermId] : [];
 
   try {

@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Users, GraduationCap, Briefcase, ShieldCheck, HelpCircle, Search, Check, AlertCircle, Inbox, KeyRound } from 'lucide-react';
+import { Users, GraduationCap, Briefcase, ShieldCheck, HelpCircle, Search, Check, AlertCircle, Inbox, KeyRound, RefreshCw } from 'lucide-react';
 import { useAuth, type Role } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { HeroBanner } from '../components/common/HeroBanner';
 import { useToast } from '../context/ToastContext';
+import { apiPost, ApiError } from '../api/client';
 
 interface ManagedUser {
   id: string;
@@ -42,6 +43,7 @@ export const AdminDashboard: React.FC = () => {
   const [savedId, setSavedId] = useState<string | null>(null);
   // A role change requested via the dropdown, awaiting confirmation.
   const [pending, setPending] = useState<{ id: string; name: string; fromRoleId: number | null; toRoleId: number; toName: string } | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -102,6 +104,24 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  // Populates the local subjects/timetable/academic-period cache from the
+  // MIS (server/src/modules/academics/academicsSync.service.ts). Without
+  // this, class_subject_assignments and subjects stay empty forever and
+  // MarkAttendance's "Subject / course" mode has nothing to select from —
+  // this is the only place that call is wired up to a UI action.
+  const syncFromMis = async () => {
+    setSyncing(true);
+    try {
+      const res = await apiPost<{ years: number; terms: number; subjects: number; assignments: number }>('/api/academics/sync');
+      const d = res.data!;
+      toast.success('Synced from MIS', `${d.years} years, ${d.terms} terms, ${d.subjects} subjects, ${d.assignments} timetable entries.`);
+    } catch (err) {
+      toast.error('Sync failed', err instanceof ApiError ? err.message : 'Could not reach the server.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   // Open the confirm dialog when a different role is chosen.
   const requestRoleChange = (u: ManagedUser, toRoleId: number) => {
     if (toRoleId === u.role_id) return;
@@ -152,6 +172,21 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
           <Link to="/admin/roles" className="btn btn-outline btn-sm">Manage roles</Link>
+        </div>
+      )}
+
+      {can('ROSTER_SYNC') && (
+        <div className="card card-pad mb-4 flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <RefreshCw size={20} color="var(--accent)" />
+            <div>
+              <div className="font-semibold text-sm">Academic period &amp; roster sync</div>
+              <div className="text-xs text-secondary">Pull academic years/terms and the subject/timetable cache from the MIS — needed for subject/course attendance.</div>
+            </div>
+          </div>
+          <button className="btn btn-outline btn-sm" onClick={syncFromMis} disabled={syncing}>
+            <RefreshCw size={14} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} /> {syncing ? 'Syncing…' : 'Sync now'}
+          </button>
         </div>
       )}
 

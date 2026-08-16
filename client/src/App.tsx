@@ -20,11 +20,10 @@ import { Reports } from './pages/Reports';
 import { Directory } from './pages/Directory';
 import { Settings } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
-import { Schedule } from './pages/Schedule';
 import { LeaveRequests } from './pages/LeaveRequests';
-import { Analytics } from './pages/Analytics';
 import { LogIncident } from './pages/LogIncident';
 import { DisciplineRecords } from './pages/DisciplineRecords';
+import { DisciplineRules } from './pages/DisciplineRules';
 import { MyConduct } from './pages/MyConduct';
 import { ExcuseReview } from './pages/ExcuseReview';
 import { AuditLog } from './pages/AuditLog';
@@ -120,26 +119,10 @@ export const App: React.FC = () => {
             }
           />
           <Route
-            path="/schedule"
-            element={
-              <ProtectedRoute allowedRoles={['student']}>
-                <Schedule />
-              </ProtectedRoute>
-            }
-          />
-          <Route
             path="/excuses"
             element={
               <ProtectedRoute allowedRoles={['student']}>
                 <LeaveRequests />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/analytics"
-            element={
-              <ProtectedRoute allowedRoles={['student']}>
-                <Analytics />
               </ProtectedRoute>
             }
           />
@@ -156,6 +139,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher']}>
                 <DisciplineRecords />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/discipline/rules"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <DisciplineRules />
               </ProtectedRoute>
             }
           />

@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Download, TrendingUp, Users, BarChart2, ArrowUpRight, ArrowDownRight, Gavel } from 'lucide-react';
+import { ErrorState } from '../components/common/ErrorState';
+import { apiGet, ApiError } from '../api/client';
+import { Download, TrendingUp, Users, BarChart2, ArrowUpRight, ArrowDownRight, Minus, Gavel, AlertOctagon } from 'lucide-react';
+import { reportingApi, type CombinedReport } from '../api/reporting';
 
 interface ClassStat { classId: string; className: string; rate: number; totalCount: number; }
 interface TrendStat { date: string; rate: number; }
@@ -17,32 +20,59 @@ const rateBadge = (r: number) => (r >= 90 ? 'badge-success' : r >= 80 ? 'badge-w
 export const Reports: React.FC = () => {
   const [data, setData] = useState<ReportsOverview | null>(null);
   const [conduct, setConduct] = useState<ConductOverview | null>(null);
+  const [combined, setCombined] = useState<CombinedReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      const headers = { Authorization: `Bearer ${localStorage.getItem('sso_token')}` };
-      try {
-        const res = await fetch('/api/reports/overview', { headers });
-        if (res.ok) { const result = await res.json(); if (result.success) setData(result.data); }
-        const cRes = await fetch('/api/discipline/overview', { headers });
-        if (cRes.ok) { const c = await cRes.json(); if (c.success) setConduct(c.data); }
-      } catch (err) { console.error('Error fetching reports:', err); }
-      finally { setLoading(false); }
-    })();
-  }, []);
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const [res, cRes] = await Promise.all([
+        apiGet<ReportsOverview>('/api/reports/overview'),
+        apiGet<ConductOverview>('/api/discipline/overview'),
+      ]);
+      setData(res.data ?? null);
+      setConduct(cRes.data ?? null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load reports.');
+    }
+
+    // C: combined attendance + discipline risk — students who are both
+    // low-attendance AND low-conduct-balance, not visible from either
+    // report alone (see modules/reporting/reporting.service.ts). Kept
+    // non-fatal: a failure here shouldn't blank out the rest of the page.
+    try {
+      const combinedRes = await reportingApi.combined();
+      setCombined(combinedRes.data ?? null);
+    } catch (err) { console.error('Error fetching combined report:', err); }
+
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
 
   const exportCSV = () => {
     if (!data) return;
-    let csv = 'data:text/csv;charset=utf-8,Class ID,Class Name,Attendance Rate (%),Total Logs\n';
+    let csv = 'Class ID,Class Name,Attendance Rate (%),Total Logs\n';
     data.classes.forEach((c) => { csv += `${c.classId},"${c.className}",${c.rate},${c.totalCount}\n`; });
+    if (conduct) {
+      csv += '\nDiscipline Summary\n';
+      csv += `Total records,${conduct.totals.total}\n`;
+      csv += `Demerits,${conduct.totals.demerits}\n`;
+      csv += `Merits,${conduct.totals.merits}\n`;
+      csv += `Open cases,${conduct.totals.open + conduct.totals.underReview}\n`;
+    }
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodeURI(csv));
-    link.setAttribute('download', `nga-attendance-${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    link.href = url;
+    link.download = `nga-reports-${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   if (loading) return <DashboardLayout><div style={{ padding: '80px 0' }}><LoadingSpinner /></div></DashboardLayout>;
+  if (error) return <DashboardLayout><ErrorState message={error} onRetry={load} /></DashboardLayout>;
 
   return (
     <DashboardLayout>
@@ -123,15 +153,21 @@ export const Reports: React.FC = () => {
               {data.trends.length > 0 && (
                 <section className="card card-pad">
                   <span className="section-title">Recent trend</span>
+                  <p className="text-xs text-secondary mt-1">Change vs. the previous session day.</p>
                   <div className="flex flex-col gap-2 mt-3">
-                    {data.trends.slice(-5).map((t, i) => (
-                      <div key={i} className="flex justify-between items-center text-sm">
-                        <span className="text-secondary">{new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                        <span className={`font-semibold flex items-center gap-1 ${t.rate >= data.overallRate ? 'text-success' : 'text-danger'}`}>
-                          {t.rate >= data.overallRate ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{t.rate}%
-                        </span>
-                      </div>
-                    ))}
+                    {data.trends.slice(-5).map((t, i, arr) => {
+                      const prev = i > 0 ? arr[i - 1].rate : null;
+                      const delta = prev === null ? null : t.rate - prev;
+                      return (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="text-secondary">{new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                          <span className={`font-semibold flex items-center gap-1 ${delta === null ? 'text-secondary' : delta > 0 ? 'text-success' : delta < 0 ? 'text-danger' : 'text-secondary'}`}>
+                            {delta === null ? <Minus size={14} /> : delta > 0 ? <ArrowUpRight size={14} /> : delta < 0 ? <ArrowDownRight size={14} /> : <Minus size={14} />}
+                            {t.rate}%{delta !== null && delta !== 0 && <span className="text-xs">({delta > 0 ? '+' : ''}{delta})</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </section>
               )}
@@ -173,6 +209,29 @@ export const Reports: React.FC = () => {
                 )}
               </section>
             </div>
+          )}
+          {combined && combined.studentsAtCombinedRisk.length > 0 && (
+            <section className="card card-pad mt-6">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertOctagon size={16} className="text-danger" />
+                <span className="section-title">Combined risk — low attendance and low conduct</span>
+              </div>
+              <p className="text-sm text-secondary mb-3">
+                Students under 80% attendance and under 80/100 conduct balance this term — compounding
+                risk that isn't visible from either report alone.
+              </p>
+              <div className="flex flex-col gap-2">
+                {combined.studentsAtCombinedRisk.map((s) => (
+                  <div key={s.studentId} className="flex items-center justify-between text-sm">
+                    <span className="truncate">{s.studentName}</span>
+                    <div className="flex gap-2">
+                      <span className="badge badge-danger">{s.attendanceRate}% attendance</span>
+                      <span className="badge badge-warning">{s.conductBalance} conduct</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
         </>
       )}

@@ -26,12 +26,20 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ size = 'md', ful
   );
 
   if (fullPage) {
+    // .app-boot-badge / .app-boot-ring are defined in index.html so the same
+    // branded mark is shown here and in the pre-React boot splash.
     return (
       <div
         className="flex items-center justify-center"
         style={{ position: 'fixed', inset: 0, background: 'var(--bg-page)', zIndex: 9999 }}
+        role="status"
+        aria-label="Loading Tendo"
       >
-        {spinner}
+        <div className="app-boot-badge">
+          <span className="app-boot-ring" />
+          <span className="app-boot-ring app-boot-ring-delayed" />
+          <img src="/favicon.svg" alt="" width="40" height="40" />
+        </div>
       </div>
     );
   }

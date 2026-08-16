@@ -5,6 +5,8 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useToast } from '../context/ToastContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { Gavel, Award, AlertCircle, Save, Users } from 'lucide-react';
+import { disciplineApi, type DisciplineRule } from '../api/discipline';
+import { apiGet, apiPost, ApiError } from '../api/client';
 
 interface ClassData { id: string; name: string; department: string; }
 interface Student { id: string; name: string; email: string; }
@@ -26,7 +28,6 @@ const SANCTIONS: { value: string; label: string }[] = [
   { value: 'counseling', label: 'Counseling' },
 ];
 
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
 const today = () => new Date().toISOString().split('T')[0];
 
 export const LogIncident: React.FC = () => {
@@ -42,6 +43,18 @@ export const LogIncident: React.FC = () => {
   const [bulk, setBulk] = useState(false);
   const [bulkIds, setBulkIds] = useState<string[]>([]);
 
+  // B.1: prefer the governable rules catalog over the hardcoded legacy
+  // category/severity lists below. The legacy lists remain as a fallback for
+  // schools that haven't populated the catalog yet (Admin > Discipline Rules).
+  const [rules, setRules] = useState<DisciplineRule[]>([]);
+  const [selectedRuleId, setSelectedRuleId] = useState<number | ''>('');
+  // Progressive disclosure: when the catalog has rules for this type, the
+  // rule picker is the only thing shown by default — manual category/
+  // severity fields are tucked behind this toggle instead of sitting next
+  // to the picker (disabled but visible), which was confusing for a
+  // first-time user per the UX audit.
+  const [useCustomCategory, setUseCustomCategory] = useState(false);
+
   const [type, setType] = useState<RecordType>('demerit');
   const [form, setForm] = useState({
     classId: '',
@@ -55,30 +68,52 @@ export const LogIncident: React.FC = () => {
     sanction: 'none',
   });
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await disciplineApi.listRules({ active: true });
+        setRules(res.data || []);
+      } catch (err) { console.error('Error fetching discipline rules:', err); }
+    })();
+  }, []);
+
+  const rulesForType = rules.filter((r) => r.type === type);
+  const hasCatalog = rulesForType.length > 0;
+  const selectedRule = rulesForType.find((r) => r.id === selectedRuleId) || null;
+  // Manual fields show when there's no catalog to pick from, or the staff
+  // member explicitly asked for a custom category.
+  const showManualFields = !hasCatalog || useCustomCategory;
+
   const categories = type === 'demerit' ? DEMERIT_CATEGORIES : MERIT_CATEGORIES;
   const tiers = type === 'demerit' ? DEMERIT_POINTS : MERIT_POINTS;
-  const previewPoints = tiers[form.severity] ?? 0;
+  const previewPoints = selectedRule ? selectedRule.default_points : (tiers[form.severity] ?? 0);
 
-  // When type flips, reset category/severity to that type's vocabulary.
+  // When type flips, reset category/severity to that type's vocabulary and
+  // clear any rule selection from the other type.
   useEffect(() => {
     setForm((f) => ({
       ...f,
       category: (type === 'demerit' ? DEMERIT_CATEGORIES : MERIT_CATEGORIES)[0],
       severity: type === 'demerit' ? 'minor' : 'small',
     }));
+    setSelectedRuleId('');
+    setUseCustomCategory(false);
   }, [type]);
+
+  const pickRule = (ruleId: number | '') => {
+    setSelectedRuleId(ruleId);
+    const rule = rulesForType.find((r) => r.id === ruleId);
+    if (rule) {
+      setForm((f) => ({ ...f, title: f.title || rule.title, category: rule.category, severity: rule.severity || f.severity }));
+    }
+  };
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/mis/classes', { headers: authHeaders() });
-        if (res.ok) {
-          const result = await res.json();
-          if (result.success) {
-            setClasses(result.data);
-            if (result.data.length) setForm((f) => ({ ...f, classId: result.data[0].id }));
-          }
-        }
+        const res = await apiGet<ClassData[]>('/api/mis/classes');
+        setClasses(res.data || []);
+        if (res.data?.length) setForm((f) => ({ ...f, classId: res.data![0].id }));
       } catch (err) { console.error('Error fetching classes:', err); }
       finally { setLoadingClasses(false); }
     })();
@@ -89,15 +124,10 @@ export const LogIncident: React.FC = () => {
     (async () => {
       setLoadingStudents(true);
       try {
-        const res = await fetch(`/api/mis/students?class_id=${form.classId}`, { headers: authHeaders() });
-        if (res.ok) {
-          const result = await res.json();
-          if (result.success) {
-            setStudents(result.data);
-            setForm((f) => ({ ...f, studentId: result.data[0]?.id ?? '' }));
-            setBulkIds([]);
-          }
-        }
+        const res = await apiGet<Student[]>(`/api/mis/students?class_id=${form.classId}`);
+        setStudents(res.data || []);
+        setForm((f) => ({ ...f, studentId: res.data?.[0]?.id ?? '' }));
+        setBulkIds([]);
       } catch (err) { console.error('Error fetching students:', err); }
       finally { setLoadingStudents(false); }
     })();
@@ -115,51 +145,42 @@ export const LogIncident: React.FC = () => {
     setMessage(null);
     const klass = classes.find((c) => c.id === form.classId);
     if (!form.title.trim()) { setMessage({ type: 'error', text: 'A short title is required.' }); return; }
+    if (hasCatalog && !useCustomCategory && !selectedRule) {
+      setMessage({ type: 'error', text: 'Pick a rule, or switch to "Use a custom category instead".' });
+      return;
+    }
 
     const shared = {
       className: klass?.name ?? null,
       type,
-      category: form.category,
-      severity: form.severity,
+      category: selectedRule ? selectedRule.category : form.category,
+      severity: selectedRule ? (selectedRule.severity || form.severity) : form.severity,
       title: form.title.trim(),
       description: form.description.trim(),
       incidentDate: form.incidentDate,
       location: form.location.trim() || null,
       sanction: type === 'demerit' ? form.sanction : 'none',
+      ruleId: selectedRule ? selectedRule.id : null,
     };
 
     setSaving(true);
     try {
-      let res: Response;
       let label: string;
       if (bulk) {
         const chosen = students.filter((s) => bulkIds.includes(s.id));
         if (chosen.length === 0) { setMessage({ type: 'error', text: 'Select at least one student.' }); setSaving(false); return; }
         label = `${chosen.length} students`;
-        res = await fetch('/api/discipline/bulk', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ ...shared, students: chosen.map((s) => ({ studentId: s.id, studentName: s.name })) }),
-        });
+        await apiPost('/api/discipline/bulk', { ...shared, students: chosen.map((s) => ({ studentId: s.id, studentName: s.name })) });
       } else {
         const student = students.find((s) => s.id === form.studentId);
         if (!student) { setMessage({ type: 'error', text: 'Please select a student.' }); setSaving(false); return; }
         label = student.name;
-        res = await fetch('/api/discipline', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ ...shared, studentId: student.id, studentName: student.name }),
-        });
+        await apiPost('/api/discipline', { ...shared, studentId: student.id, studentName: student.name });
       }
-      const result = await res.json();
-      if (res.ok && result.success) {
-        toast.success(`${type === 'merit' ? 'Merit' : 'Demerit'} logged`, `For ${label}`);
-        setTimeout(() => navigate('/discipline/records'), 800);
-      } else {
-        setMessage({ type: 'error', text: result.message || 'Failed to save the record.' });
-      }
-    } catch {
-      setMessage({ type: 'error', text: 'Network error. Could not reach the server.' });
+      toast.success(`${type === 'merit' ? 'Merit' : 'Demerit'} logged`, `For ${label}`);
+      setTimeout(() => navigate('/discipline/records'), 800);
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof ApiError ? err.message : 'Network error. Could not reach the server.' });
     } finally { setSaving(false); }
   };
 
@@ -238,22 +259,62 @@ export const LogIncident: React.FC = () => {
                 </div>
               )}
 
-              <div className="grid grid-2" style={{ gap: '12px' }}>
-                <div className="field">
-                  <label className="label">Category</label>
-                  <select className="select" value={form.category} onChange={(e) => update({ category: e.target.value })}>
-                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div className="field">
-                  <label className="label">{type === 'demerit' ? 'Severity' : 'Level'}</label>
-                  <select className="select" value={form.severity} onChange={(e) => update({ severity: e.target.value })}>
-                    {Object.keys(tiers).map((t) => (
-                      <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)} ({tiers[t]} pts)</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              {hasCatalog && !showManualFields && (
+                <>
+                  <div className="field">
+                    <label className="label">Rule</label>
+                    <select
+                      className="select"
+                      value={selectedRuleId}
+                      onChange={(e) => pickRule(e.target.value ? Number(e.target.value) : '')}
+                    >
+                      <option value="">Select a rule…</option>
+                      {rulesForType.map((r) => (
+                        <option key={r.id} value={r.id}>{r.title} — {r.category} ({r.default_points} pts{r.fine_amount > 0 ? `, fine ${r.fine_amount}` : ''})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-xs"
+                    style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--primary)', textDecoration: 'underline' }}
+                    onClick={() => { setUseCustomCategory(true); setSelectedRuleId(''); }}
+                  >
+                    Use a custom category instead
+                  </button>
+                </>
+              )}
+
+              {showManualFields && (
+                <>
+                  {hasCatalog && (
+                    <button
+                      type="button"
+                      className="text-xs text-link"
+                      style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                      onClick={() => setUseCustomCategory(false)}
+                    >
+                      ← Back to the rules catalog
+                    </button>
+                  )}
+                  <div className="grid grid-2" style={{ gap: '12px' }}>
+                    <div className="field">
+                      <label className="label">Category</label>
+                      <select className="select" value={form.category} onChange={(e) => update({ category: e.target.value })}>
+                        {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label className="label">{type === 'demerit' ? 'Severity' : 'Level'}</label>
+                      <select className="select" value={form.severity} onChange={(e) => update({ severity: e.target.value })}>
+                        {Object.keys(tiers).map((t) => (
+                          <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)} ({tiers[t]} pts)</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="field">
                 <label className="label">Title</label>

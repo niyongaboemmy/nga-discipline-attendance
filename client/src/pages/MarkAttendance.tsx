@@ -3,12 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { usePermissions } from '../hooks/usePermissions';
-import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck } from 'lucide-react';
+import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw } from 'lucide-react';
+import { apiGet, apiPost, ApiError } from '../api/client';
 import './MarkAttendance.css';
 
 interface ClassData { id: string; name: string; department: string; }
 interface Student { id: string; name: string; email: string; }
+interface Subject { id: number; name: string; code: string | null; }
 type Status = 'present' | 'absent' | 'late' | 'excused';
+type SessionType = 'homeroom' | 'subject';
 interface AttendanceState { studentId: string; studentName: string; status: Status; notes: string; }
 
 const STATUSES: { key: Status; label: string; icon: React.ReactNode }[] = [
@@ -29,6 +32,11 @@ export const MarkAttendance: React.FC = () => {
   const [attendance, setAttendance] = useState<Record<string, AttendanceState>>({});
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
   const [period, setPeriod] = useState('Morning');
+  // A.1.1 vs A.1.2: homeroom is the class-group's overall daily attendance;
+  // subject requires picking which course session this is.
+  const [sessionType, setSessionType] = useState<SessionType>('homeroom');
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [subjectId, setSubjectId] = useState<number | ''>('');
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -37,18 +45,26 @@ export const MarkAttendance: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/mis/classes', { headers: { Authorization: `Bearer ${localStorage.getItem('sso_token')}` } });
-        if (res.ok) {
-          const result = await res.json();
-          if (result.success) {
-            setClasses(result.data);
-            if (result.data.length) setSelectedClass(result.data[0].id);
-          }
-        }
+        const res = await apiGet<ClassData[]>('/api/mis/classes');
+        setClasses(res.data || []);
+        if (res.data?.length) setSelectedClass(res.data[0].id);
       } catch (err) { console.error('Error fetching classes:', err); }
       finally { setLoadingClasses(false); }
     })();
+
+    (async () => {
+      try {
+        const res = await apiGet<Subject[]>('/api/academics/subjects');
+        setSubjects(res.data || []);
+      } catch (err) { console.error('Error fetching subjects:', err); }
+    })();
   }, []);
+
+  const resetRoster = (list: Student[]) => {
+    const initial: Record<string, AttendanceState> = {};
+    list.forEach((s) => { initial[s.id] = { studentId: s.id, studentName: s.name, status: 'present', notes: '' }; });
+    setAttendance(initial);
+  };
 
   useEffect(() => {
     if (!selectedClass) return;
@@ -56,16 +72,9 @@ export const MarkAttendance: React.FC = () => {
       setLoadingStudents(true);
       setMessage(null);
       try {
-        const res = await fetch(`/api/mis/students?class_id=${selectedClass}`, { headers: { Authorization: `Bearer ${localStorage.getItem('sso_token')}` } });
-        if (res.ok) {
-          const result = await res.json();
-          if (result.success) {
-            setStudents(result.data);
-            const initial: Record<string, AttendanceState> = {};
-            result.data.forEach((s: Student) => { initial[s.id] = { studentId: s.id, studentName: s.name, status: 'present', notes: '' }; });
-            setAttendance(initial);
-          }
-        }
+        const res = await apiGet<Student[]>(`/api/mis/students?class_id=${selectedClass}`);
+        setStudents(res.data || []);
+        resetRoster(res.data || []);
       } catch (err) { console.error('Error fetching students:', err); }
       finally { setLoadingStudents(false); }
     })();
@@ -78,29 +87,33 @@ export const MarkAttendance: React.FC = () => {
   const markAll = (status: Status) =>
     setAttendance((p) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k, { ...v, status }])));
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  /** `andContinue`: after saving, either navigate away (the old only option)
+   *  or stay on the page with the roster reset for another period — a
+   *  teacher marking several periods back-to-back no longer has to
+   *  re-select the class from scratch each time. */
+  const handleSave = async (andContinue: boolean) => {
     if (!selectedClass || !students.length) return;
+    if (sessionType === 'subject' && !subjectId) {
+      setMessage({ type: 'error', text: 'Select a subject for course attendance.' });
+      return;
+    }
     setSaving(true); setMessage(null);
     const activeClass = classes.find((c) => c.id === selectedClass);
     try {
-      const res = await fetch('/api/attendance/mark', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('sso_token')}` },
-        body: JSON.stringify({
-          classId: selectedClass, className: activeClass?.name ?? 'Unknown Class',
-          date: sessionDate, period, records: Object.values(attendance),
-        }),
+      await apiPost('/api/attendance/mark', {
+        classId: selectedClass, className: activeClass?.name ?? 'Unknown Class',
+        date: sessionDate, period, records: Object.values(attendance),
+        sessionType, subjectId: sessionType === 'subject' ? subjectId : null,
       });
-      const result = await res.json();
-      if (res.ok && result.success) {
+      if (andContinue) {
+        setMessage({ type: 'success', text: 'Saved. Roster reset — ready for the next period.' });
+        resetRoster(students);
+      } else {
         setMessage({ type: 'success', text: 'Attendance recorded successfully.' });
         setTimeout(() => navigate('/dashboard'), 1200);
-      } else {
-        setMessage({ type: 'error', text: result.message || 'Failed to submit attendance.' });
       }
-    } catch {
-      setMessage({ type: 'error', text: 'Network error. Could not reach the server.' });
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof ApiError ? err.message : 'Network error. Could not reach the server.' });
     } finally { setSaving(false); }
   };
 
@@ -123,6 +136,39 @@ export const MarkAttendance: React.FC = () => {
         {/* Left: session config */}
         <aside className="card card-pad mark-config">
           <span className="section-title">Session</span>
+          <div className="field mt-4">
+            <label className="label">Session type</label>
+            <div className="segmented">
+              <button
+                type="button"
+                onClick={() => setSessionType('homeroom')}
+                className={`segmented-btn${sessionType === 'homeroom' ? ' is-active' : ''}`}
+              >
+                Homeroom (overall)
+              </button>
+              <button
+                type="button"
+                onClick={() => setSessionType('subject')}
+                className={`segmented-btn${sessionType === 'subject' ? ' is-active' : ''}`}
+              >
+                Subject / course
+              </button>
+            </div>
+          </div>
+          {sessionType === 'subject' && (
+            <div className="field mt-3">
+              <label className="label">Subject</label>
+              <select className="select" value={subjectId} onChange={(e) => setSubjectId(e.target.value ? Number(e.target.value) : '')}>
+                <option value="">Select a subject…</option>
+                {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              {subjects.length === 0 && (
+                <p className="text-xs text-secondary mt-1">
+                  No subjects synced yet — an admin can sync the timetable cache from the MIS in Admin Console.
+                </p>
+              )}
+            </div>
+          )}
           <div className="field mt-4">
             <label className="label">Class</label>
             <select className="select" value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)}>
@@ -208,16 +254,25 @@ export const MarkAttendance: React.FC = () => {
           {students.length > 0 && (
             <div className="mark-footer">
               <span className="text-sm text-secondary">{markedCount} of {students.length} marked</span>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button type="button" className="btn btn-outline" onClick={() => navigate('/dashboard')}>Cancel</button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={saving || !can('ATTENDANCE_MARK')}
+                  title={can('ATTENDANCE_MARK') ? undefined : "You don't have permission to mark attendance."}
+                  onClick={() => handleSave(true)}
+                >
+                  <RotateCcw size={16} /> Save & mark another
+                </button>
                 <button
                   type="button"
                   className="btn btn-primary"
                   disabled={saving || !can('ATTENDANCE_MARK')}
                   title={can('ATTENDANCE_MARK') ? undefined : "You don't have permission to mark attendance."}
-                  onClick={handleSave}
+                  onClick={() => handleSave(false)}
                 >
-                  <Save size={16} /> {saving ? 'Saving…' : 'Save session'}
+                  <Save size={16} /> {saving ? 'Saving…' : 'Save & done'}
                 </button>
               </div>
             </div>

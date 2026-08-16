@@ -31,6 +31,10 @@ export const searchCatalog: SearchItem[] = [
     roles: ['admin'], keywords: ['rbac', 'access control', 'permissions'],
   },
   {
+    label: 'Discipline Rules', description: 'The rules catalog — point values and fines per rule', path: '/discipline/rules',
+    roles: ['admin'], keywords: ['rules catalog', 'point values', 'fines', 'demerit rules', 'merit rules'],
+  },
+  {
     label: 'Audit Log', description: 'History of actions taken in the system', path: '/admin/audit',
     roles: ['admin'], keywords: ['activity log', 'history', 'who did what', 'logs'],
   },
@@ -51,12 +55,8 @@ export const searchCatalog: SearchItem[] = [
 
   // Attendance (student)
   {
-    label: 'My Attendance', description: 'Your personal attendance record', path: '/attendance/me',
-    roles: ['student'], keywords: ['my records', 'personal attendance'],
-  },
-  {
-    label: 'Schedule', description: 'Your class timetable', path: '/schedule',
-    roles: ['student'], keywords: ['timetable', 'classes today', 'periods'],
+    label: 'My Attendance', description: 'Your attendance record, trends, and weekly schedule', path: '/attendance/me',
+    roles: ['student'], keywords: ['my records', 'personal attendance', 'timetable', 'schedule', 'classes today', 'periods', 'trends'],
   },
   {
     label: 'Leaves & Excuses', description: 'Request an excuse for an absence', path: '/excuses',
@@ -92,26 +92,14 @@ export const searchCatalog: SearchItem[] = [
     label: 'Directory', description: 'Student and staff directory', path: '/directory',
     roles: ['admin', 'teacher'], keywords: ['student list', 'staff list', 'contacts', 'find a student'],
   },
-  {
-    label: 'Insights & Analytics', description: 'Your attendance and conduct trends', path: '/analytics',
-    roles: ['student'], keywords: ['charts', 'trends', 'my performance'],
-  },
 
-  // Settings (one page, several sections — all searchable individually)
+  // Settings (one page, two sections — both searchable individually)
   {
-    label: 'Settings — Account', description: 'Your name, email, and role', path: '/settings',
-    roles: ['admin', 'teacher', 'student'], keywords: ['profile', 'account details'],
+    label: 'Settings — Account', description: 'Your name, email, role, and security', path: '/settings',
+    roles: ['admin', 'teacher', 'student'], keywords: ['profile', 'account details', 'password', 'security'],
   },
   {
     label: 'Settings — Notifications', description: 'Notification preferences', path: '/settings',
     roles: ['admin', 'teacher', 'student'], keywords: ['email alerts', 'notification preferences'],
-  },
-  {
-    label: 'Settings — Appearance', description: 'Theme and display preferences', path: '/settings',
-    roles: ['admin', 'teacher', 'student'], keywords: ['theme', 'dark mode', 'light mode'],
-  },
-  {
-    label: 'Settings — Security', description: 'Password and account security', path: '/settings',
-    roles: ['admin', 'teacher', 'student'], keywords: ['change password', 'security'],
   },
 ];

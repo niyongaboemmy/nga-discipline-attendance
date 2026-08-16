@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Inbox, AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ErrorState } from '../components/common/ErrorState';
+import { apiGet, ApiError } from '../api/client';
+import { Inbox, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
 interface AuditEntry {
   id: number;
@@ -14,14 +16,28 @@ interface AuditEntry {
   created_at: string;
 }
 
-const ACTION_BADGE: Record<string, string> = {
-  'role.assign': 'badge-primary',
-  'discipline.create': 'badge-info',
-  'discipline.status': 'badge-warning',
-  'excuse.review': 'badge-success',
+// Badge color by the action's category (the segment before the first '.') —
+// a small lookup instead of one entry per exact action string, so newer
+// action types (discipline_rule.create, discipline.adjust, …) render
+// correctly instead of silently falling back to neutral.
+const CATEGORY_BADGE: Record<string, string> = {
+  role: 'badge-primary',
+  roles: 'badge-primary',
+  users: 'badge-primary',
+  discipline: 'badge-info',
+  discipline_rule: 'badge-info',
+  attendance: 'badge-warning',
+  excuse: 'badge-success',
 };
 
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
+/** "discipline_rule.create" -> { label: "Discipline Rule · Create", badgeClass: "badge-info" } */
+function formatAction(action: string): { label: string; badgeClass: string } {
+  const [category, ...rest] = action.split('.');
+  const titleCase = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  const label = [category, ...rest].map(titleCase).join(' · ');
+  return { label, badgeClass: CATEGORY_BADGE[category] || 'badge-neutral' };
+}
+
 const PAGE_SIZE = 50;
 
 const formatDetails = (raw: string | null): string => {
@@ -48,14 +64,11 @@ export const AuditLog: React.FC = () => {
       const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
       if (action) qs.set('action', action);
       if (search) qs.set('search', search);
-      const res = await fetch(`/api/admin/audit?${qs.toString()}`, { headers: authHeaders() });
-      if (!res.ok) throw new Error('Could not load the audit log.');
-      const result = await res.json();
-      if (!result.success) throw new Error(result.message || 'Server error.');
-      setEntries(result.data);
-      setTotal(result.total ?? result.data.length);
-      if (result.actions) setActions(result.actions);
-    } catch (err) { setError((err as Error).message); }
+      const res = await apiGet<AuditEntry[]>(`/api/admin/audit?${qs.toString()}`);
+      setEntries(res.data || []);
+      setTotal(res.total ?? res.data?.length ?? 0);
+      if ((res as any).actions) setActions((res as any).actions);
+    } catch (err) { setError(err instanceof ApiError ? err.message : 'Could not load the audit log.'); }
     finally { setLoading(false); }
   }, [action, search, offset]);
 
@@ -89,12 +102,12 @@ export const AuditLog: React.FC = () => {
         </div>
       </div>
 
+      {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
+
       <div className="card">
         <div className="card-header"><span className="section-title">Entries {total > 0 && `(${total})`}</span></div>
         {loading ? (
           <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
-        ) : error ? (
-          <div className="empty-state"><AlertCircle size={28} /><span className="text-sm">{error}</span></div>
         ) : entries.length === 0 ? (
           <div className="empty-state"><Inbox size={28} /><span className="text-sm">No audit entries match your filters.</span></div>
         ) : (
@@ -104,18 +117,21 @@ export const AuditLog: React.FC = () => {
                 <tr><th>When</th><th>Actor</th><th>Action</th><th>Entity</th><th>Details</th></tr>
               </thead>
               <tbody>
-                {entries.map((e) => (
-                  <tr key={e.id}>
-                    <td className="text-secondary" style={{ whiteSpace: 'nowrap' }}>{new Date(e.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-                    <td>
-                      <div className="font-medium">{e.actor_name || '—'}</div>
-                      <div className="text-xs text-secondary mono">{e.actor_id}</div>
-                    </td>
-                    <td><span className={`badge ${ACTION_BADGE[e.action] || 'badge-neutral'}`}>{e.action}</span></td>
-                    <td className="text-sm">{e.entity_type}{e.entity_id ? ` #${e.entity_id}` : ''}</td>
-                    <td className="text-sm text-secondary">{formatDetails(e.details)}</td>
-                  </tr>
-                ))}
+                {entries.map((e) => {
+                  const { label, badgeClass } = formatAction(e.action);
+                  return (
+                    <tr key={e.id}>
+                      <td className="text-secondary" style={{ whiteSpace: 'nowrap' }}>{new Date(e.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                      <td>
+                        <div className="font-medium">{e.actor_name || '—'}</div>
+                        <div className="text-xs text-secondary mono">{e.actor_id}</div>
+                      </td>
+                      <td><span className={`badge ${badgeClass}`}>{label}</span></td>
+                      <td className="text-sm">{e.entity_type}{e.entity_id ? ` #${e.entity_id}` : ''}</td>
+                      <td className="text-sm text-secondary">{formatDetails(e.details)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

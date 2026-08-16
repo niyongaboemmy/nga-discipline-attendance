@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { getDb } from '../database.js';
-import { Role } from '../middleware/auth.js';
+import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 
 const router = Router();
@@ -249,6 +249,62 @@ router.post('/exchange', async (req: Request, res: Response) => {
       success: false,
       message: 'Could not reach the Discipline MIS authentication server. Please try again.',
     });
+  }
+});
+
+/**
+ * The cross-app "waffle" switcher's live app list — proxies the MIS's own
+ * `/users/me` (using the misToken embedded in this app's session JWT at
+ * /exchange above) and hands back just the `systems` array, mirroring how
+ * nga-task-mentor's server does the same thing. Fails open (empty list)
+ * rather than breaking the navbar if the MIS is briefly unreachable.
+ */
+router.get('/systems', authMiddleware, async (req: Request, res: Response) => {
+  const misToken = (req as AuthenticatedRequest).user?.misToken;
+  if (!misToken) {
+    return res.json({ success: true, data: { systems: [] } });
+  }
+
+  try {
+    const response = await fetch(`${config.ngaMisBaseUrl}/users/me`, {
+      headers: { Authorization: `Bearer ${misToken}` },
+    });
+    const result = (await response.json()) as any;
+    if (!response.ok || !result.success) {
+      return res.json({ success: true, data: { systems: [] } });
+    }
+    return res.json({ success: true, data: { systems: result.data?.systems || [] } });
+  } catch (error) {
+    console.error('Fetch MIS systems error:', error);
+    return res.json({ success: true, data: { systems: [] } });
+  }
+});
+
+/**
+ * Proxies an SSO authorization request to the MIS on behalf of the signed-in
+ * user, so the waffle switcher can hop into a sibling app without asking them
+ * to log in again — same protocol nga-task-mentor's client/server use.
+ */
+router.get('/authorize', authMiddleware, async (req: Request, res: Response) => {
+  const misToken = (req as AuthenticatedRequest).user?.misToken;
+  if (!misToken) {
+    return res.status(401).json({ success: false, message: 'MIS session expired' });
+  }
+
+  const { client_id, redirect_uri, response_type, state } = req.query;
+  try {
+    const url = new URL(`${config.ngaMisBaseUrl}/sso/authorize`);
+    if (client_id) url.searchParams.set('client_id', String(client_id));
+    if (redirect_uri) url.searchParams.set('redirect_uri', String(redirect_uri));
+    if (response_type) url.searchParams.set('response_type', String(response_type));
+    if (state) url.searchParams.set('state', String(state));
+
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${misToken}` } });
+    const result = await response.json();
+    return res.status(response.status).json(result);
+  } catch (error) {
+    console.error('SSO authorize proxy error:', error);
+    return res.status(502).json({ success: false, message: 'Could not reach the MIS authorization server.' });
   }
 });
 

@@ -18,8 +18,10 @@ export const SSOCallback: React.FC = () => {
       const code = params.get('code');
 
       if (!code) {
-        setError('Authorization code is missing in the redirect URL.');
-        setLoading(false);
+        // No dead end: this is almost always someone landing on /callback
+        // directly rather than via a real SSO redirect — send them back to
+        // login instead of showing a generic error with nowhere to go.
+        navigate('/', { replace: true });
         return;
       }
 
@@ -46,7 +48,7 @@ export const SSOCallback: React.FC = () => {
         }
       } catch (err) {
         console.error('SSO Exchange error:', err);
-        setError('Network error: could not reach the Discipline backend server.');
+        setError('Network error: could not reach the Tendo backend server.');
       } finally {
         setLoading(false);
       }
@@ -64,7 +66,7 @@ export const SSOCallback: React.FC = () => {
               <div className="sso-badge">
                 <span className="sso-ring" />
                 <span className="sso-ring sso-ring-delayed" />
-                <div className="login-logo-badge"><img src="/logo.png" alt="Discipline" /></div>
+                <div className="login-logo-badge"><img src="/icon.png" alt="Tendo" /></div>
               </div>
 
               <h1 className="login-title" style={{ fontSize: '24px' }}>Verifying your session</h1>

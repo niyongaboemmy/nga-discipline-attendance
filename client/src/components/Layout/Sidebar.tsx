@@ -110,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onCloseMobile }) =
         </div>
         <SidebarNav collapsed={collapsed} role={user.role} />
         <div className="sidebar-footer">
-          {!collapsed && <span className="text-xs text-tertiary">Discipline Portal</span>}
+          {!collapsed && <span className="text-xs text-tertiary">Tendo</span>}
         </div>
       </aside>
 

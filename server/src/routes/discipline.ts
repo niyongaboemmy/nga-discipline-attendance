@@ -13,6 +13,7 @@ import {
 } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
+import { getRule } from '../modules/discipline/rules.repository.js';
 
 const router = Router();
 
@@ -82,13 +83,16 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
     incidentDate,
     location = null,
     sanction = 'none',
+    ruleId = null,
   } = req.body;
 
   // --- Validation (server is authoritative; client-supplied points are ignored) ---
-  if (!studentId || !studentName || !type || !category || !severity || !title || !incidentDate) {
+  // severity is only required on the legacy (no-ruleId) path — a catalog
+  // rule carries its own severity label (possibly none at all).
+  if (!studentId || !studentName || !type || !title || !incidentDate || (ruleId == null && (!category || !severity))) {
     return res.status(400).json({
       success: false,
-      message: 'Missing required fields: studentId, studentName, type, category, severity, title, incidentDate.',
+      message: 'Missing required fields: studentId, studentName, type, title, incidentDate, and (category + severity, or ruleId).',
     });
   }
 
@@ -96,8 +100,33 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
     return res.status(400).json({ success: false, message: "Invalid type. Expected 'demerit' or 'merit'." });
   }
 
-  if (!isValidCategory(type as DisciplineType, category)) {
-    return res.status(400).json({ success: false, message: `Invalid category '${category}' for ${type}.` });
+  // Prefer the rules catalog (B.1) when a ruleId is supplied — it's the
+  // governable source of truth for category/points/fine going forward, and
+  // its default_points is what actually gets recorded (never the legacy
+  // severity-tier derivation below). Falls back to the legacy hardcoded
+  // tiers in utils/conduct.ts otherwise, so existing clients keep working.
+  let resolvedRuleId: number | null = null;
+  let resolvedCategory = category;
+  let resolvedSeverity = severity;
+  let points: number;
+  if (ruleId != null) {
+    const rule = await getRule(getDb(), Number(ruleId));
+    if (!rule || !rule.is_active || rule.type !== type) {
+      return res.status(400).json({ success: false, message: 'Invalid or retired ruleId for this discipline type.' });
+    }
+    resolvedRuleId = rule.id;
+    resolvedCategory = rule.category;
+    resolvedSeverity = rule.severity ?? null;
+    points = rule.default_points;
+  } else {
+    if (!isValidCategory(type as DisciplineType, category)) {
+      return res.status(400).json({ success: false, message: `Invalid category '${category}' for ${type}.` });
+    }
+    try {
+      points = derivePoints(type as DisciplineType, severity);
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
   }
 
   const fieldError = validateIncidentFields({ title, description, incidentDate, location, className });
@@ -111,13 +140,6 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
     return res.status(400).json({ success: false, message: `Invalid sanction '${sanction}'.` });
   }
 
-  let points: number;
-  try {
-    points = derivePoints(type as DisciplineType, severity);
-  } catch (err: any) {
-    return res.status(400).json({ success: false, message: err.message });
-  }
-
   const db = getDb();
   const actor = authReq.user!;
   const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
@@ -125,14 +147,14 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
   try {
     const result = await db.run(
       `INSERT INTO discipline_records
-         (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name, academic_year_id, academic_term_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name, academic_year_id, academic_term_id, rule_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       studentId,
       studentName,
       className,
       type,
-      category,
-      severity,
+      resolvedCategory,
+      resolvedSeverity,
       points,
       title,
       description,
@@ -142,7 +164,8 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
       actor.id,
       actor.name,
       academicYearId ?? null,
-      academicTermId ?? null
+      academicTermId ?? null,
+      resolvedRuleId
     );
 
     const inserted = await db.get('SELECT * FROM discipline_records WHERE id = ?', result.lastID);
@@ -150,8 +173,8 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
     await recordAudit(db, actor, 'discipline.create', 'discipline_record', result.lastID ?? null, {
       studentId,
       type,
-      category,
-      severity,
+      category: resolvedCategory,
+      severity: resolvedSeverity,
       points,
       sanction: effectiveSanction,
     });
@@ -162,15 +185,15 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
       `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'system', ?, ?)`,
       studentId,
       type === 'merit' ? `Merit awarded: ${title}` : `Conduct notice: ${title}`,
-      `You ${verb} (${category}, ${points} pts) on ${incidentDate}. ${description || ''}`.trim()
+      `You ${verb} (${resolvedCategory}, ${points} pts) on ${incidentDate}. ${description || ''}`.trim()
     );
 
     // Escalate major demerits to staff/admins.
-    if (type === 'demerit' && severity === 'major') {
+    if (type === 'demerit' && resolvedSeverity === 'major') {
       await db.run(
         `INSERT INTO notifications (user_id, type, title, message) VALUES ('all', 'system', ?, ?)`,
         `Major incident: ${studentName}`,
-        `A major demerit (${category}) was logged for ${studentName}: ${title}.`
+        `A major demerit (${resolvedCategory}) was logged for ${studentName}: ${title}.`
       );
     }
 
@@ -180,7 +203,7 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
       db,
       studentId,
       type === 'merit' ? `Merit awarded: ${title}` : `Conduct notice: ${title}`,
-      `${type === 'merit' ? 'You received a merit' : 'A demerit was recorded'} (${category}, ${points} pts) on ${incidentDate}.`
+      `${type === 'merit' ? 'You received a merit' : 'A demerit was recorded'} (${resolvedCategory}, ${points} pts) on ${incidentDate}.`
     );
     if (type === 'demerit') await triggerConductCheck(studentId, studentName);
 
@@ -200,21 +223,43 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
   const authReq = req as AuthenticatedRequest;
   const {
     students, className = null, type, category, severity, title,
-    description = '', incidentDate, location = null, sanction = 'none',
+    description = '', incidentDate, location = null, sanction = 'none', ruleId = null,
   } = req.body;
 
-  if (!Array.isArray(students) || students.length === 0 || !type || !category || !severity || !title || !incidentDate) {
+  if (!Array.isArray(students) || students.length === 0 || !type || !title || !incidentDate || (ruleId == null && (!category || !severity))) {
     return res.status(400).json({
       success: false,
-      message: 'Missing required fields: students[], type, category, severity, title, incidentDate.',
+      message: 'Missing required fields: students[], type, title, incidentDate, and (category + severity, or ruleId).',
     });
   }
   if (type !== 'demerit' && type !== 'merit') {
     return res.status(400).json({ success: false, message: "Invalid type. Expected 'demerit' or 'merit'." });
   }
-  if (!isValidCategory(type as DisciplineType, category)) {
-    return res.status(400).json({ success: false, message: `Invalid category '${category}' for ${type}.` });
+
+  let resolvedRuleId: number | null = null;
+  let resolvedCategory = category;
+  let resolvedSeverity = severity;
+  let points: number;
+  if (ruleId != null) {
+    const rule = await getRule(getDb(), Number(ruleId));
+    if (!rule || !rule.is_active || rule.type !== type) {
+      return res.status(400).json({ success: false, message: 'Invalid or retired ruleId for this discipline type.' });
+    }
+    resolvedRuleId = rule.id;
+    resolvedCategory = rule.category;
+    resolvedSeverity = rule.severity ?? null;
+    points = rule.default_points;
+  } else {
+    if (!isValidCategory(type as DisciplineType, category)) {
+      return res.status(400).json({ success: false, message: `Invalid category '${category}' for ${type}.` });
+    }
+    try {
+      points = derivePoints(type as DisciplineType, severity);
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
   }
+
   const bulkFieldError = validateIncidentFields({ title, description, incidentDate, location, className });
   if (bulkFieldError) {
     return res.status(400).json({ success: false, message: bulkFieldError });
@@ -222,13 +267,6 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
   const effectiveSanction = type === 'demerit' ? sanction : 'none';
   if (!SANCTIONS.includes(effectiveSanction)) {
     return res.status(400).json({ success: false, message: `Invalid sanction '${sanction}'.` });
-  }
-
-  let points: number;
-  try {
-    points = derivePoints(type as DisciplineType, severity);
-  } catch (err: any) {
-    return res.status(400).json({ success: false, message: err.message });
   }
 
   const db = getDb();
@@ -242,24 +280,24 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
       if (!s.studentId || !s.studentName) throw new Error('Each student needs studentId and studentName.');
       const result = await db.run(
         `INSERT INTO discipline_records
-           (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name, academic_year_id, academic_term_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        s.studentId, s.studentName, className, type, category, severity, points,
+           (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name, academic_year_id, academic_term_id, rule_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        s.studentId, s.studentName, className, type, resolvedCategory, resolvedSeverity, points,
         title, description, incidentDate, location, effectiveSanction, actor.id, actor.name,
-        academicYearId ?? null, academicTermId ?? null
+        academicYearId ?? null, academicTermId ?? null, resolvedRuleId
       );
       insertedIds.push(result.lastID!);
       await db.run(
         `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'system', ?, ?)`,
         s.studentId,
         type === 'merit' ? `Merit awarded: ${title}` : `Conduct notice: ${title}`,
-        `${type === 'merit' ? 'You received a merit' : 'A demerit was recorded'} (${category}, ${points} pts) on ${incidentDate}.`
+        `${type === 'merit' ? 'You received a merit' : 'A demerit was recorded'} (${resolvedCategory}, ${points} pts) on ${incidentDate}.`
       );
     }
     await db.run('COMMIT');
 
     await recordAudit(db, actor, 'discipline.create', 'discipline_record', null, {
-      bulk: true, count: students.length, type, category, severity, points,
+      bulk: true, count: students.length, type, category: resolvedCategory, severity: resolvedSeverity, points,
     });
 
     // Run conduct checks outside the transaction.
@@ -430,8 +468,13 @@ router.get('/me', authorizePermission('DISCIPLINE_VIEW_OWN'), async (req: any, r
           studentId
         );
     return res.json({
+      // The full record list (including dismissed ones) stays visible for
+      // transparency, but the score itself excludes dismissed records —
+      // "dismissed" means the incident was ruled invalid and excluded from
+      // follow-up (see the dismiss confirmation copy), so it shouldn't still
+      // count against the student. Matches ledger.service.ts's balance calc.
       success: true,
-      data: { records, conductScore: computeConductScore(records) },
+      data: { records, conductScore: computeConductScore(records.filter((r: any) => r.status !== 'dismissed')) },
     });
   } catch (error) {
     console.error('Error fetching own discipline records:', error);
@@ -457,8 +500,13 @@ router.get('/student/:id', selfOrPermission('id', 'DISCIPLINE_VIEW_ALL'), async 
           studentId
         );
     return res.json({
+      // The full record list (including dismissed ones) stays visible for
+      // transparency, but the score itself excludes dismissed records —
+      // "dismissed" means the incident was ruled invalid and excluded from
+      // follow-up (see the dismiss confirmation copy), so it shouldn't still
+      // count against the student. Matches ledger.service.ts's balance calc.
       success: true,
-      data: { records, conductScore: computeConductScore(records) },
+      data: { records, conductScore: computeConductScore(records.filter((r: any) => r.status !== 'dismissed')) },
     });
   } catch (error) {
     console.error('Error fetching student discipline records:', error);

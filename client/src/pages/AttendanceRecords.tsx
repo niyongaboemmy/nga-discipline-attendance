@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { ErrorState } from '../components/common/ErrorState';
+import { apiGet, ApiError } from '../api/client';
 import { Search, Download, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface AttendanceRecord {
@@ -22,22 +25,26 @@ type StatusFilter = (typeof STATUS_FILTERS)[number];
 const PAGE_SIZE = 50;
 
 export const AttendanceRecords: React.FC = () => {
+  // Supports deep-linking a student's history, e.g. from StudentReport's
+  // "View full history" link (/attendance/records?search=<studentId>).
+  const [searchParams] = useSearchParams();
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [classes, setClasses] = useState<ClassData[]>([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/mis/classes', { headers: { Authorization: `Bearer ${localStorage.getItem('sso_token')}` } });
-        if (res.ok) { const result = await res.json(); if (result.success) setClasses(result.data); }
+        const res = await apiGet<ClassData[]>('/api/mis/classes');
+        setClasses(res.data || []);
       } catch (err) { console.error('Error fetching classes:', err); }
     })();
   }, []);
@@ -45,23 +52,30 @@ export const AttendanceRecords: React.FC = () => {
   // Reset to the first page whenever the filters change.
   useEffect(() => { setOffset(0); }, [selectedClass, dateFrom, dateTo, search, statusFilter]);
 
+  const fetchRecords = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const qp = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
+      if (selectedClass) qp.append('classId', selectedClass);
+      if (dateFrom) qp.append('dateFrom', dateFrom);
+      if (dateTo) qp.append('dateTo', dateTo);
+      if (search) qp.append('search', search);
+      if (statusFilter !== 'all') qp.append('status', statusFilter);
+      const res = await apiGet<AttendanceRecord[]>(`/api/attendance/records?${qp.toString()}`);
+      setRecords(res.data || []);
+      setTotal(res.total ?? res.data?.length ?? 0);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load attendance records.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchRecords = async () => {
-      setLoading(true);
-      try {
-        const qp = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
-        if (selectedClass) qp.append('classId', selectedClass);
-        if (dateFrom) qp.append('dateFrom', dateFrom);
-        if (dateTo) qp.append('dateTo', dateTo);
-        if (search) qp.append('search', search);
-        if (statusFilter !== 'all') qp.append('status', statusFilter);
-        const res = await fetch(`/api/attendance/records?${qp.toString()}`, { headers: { Authorization: `Bearer ${localStorage.getItem('sso_token')}` } });
-        if (res.ok) { const result = await res.json(); if (result.success) { setRecords(result.data); setTotal(result.total ?? result.data.length); } }
-      } catch (err) { console.error('Error fetching records:', err); }
-      finally { setLoading(false); }
-    };
     const t = setTimeout(fetchRecords, 300);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedClass, dateFrom, dateTo, search, statusFilter, offset]);
 
   const visible = records;
@@ -72,6 +86,22 @@ export const AttendanceRecords: React.FC = () => {
     const link = document.createElement('a');
     link.href = url;
     link.download = `attendance-${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Matches the CSV shape DisciplineRecords exports, so "Export" means the
+  // same thing (a CSV you can open in a spreadsheet) across both list pages.
+  const exportCSV = () => {
+    let csv = 'Student Name,Student ID,Class,Date,Period,Status,Notes\n';
+    visible.forEach((r) => {
+      csv += `"${r.student_name}",${r.student_id},"${r.class_name}",${r.session_date},${r.period},${r.status},"${(r.notes || '').replace(/"/g, '""')}"\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `attendance-${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -99,8 +129,11 @@ export const AttendanceRecords: React.FC = () => {
           <input className="input" type="date" style={{ width: 'auto' }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           <span className="text-secondary text-sm">to</span>
           <input className="input" type="date" style={{ width: 'auto' }} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          <button className="btn btn-outline" onClick={exportCSV} disabled={!visible.length}>
+            <Download size={16} /> Export CSV
+          </button>
           <button className="btn btn-outline" onClick={exportJSON} disabled={!visible.length}>
-            <Download size={16} /> Export
+            <Download size={16} /> Export JSON
           </button>
         </div>
 
@@ -112,6 +145,8 @@ export const AttendanceRecords: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {error && <div className="mb-4"><ErrorState message={error} onRetry={fetchRecords} /></div>}
 
       {/* Table */}
       <div className="card">

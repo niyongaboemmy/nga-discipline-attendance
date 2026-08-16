@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Printer, ArrowLeft, AlertCircle } from 'lucide-react';
+import { ErrorState } from '../components/common/ErrorState';
+import { apiGet, ApiError } from '../api/client';
+import { Printer, ArrowLeft, ExternalLink } from 'lucide-react';
 
-interface AttendanceRecord { id: number; class_name: string; session_date: string; status: string; }
-interface DisciplineRecord { id: number; type: 'demerit' | 'merit'; category: string; severity: string | null; points: number; title: string; incident_date: string; status: string; sanction: string; }
+interface AttendanceRecord { id: number; student_name?: string; class_name: string; session_date: string; status: string; }
+interface DisciplineRecord { id: number; student_name?: string; type: 'demerit' | 'merit'; category: string; severity: string | null; points: number; title: string; incident_date: string; status: string; sanction: string; }
 
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
+const ATTENDANCE_PREVIEW = 20;
 
 export const StudentReport: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -19,25 +21,25 @@ export const StudentReport: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true); setError(null);
-      try {
-        const [aRes, dRes] = await Promise.all([
-          fetch(`/api/attendance/student/${id}`, { headers: authHeaders() }),
-          fetch(`/api/discipline/student/${id}`, { headers: authHeaders() }),
-        ]);
-        if (!aRes.ok || !dRes.ok) throw new Error('Could not load the student report.');
-        const a = await aRes.json();
-        const d = await dRes.json();
-        if (a.success) setAttendance(a.data);
-        if (d.success) { setDiscipline(d.data.records); setConductScore(d.data.conductScore); }
-        const nameFrom = a.data?.[0]?.student_name || d.data?.records?.[0]?.student_name;
-        if (nameFrom) setStudentName(nameFrom);
-      } catch (err) { setError((err as Error).message); }
-      finally { setLoading(false); }
-    })();
-  }, [id]);
+  const load = async () => {
+    setLoading(true); setError(null);
+    try {
+      const [a, d] = await Promise.all([
+        apiGet<AttendanceRecord[]>(`/api/attendance/student/${id}`),
+        apiGet<{ records: DisciplineRecord[]; conductScore: number }>(`/api/discipline/student/${id}`),
+      ]);
+      setAttendance(a.data || []);
+      if (d.data) { setDiscipline(d.data.records); setConductScore(d.data.conductScore); }
+      const nameFrom = a.data?.[0]?.student_name || d.data?.records?.[0]?.student_name;
+      if (nameFrom) setStudentName(nameFrom);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load the student report.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
 
   const total = attendance.length;
   const present = attendance.filter((r) => r.status !== 'absent').length;
@@ -61,13 +63,13 @@ export const StudentReport: React.FC = () => {
       {loading ? (
         <div style={{ padding: '64px 0' }}><LoadingSpinner /></div>
       ) : error ? (
-        <div className="card"><div className="empty-state"><AlertCircle size={28} /><span className="text-sm">{error}</span></div></div>
+        <ErrorState message={error} onRetry={load} />
       ) : (
         <div className="card card-pad print-area">
           {/* Letterhead */}
           <div className="flex items-center justify-between flex-wrap gap-3" style={{ borderBottom: '2px solid var(--border)', paddingBottom: '16px', marginBottom: '20px' }}>
             <div>
-              <div className="text-xl font-bold" style={{ fontFamily: 'var(--font-display)' }}>NGA Discipline &amp; Attendance</div>
+              <div className="text-xl font-bold" style={{ fontFamily: 'var(--font-display)' }}>Tendo</div>
               <div className="text-sm text-secondary">Student conduct &amp; attendance summary</div>
             </div>
             <div className="text-right text-xs text-secondary">
@@ -122,24 +124,38 @@ export const StudentReport: React.FC = () => {
           )}
 
           {/* Recent attendance */}
-          <span className="section-title">Recent attendance</span>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className="section-title">Recent attendance</span>
+            {attendance.length > ATTENDANCE_PREVIEW && (
+              <Link to={`/attendance/records?search=${id}`} className="text-xs no-print flex items-center gap-1" style={{ color: 'var(--primary)' }}>
+                View full history ({attendance.length} records) <ExternalLink size={12} />
+              </Link>
+            )}
+          </div>
           {attendance.length === 0 ? (
             <p className="text-sm text-secondary mt-2">No attendance records.</p>
           ) : (
-            <div className="table-wrap mt-2">
-              <table className="table table--zebra">
-                <thead><tr><th>Date</th><th>Class</th><th>Status</th></tr></thead>
-                <tbody>
-                  {attendance.slice(0, 20).map((r) => (
-                    <tr key={r.id}>
-                      <td>{r.session_date}</td>
-                      <td>{r.class_name}</td>
-                      <td><span className={`badge badge-${r.status}`}>{r.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="table-wrap mt-2">
+                <table className="table table--zebra">
+                  <thead><tr><th>Date</th><th>Class</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {attendance.slice(0, ATTENDANCE_PREVIEW).map((r) => (
+                      <tr key={r.id}>
+                        <td>{r.session_date}</td>
+                        <td>{r.class_name}</td>
+                        <td><span className={`badge badge-${r.status}`}>{r.status}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {attendance.length > ATTENDANCE_PREVIEW && (
+                <p className="text-xs text-secondary mt-2 no-print">
+                  Showing the {ATTENDANCE_PREVIEW} most recent of {attendance.length} records.
+                </p>
+              )}
+            </>
           )}
 
           <div className="flex justify-between mt-6" style={{ paddingTop: '24px' }}>

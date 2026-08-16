@@ -1,5 +1,5 @@
 /* ==========================================================================
-   NGA Discipline Portal — Design System
+   Tendo — Design System
    --------------------------------------------------------------------------
    1. Reset
    2. Base (typography, body, elements)
@@ -725,7 +725,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .topnav-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   margin-right: 22px;
   flex-shrink: 0;
   color: var(--text-primary);
@@ -810,34 +810,134 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 }
 .topnav-user:hover { transform: scale(1.05); }
 
-/* Apps waffle dropdown */
-.systems-menu { width: 236px; }
-.systems-menu-grid { display: grid; grid-template-columns: 1fr; gap: 2px; padding-top: 4px; }
-.systems-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  transition: background-color var(--transition-fast), color var(--transition-fast);
+/* Apps waffle dropdown — matches the NGA Central MIS / TaskMentor "Apps" grid */
+.systems-menu {
+  width: 320px;
+  padding: 14px 14px 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16), 0 4px 12px rgba(0, 0, 0, 0.08);
 }
-.systems-menu-item:hover { background: var(--bg-hover); color: var(--text-primary); text-decoration: none; }
-.systems-menu-item.is-current { color: var(--primary-text); font-weight: 600; cursor: default; }
-.systems-menu-icon {
+[data-theme="dark"] .systems-menu {
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.systems-menu-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.systems-menu-brand { display: flex; align-items: center; gap: 10px; }
+.systems-menu-brand-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  background: var(--bg-subtle);
-  color: var(--text-secondary);
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+  color: #fff;
   flex-shrink: 0;
 }
-.systems-menu-item.is-current .systems-menu-icon { background: var(--primary-light); color: var(--primary-text); }
+.systems-menu-title { font-size: 13.5px; font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+.systems-menu-subtitle { font-size: 10.5px; font-weight: 500; color: var(--text-tertiary); margin-top: 1px; }
+.systems-menu-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.systems-menu-close:hover { background: var(--bg-hover); color: var(--text-secondary); }
+
+.systems-menu-search { position: relative; margin-bottom: 12px; }
+.systems-menu-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; }
+.systems-menu-search input {
+  width: 100%;
+  height: 34px;
+  padding: 0 14px 0 34px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.systems-menu-search input::placeholder { color: var(--text-tertiary); }
+.systems-menu-search input:focus {
+  outline: none;
+  background: var(--bg-card);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.systems-menu-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; max-height: 300px; overflow-y: auto; }
+.systems-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 6px;
+  border-radius: 12px;
+  text-align: center;
+  transition: background-color var(--transition-fast);
+}
+.systems-menu-item:hover { background: var(--primary-light); text-decoration: none; }
+.systems-menu-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  overflow: visible;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+.systems-menu-tile img { width: 24px; height: 24px; object-fit: contain; border-radius: 6px; }
+.systems-menu-item:hover .systems-menu-tile { transform: scale(1.06); border-color: var(--primary); }
+.systems-menu-item.is-current .systems-menu-tile { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-light); cursor: default; }
+.systems-menu-item.is-current { cursor: default; }
+.systems-menu-tile-arrow {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.systems-menu-item:hover .systems-menu-tile-arrow { opacity: 1; }
+.systems-menu-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.systems-menu-item:hover .systems-menu-label { color: var(--primary-text); }
+
+.systems-menu-empty { padding: 28px 8px; text-align: center; }
+.systems-menu-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 8px;
+  border-radius: 50%;
+  background: var(--bg-subtle);
+  color: var(--text-tertiary);
+}
+.systems-menu-empty p { font-size: 11.5px; font-weight: 500; color: var(--text-tertiary); }
 
 /* Nav search dropdown (mobile-safe positioning inherited from .popover) */
 .nav-search-popover { width: 320px; padding: 0; overflow: hidden; }

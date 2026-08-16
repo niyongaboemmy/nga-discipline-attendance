@@ -38,16 +38,29 @@ router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (r
     }
 
     const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
+
+    // A.2 vs A.3: a staff member with any subject-calendar assignment this
+    // term is a "teacher" for reporting purposes (their attendance is also
+    // derivable from delivered subject sessions); everyone else is "other"
+    // (simple daily clock, A.3).
+    const hasSubjects = await db.get(
+      `SELECT 1 FROM class_subject_assignments
+       WHERE teacher_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) LIMIT 1`,
+      staffId, academicTermId ?? null
+    );
+    const staffType = hasSubjects ? 'teacher' : 'other';
+
     await db.run(
-      `INSERT INTO staff_attendance (staff_id, staff_name, date, clock_in, status, academic_year_id, academic_term_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO staff_attendance (staff_id, staff_name, date, clock_in, status, academic_year_id, academic_term_id, staff_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       staffId,
       staffName,
       today,
       now,
       status,
       academicYearId ?? null,
-      academicTermId ?? null
+      academicTermId ?? null,
+      staffType
     );
 
     return res.json({

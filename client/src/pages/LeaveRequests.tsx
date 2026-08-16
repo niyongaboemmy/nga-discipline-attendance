@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
-import { Plus, FileText, Calendar, AlertCircle, Inbox } from 'lucide-react';
+import { apiGet, apiPost, ApiError } from '../api/client';
+import { Plus, FileText, Calendar, AlertCircle, Inbox, Info } from 'lucide-react';
 
 interface Excuse {
   id: number;
@@ -14,11 +15,11 @@ interface Excuse {
 }
 
 const STATUS: Record<string, string> = { approved: 'badge-success', pending: 'badge-warning', rejected: 'badge-danger' };
-const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
 
 export const LeaveRequests: React.FC = () => {
   const [requests, setRequests] = useState<Excuse[]>([]);
   const [courses, setCourses] = useState<string[]>([]);
+  const [courseListUnavailable, setCourseListUnavailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({ className: '', date: new Date().toISOString().split('T')[0], reason: 'Medical', details: '' });
@@ -27,12 +28,11 @@ export const LeaveRequests: React.FC = () => {
 
   const loadExcuses = async () => {
     try {
-      const res = await fetch('/api/attendance/excuses/me', { headers: authHeaders() });
-      if (!res.ok) throw new Error('Could not load your excuse requests.');
-      const result = await res.json();
-      if (!result.success) throw new Error(result.message || 'Server error.');
-      setRequests(result.data);
-    } catch (err) { setError((err as Error).message); }
+      const res = await apiGet<Excuse[]>('/api/attendance/excuses/me');
+      setRequests(res.data || []);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load your excuse requests.');
+    }
   };
 
   useEffect(() => {
@@ -40,16 +40,12 @@ export const LeaveRequests: React.FC = () => {
       setLoading(true); setError(null);
       // Derive the course options from the student's own attendance (real data).
       try {
-        const res = await fetch('/api/attendance/me', { headers: authHeaders() });
-        if (res.ok) {
-          const result = await res.json();
-          if (result.success) {
-            const names = Array.from(new Set((result.data as any[]).map((r) => r.class_name))).sort();
-            setCourses(names);
-            if (names.length) setForm((f) => ({ ...f, className: names[0] }));
-          }
-        }
-      } catch { /* non-fatal */ }
+        const res = await apiGet<Array<{ class_name: string }>>('/api/attendance/me');
+        const names = Array.from(new Set((res.data || []).map((r) => r.class_name))).sort();
+        setCourses(names);
+        setCourseListUnavailable(names.length === 0);
+        if (names.length) setForm((f) => ({ ...f, className: names[0] }));
+      } catch { setCourseListUnavailable(true); }
       await loadExcuses();
       setLoading(false);
     })();
@@ -59,17 +55,13 @@ export const LeaveRequests: React.FC = () => {
     e.preventDefault();
     setSubmitting(true); setFormError(null);
     try {
-      const res = await fetch('/api/attendance/excuse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ className: form.className, sessionDate: form.date, reason: form.reason, description: form.details }),
+      await apiPost('/api/attendance/excuse', {
+        className: form.className, sessionDate: form.date, reason: form.reason, description: form.details,
       });
-      const result = await res.json();
-      if (!res.ok || !result.success) throw new Error(result.message || 'Submission failed.');
       setForm((f) => ({ ...f, details: '' }));
       await loadExcuses();
     } catch (err) {
-      setFormError((err as Error).message);
+      setFormError(err instanceof ApiError ? err.message : 'Submission failed.');
     } finally {
       setSubmitting(false);
     }
@@ -97,7 +89,14 @@ export const LeaveRequests: React.FC = () => {
                     {courses.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 ) : (
-                  <input className="input" placeholder="Course name" value={form.className} onChange={(e) => setForm((p) => ({ ...p, className: e.target.value }))} required />
+                  <>
+                    <input className="input" placeholder="Course name" value={form.className} onChange={(e) => setForm((p) => ({ ...p, className: e.target.value }))} required />
+                    {courseListUnavailable && (
+                      <p className="text-xs text-secondary mt-1 flex items-center gap-1">
+                        <Info size={12} /> We couldn't find your class yet — enter it manually. It'll appear as a dropdown once you have an attendance record.
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
               <div className="grid grid-2" style={{ gap: '12px' }}>
