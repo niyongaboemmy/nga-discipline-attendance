@@ -24,6 +24,11 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
       .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()));
   }, [systems, query]);
 
+  // The MIS itself is the hub, not a spoke, so it has no System row of its
+  // own to appear in `systems` — same reason taskmentor's switcher carries
+  // a matching static tile for it.
+  const misHomeUrl = import.meta.env.VITE_MIS_HOME_URL as string | undefined;
+
   if (!isOpen) return null;
 
   const handleSystemClick = async (system: System) => {
@@ -105,6 +110,22 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
           </span>
           <span className="systems-menu-label">Tendo</span>
         </a>
+
+        {misHomeUrl && (
+          <a
+            href={misHomeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onClose}
+            className="systems-menu-item"
+          >
+            <span className="systems-menu-tile">
+              <LayoutGrid size={16} />
+              <span className="systems-menu-tile-arrow"><ArrowRight size={9} /></span>
+            </span>
+            <span className="systems-menu-label">Back to MIS</span>
+          </a>
+        )}
 
         {filtered.map((system) => (
           <button
