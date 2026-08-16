@@ -97,6 +97,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // This app's session JWT is self-contained and stays valid for its own
+  // 24h life regardless of what happens on the MIS side -- logging out of
+  // the MIS (or an admin disabling the account) otherwise has no effect
+  // here until natural expiry. Poll the MIS's session validity through our
+  // own backend periodically so a revoked MIS session ends this one too.
+  useEffect(() => {
+    if (!token) return;
+
+    const verifyMisSession = async () => {
+      try {
+        const res = await fetch('/api/sso/verify-mis', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) {
+          logout();
+        }
+      } catch {
+        // Network hiccup — don't force-logout over a transient failure,
+        // the next poll will settle it either way.
+      }
+    };
+
+    const intervalId = setInterval(verifyMisSession, 3 * 60 * 1000);
+    return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   const login = () => {
     const clientId = import.meta.env.VITE_SSO_CLIENT_ID;
     const loginUrl = import.meta.env.VITE_MIS_LOGIN_URL;

@@ -253,6 +253,37 @@ router.post('/exchange', async (req: Request, res: Response) => {
 });
 
 /**
+ * Polled periodically by the frontend (see AuthContext) so a logout on the
+ * MIS ends this app's session too, not just the MIS's own. The local
+ * session JWT is otherwise self-contained and valid for its own 24h life
+ * regardless of what happens to the MIS session it was built from — this
+ * is the only thing that ties the two together after the initial /exchange.
+ * Deliberately fails CLOSED (401) on any MIS rejection, unlike /systems
+ * below: a stale MIS session should end this one, not be shrugged off.
+ */
+router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) => {
+  const misToken = (req as AuthenticatedRequest).user?.misToken;
+  if (!misToken) {
+    return res.status(401).json({ success: false, message: 'No MIS session on this token.' });
+  }
+
+  try {
+    const response = await fetch(`${config.ngaMisBaseUrl}/auth/verify`, {
+      headers: { Authorization: `Bearer ${misToken}` },
+    });
+    if (!response.ok) {
+      return res.status(401).json({ success: false, message: 'MIS session has ended.' });
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    // MIS unreachable is not the same as "logged out" -- don't force-logout
+    // everyone over a network blip. The next successful poll settles it.
+    console.error('MIS session verify error:', error);
+    return res.json({ success: true });
+  }
+});
+
+/**
  * The cross-app "waffle" switcher's live app list — proxies the MIS's own
  * `/users/me` (using the misToken embedded in this app's session JWT at
  * /exchange above) and hands back just the `systems` array, mirroring how
