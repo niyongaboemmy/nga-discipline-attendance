@@ -359,16 +359,9 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
   padding: 20px 22px;
   margin-bottom: 20px;
   border-radius: 18px;
-  background: linear-gradient(118deg, var(--primary-hover) 0%, var(--primary) 55%, var(--accent) 100%);
+  background: var(--primary);
   color: #fff;
   overflow: hidden;
-}
-.hero::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(440px 220px at 86% -10%, rgba(255, 255, 255, 0.16), transparent 60%);
 }
 .hero-avatar {
   position: relative;
