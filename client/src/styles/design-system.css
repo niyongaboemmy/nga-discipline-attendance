@@ -1482,3 +1482,372 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 /* Suggestion chips under the AI rule prompt */
 .ai-examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .ai-examples .chip { font-size: 11.5px; text-align: left; }
+
+/* ==========================================================================
+   Roles & Permissions
+   ========================================================================== */
+.rp-layout {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+/* ---- Role rail ---- */
+.rp-rail { position: sticky; top: calc(var(--navbar-height) + 20px); }
+.rp-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 14px 10px;
+}
+.rp-rail-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px 10px; }
+
+.rp-role {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 12px;
+  text-align: left;
+  border: 1px solid transparent;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+.rp-role:hover { background: var(--bg-hover); }
+.rp-role.is-active {
+  background: var(--primary-light);
+  border-color: color-mix(in srgb, var(--primary) 32%, transparent);
+}
+.rp-role-avatar {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+.rp-role.is-active .rp-role-avatar { background: var(--primary); color: var(--primary-contrast); }
+.rp-role-main { min-width: 0; flex: 1; }
+.rp-role-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rp-role.is-active .rp-role-name { color: var(--primary); }
+.rp-role-meta { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+.rp-role-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Editor header ---- */
+.rp-head { padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.rp-head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.rp-name-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 10px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.rp-name-input:hover:not(:disabled) { background: var(--bg-hover); }
+.rp-name-input:focus { background: var(--input-bg); border-color: var(--border-focus); }
+.rp-desc-input {
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 10px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  resize: none;
+}
+.rp-desc-input:hover:not(:disabled) { background: var(--bg-hover); }
+.rp-desc-input:focus { background: var(--input-bg); border-color: var(--border-focus); color: var(--text-primary); }
+.rp-meta-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+
+/* ---- Toolbar ---- */
+.rp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: var(--navbar-height);
+  z-index: 20;
+  background: var(--bg-card);
+}
+.rp-search { position: relative; flex: 1; min-width: 200px; max-width: 380px; }
+.rp-search .field-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; }
+.rp-search input { width: 100%; height: 34px; padding: 0 32px 0 34px; font-size: 13px; border-radius: var(--radius-field); }
+.rp-search-clear {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center; width: 20px; height: 20px;
+  border-radius: var(--radius-full); color: var(--text-tertiary);
+}
+.rp-search-clear:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ---- Permission groups ---- */
+.rp-groups { padding: 6px 18px 18px; }
+.rp-group { border-bottom: 1px solid var(--border); }
+.rp-group:last-child { border-bottom: none; }
+.rp-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 2px;
+  text-align: left;
+}
+.rp-group-caret { color: var(--text-tertiary); transition: transform var(--transition-fast); flex-shrink: 0; }
+.rp-group-caret.is-open { transform: rotate(90deg); }
+.rp-group-title { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; flex: 1; }
+.rp-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-variant-numeric: tabular-nums;
+}
+.rp-group-count.is-full { background: var(--success-light); color: var(--success); border-color: transparent; }
+.rp-group-body { display: flex; flex-direction: column; gap: 2px; padding-bottom: 12px; }
+
+/* ---- Permission row ---- */
+.rp-perm {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color var(--transition-fast);
+}
+.rp-perm:hover { background: var(--bg-hover); }
+.rp-perm.is-changed { border-color: color-mix(in srgb, var(--warning) 45%, transparent); background: var(--warning-light); }
+.rp-perm.is-locked { cursor: not-allowed; opacity: 0.62; }
+.rp-perm-body { flex: 1; min-width: 0; }
+.rp-perm-label { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+.rp-perm-desc { font-size: 12px; color: var(--text-secondary); margin-top: 1px; line-height: 1.45; }
+.rp-perm-key {
+  display: inline-block;
+  margin-top: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.rp-perm mark { background: color-mix(in srgb, var(--warning) 38%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+/* ---- Sticky save bar ---- */
+.rp-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.07);
+}
+[data-theme="dark"] .rp-savebar { box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.45); }
+.rp-savebar-msg { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-secondary); }
+.rp-dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--warning); flex-shrink: 0; }
+
+/* ---- Responsive ---- */
+@media (max-width: 940px) {
+  .rp-layout { grid-template-columns: 1fr; }
+  .rp-rail { position: static; }
+  .rp-rail-list { flex-direction: row; overflow-x: auto; padding-bottom: 12px; }
+  .rp-role { width: auto; min-width: 190px; }
+  .rp-toolbar { position: static; }
+}
+@media (max-width: 560px) {
+  .rp-head, .rp-toolbar, .rp-groups, .rp-savebar { padding-left: 13px; padding-right: 13px; }
+  .rp-search { max-width: none; }
+  .rp-savebar { flex-direction: column; align-items: stretch; }
+  .rp-savebar .flex { justify-content: stretch; }
+  .rp-savebar .btn { flex: 1; }
+}
+
+/* ---- Roles & Permissions: controls, chips, matrix ---- */
+.rp-fieldset { border: 0; padding: 0; margin: 0; }
+.rp-fieldset legend { padding: 0; }
+
+/* Checkbox (not a switch): permissions are a multi-select set behind an
+   explicit Save, and only checkboxes carry an indeterminate state for the
+   group parent. */
+.rp-check {
+  appearance: none;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-card);
+  display: grid;
+  place-content: center;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+.rp-check::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  transform: scale(0);
+  transition: transform var(--transition-fast);
+  background: var(--primary-contrast);
+  clip-path: polygon(14% 45%, 0 60%, 39% 100%, 100% 22%, 85% 8%, 39% 71%);
+}
+.rp-check:checked, .rp-check:indeterminate { background: var(--primary); border-color: var(--primary); }
+.rp-check:checked::after { transform: scale(1); }
+.rp-check:indeterminate::after {
+  transform: scale(1);
+  clip-path: none;
+  width: 9px;
+  height: 2px;
+  border-radius: 1px;
+}
+.rp-check:disabled { opacity: 0.5; cursor: not-allowed; }
+.rp-check:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* Filter chips */
+.rp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+.rp-chip:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.rp-chip.is-on { background: var(--primary-light); border-color: color-mix(in srgb, var(--primary) 38%, transparent); color: var(--primary); }
+.rp-chip-num { font-variant-numeric: tabular-nums; opacity: 0.75; }
+
+.rp-badge-sensitive {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 7px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--warning);
+  background: var(--warning-light);
+  border-radius: var(--radius-full);
+  vertical-align: 1px;
+}
+
+/* Compare matrix: a real table (semantics matter for screen readers), made
+   keyboard-scrollable rather than restyled into blocks. */
+.rp-matrix-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-card); }
+.rp-matrix-wrap:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.rp-matrix { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.rp-matrix th, .rp-matrix td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+.rp-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.rp-matrix tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-card);
+  font-weight: 500;
+  min-width: 230px;
+}
+.rp-matrix td { text-align: center; width: 110px; }
+.rp-matrix tr:hover th, .rp-matrix tr:hover td { background: var(--bg-hover); }
+.rp-matrix-group th {
+  background: var(--bg-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+.rp-yes { color: var(--success); }
+.rp-no { color: var(--text-tertiary); opacity: 0.5; }
+
+/* Skeletons sized to the real rows so nothing lurches when data lands. */
+.rp-skeleton {
+  height: 54px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--bg-hover) 50%, var(--bg-subtle) 75%);
+  background-size: 200% 100%;
+  animation: rp-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes rp-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .rp-skeleton { animation: none; }
+  .rp-group-caret { transition: none; }
+}
+
+/* Visually hidden but announced — used for fieldset legends that would be
+   redundant on screen (the group header already shows the name). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Pressed state for a toggle rendered as an outline button (the Compare
+   roles switch) — .btn had no active style, only .segmented-btn did. */
+.btn-outline.is-active {
+  background: var(--primary-light);
+  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
+  color: var(--primary);
+}
