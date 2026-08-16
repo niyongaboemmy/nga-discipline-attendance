@@ -7,6 +7,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { Gavel, Award, AlertCircle, Save, Users } from 'lucide-react';
 import { disciplineApi, type DisciplineRule } from '../api/discipline';
 import { apiGet, apiPost, ApiError } from '../api/client';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 
 interface ClassData { id: string; name: string; department: string; }
 interface Student { id: string; name: string; email: string; }
@@ -225,18 +226,27 @@ export const LogIncident: React.FC = () => {
 
               <div className="field">
                 <label className="label">Class</label>
-                <select className="select" value={form.classId} onChange={(e) => update({ classId: e.target.value })}>
-                  {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={form.classId}
+                  onChange={(v) => update({ classId: v })}
+                  options={classes.map((c) => ({ value: c.id, label: c.name, hint: c.department }))}
+                  placeholder="Select a class…"
+                  aria-label="Class"
+                />
               </div>
 
               {!bulk ? (
                 <div className="field">
                   <label className="label">Student</label>
-                  <select className="select" value={form.studentId} onChange={(e) => update({ studentId: e.target.value })} disabled={loadingStudents} required>
-                    {students.length === 0 && <option value="">No students</option>}
-                    {students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={form.studentId}
+                    onChange={(v) => update({ studentId: v })}
+                    options={students.map((s) => ({ value: s.id, label: s.name, hint: s.id }))}
+                    placeholder={students.length === 0 ? 'No students' : 'Select a student…'}
+                    disabled={loadingStudents}
+                    required
+                    aria-label="Student"
+                  />
                 </div>
               ) : (
                 <div className="field">
@@ -263,16 +273,17 @@ export const LogIncident: React.FC = () => {
                 <>
                   <div className="field">
                     <label className="label">Rule</label>
-                    <select
-                      className="select"
-                      value={selectedRuleId}
-                      onChange={(e) => pickRule(e.target.value ? Number(e.target.value) : '')}
-                    >
-                      <option value="">Select a rule…</option>
-                      {rulesForType.map((r) => (
-                        <option key={r.id} value={r.id}>{r.title} — {r.category} ({r.default_points} pts{r.fine_amount > 0 ? `, fine ${r.fine_amount}` : ''})</option>
-                      ))}
-                    </select>
+                    <SearchableSelect
+                      value={selectedRuleId === '' ? '' : String(selectedRuleId)}
+                      onChange={(v) => pickRule(v ? Number(v) : '')}
+                      options={rulesForType.map((r) => ({
+                        value: String(r.id),
+                        label: r.title,
+                        hint: `${r.category} · ${r.default_points} pts${r.fine_amount > 0 ? `, fine ${r.fine_amount}` : ''}`,
+                      }))}
+                      placeholder="Select a rule…"
+                      aria-label="Rule"
+                    />
                   </div>
                   <button
                     type="button"
@@ -300,17 +311,26 @@ export const LogIncident: React.FC = () => {
                   <div className="grid grid-2" style={{ gap: '12px' }}>
                     <div className="field">
                       <label className="label">Category</label>
-                      <select className="select" value={form.category} onChange={(e) => update({ category: e.target.value })}>
-                        {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                      <SearchableSelect
+                        value={form.category}
+                        onChange={(v) => update({ category: v })}
+                        options={categories.map((c) => ({ value: c, label: c }))}
+                        placeholder="Select a category…"
+                        aria-label="Category"
+                      />
                     </div>
                     <div className="field">
                       <label className="label">{type === 'demerit' ? 'Severity' : 'Level'}</label>
-                      <select className="select" value={form.severity} onChange={(e) => update({ severity: e.target.value })}>
-                        {Object.keys(tiers).map((t) => (
-                          <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)} ({tiers[t]} pts)</option>
-                        ))}
-                      </select>
+                      <SearchableSelect
+                        value={form.severity}
+                        onChange={(v) => update({ severity: v })}
+                        options={Object.keys(tiers).map((t) => ({
+                          value: t,
+                          label: t.charAt(0).toUpperCase() + t.slice(1),
+                          hint: `${tiers[t]} pts`,
+                        }))}
+                        aria-label={type === 'demerit' ? 'Severity' : 'Level'}
+                      />
                     </div>
                   </div>
                 </>
@@ -340,9 +360,12 @@ export const LogIncident: React.FC = () => {
               {type === 'demerit' && (
                 <div className="field">
                   <label className="label">Sanction</label>
-                  <select className="select" value={form.sanction} onChange={(e) => update({ sanction: e.target.value })}>
-                    {SANCTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={form.sanction}
+                    onChange={(v) => update({ sanction: v })}
+                    options={SANCTIONS}
+                    aria-label="Sanction"
+                  />
                 </div>
               )}
 

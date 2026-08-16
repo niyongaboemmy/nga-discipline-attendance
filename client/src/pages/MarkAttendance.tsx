@@ -5,6 +5,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { usePermissions } from '../hooks/usePermissions';
 import { Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '../api/client';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 import './MarkAttendance.css';
 
 interface ClassData { id: string; name: string; department: string; }
@@ -36,6 +37,7 @@ export const MarkAttendance: React.FC = () => {
   // subject requires picking which course session this is.
   const [sessionType, setSessionType] = useState<SessionType>('homeroom');
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [subjectId, setSubjectId] = useState<number | ''>('');
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -52,13 +54,37 @@ export const MarkAttendance: React.FC = () => {
       finally { setLoadingClasses(false); }
     })();
 
-    (async () => {
-      try {
-        const res = await apiGet<Subject[]>('/api/academics/subjects');
-        setSubjects(res.data || []);
-      } catch (err) { console.error('Error fetching subjects:', err); }
-    })();
   }, []);
+
+  // Subjects are scoped to the selected class group's grade curriculum, so
+  // you can't file e.g. "Advanced Database" against a primary class. Falls
+  // back to the full cached list only if the MIS can't answer, so the picker
+  // is never empty for reasons the user can't see.
+  useEffect(() => {
+    if (!selectedClass) { setSubjects([]); return; }
+    let cancelled = false;
+    (async () => {
+      setLoadingSubjects(true);
+      try {
+        const res = await apiGet<Subject[]>(`/api/mis/class-subjects?class_id=${selectedClass}`);
+        if (!cancelled) setSubjects(res.data || []);
+      } catch (err) {
+        console.error('Error fetching class subjects:', err);
+        try {
+          const all = await apiGet<Subject[]>('/api/academics/subjects');
+          if (!cancelled) setSubjects(all.data || []);
+        } catch { if (!cancelled) setSubjects([]); }
+      } finally {
+        if (!cancelled) setLoadingSubjects(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedClass]);
+
+  // Changing class can invalidate an already-picked subject.
+  useEffect(() => {
+    if (subjectId !== '' && !subjects.some((s) => s.id === subjectId)) setSubjectId('');
+  }, [subjects, subjectId]);
 
   const resetRoster = (list: Student[]) => {
     const initial: Record<string, AttendanceState> = {};
@@ -158,22 +184,37 @@ export const MarkAttendance: React.FC = () => {
           {sessionType === 'subject' && (
             <div className="field mt-3">
               <label className="label">Subject</label>
-              <select className="select" value={subjectId} onChange={(e) => setSubjectId(e.target.value ? Number(e.target.value) : '')}>
-                <option value="">Select a subject…</option>
-                {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              {subjects.length === 0 && (
-                <p className="text-xs text-secondary mt-1">
-                  No subjects synced yet — an admin can sync the timetable cache from the MIS in Admin Console.
-                </p>
-              )}
+              <SearchableSelect
+                aria-label="Subject"
+                placeholder="Select a subject…"
+                clearable
+                value={subjectId === '' ? '' : String(subjectId)}
+                onChange={(v) => setSubjectId(v ? Number(v) : '')}
+                disabled={loadingSubjects}
+                options={subjects.map((s) => ({
+                  value: String(s.id),
+                  label: s.name,
+                  hint: s.code || undefined,
+                }))}
+              />
+              <p className="text-xs text-secondary mt-1">
+                {loadingSubjects
+                  ? 'Loading this class’s subjects…'
+                  : subjects.length === 0
+                    ? 'No subjects are on this class group’s curriculum yet — an admin can assign subjects to its grade in the MIS.'
+                    : 'Only subjects taught to this class group are listed.'}
+              </p>
             </div>
           )}
           <div className="field mt-4">
             <label className="label">Class</label>
-            <select className="select" value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)}>
-              {classes.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.department})</option>)}
-            </select>
+            <SearchableSelect
+              aria-label="Class"
+              placeholder="Select a class…"
+              value={selectedClass}
+              onChange={(v) => setSelectedClass(v)}
+              options={classes.map((c) => ({ value: c.id, label: c.name, hint: c.department }))}
+            />
           </div>
           <div className="field mt-3">
             <label className="label">Date</label>
@@ -181,11 +222,16 @@ export const MarkAttendance: React.FC = () => {
           </div>
           <div className="field mt-3">
             <label className="label">Period</label>
-            <select className="select" value={period} onChange={(e) => setPeriod(e.target.value)}>
-              <option value="Morning">Morning Session</option>
-              <option value="Afternoon">Afternoon Session</option>
-              <option value="Evening">Evening Session</option>
-            </select>
+            <SearchableSelect
+              aria-label="Period"
+              value={period}
+              onChange={(v) => setPeriod(v)}
+              options={[
+                { value: 'Morning', label: 'Morning Session' },
+                { value: 'Afternoon', label: 'Afternoon Session' },
+                { value: 'Evening', label: 'Evening Session' },
+              ]}
+            />
           </div>
 
           <div className="nav-divider" style={{ margin: '20px 0' }} />

@@ -8,7 +8,9 @@ import { useToast } from '../context/ToastContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { disciplineApi, type DisciplineRule, type RuleInput } from '../api/discipline';
 import { ApiError } from '../api/client';
-import { Plus, Trash2, Pencil, Gavel, Award, ShieldCheck } from 'lucide-react';
+import { SearchableSelect } from '../components/common/SearchableSelect';
+import { RuleImportModal } from '../components/discipline/RuleImportModal';
+import { Plus, Trash2, Pencil, Gavel, Award, ShieldCheck, Upload } from 'lucide-react';
 
 const emptyForm: RuleInput = {
   type: 'demerit', category: '', title: '', description: '', defaultPoints: 5, fineAmount: 0, severity: 'minor',
@@ -34,6 +36,7 @@ export const DisciplineRules: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [form, setForm] = useState<RuleInput>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [retireTarget, setRetireTarget] = useState<DisciplineRule | null>(null);
@@ -183,11 +186,24 @@ export const DisciplineRules: React.FC = () => {
           <p className="page-subtitle">The governable directory of demerit/merit rules, their point values, and fines.</p>
         </div>
         {canManage && (
-          <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
-            <Plus size={16} /> New rule
-          </button>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-outline" onClick={() => setImporting(true)}>
+              <Upload size={16} /> Import
+            </button>
+            <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
+              <Plus size={16} /> New rule
+            </button>
+          </div>
         )}
       </div>
+
+      {canManage && (
+        <RuleImportModal
+          open={importing}
+          onClose={() => setImporting(false)}
+          onImported={load}
+        />
+      )}
 
       {creating && canManage && (
         <section className="card mb-4">
@@ -215,17 +231,18 @@ export const DisciplineRules: React.FC = () => {
                   {severityCustom ? (
                     <input className="input" placeholder="Custom severity label" value={form.severity} onChange={(e) => update({ severity: e.target.value })} />
                   ) : (
-                    <select
-                      className="select"
-                      value={form.severity}
-                      onChange={(e) => {
-                        if (e.target.value === '__custom__') { setSeverityCustom(true); update({ severity: '' }); }
-                        else update({ severity: e.target.value });
+                    <SearchableSelect
+                      aria-label="Severity tier"
+                      value={form.severity ?? ''}
+                      onChange={(v) => {
+                        if (v === '__custom__') { setSeverityCustom(true); update({ severity: '' }); }
+                        else update({ severity: v });
                       }}
-                    >
-                      {SEVERITY_OPTIONS[form.type].map((s) => <option key={s} value={s}>{s}</option>)}
-                      <option value="__custom__">Custom…</option>
-                    </select>
+                      options={[
+                        ...SEVERITY_OPTIONS[form.type].map((s) => ({ value: s, label: s })),
+                        { value: '__custom__', label: 'Custom…' },
+                      ]}
+                    />
                   )}
                 </div>
               </div>
@@ -302,17 +319,18 @@ export const DisciplineRules: React.FC = () => {
                 {editSeverityCustom ? (
                   <input className="input" placeholder="Custom severity label" value={editForm.severity} onChange={(e) => setEditForm({ ...editForm, severity: e.target.value })} />
                 ) : (
-                  <select
-                    className="select"
-                    value={editForm.severity}
-                    onChange={(e) => {
-                      if (e.target.value === '__custom__') { setEditSeverityCustom(true); setEditForm({ ...editForm, severity: '' }); }
-                      else setEditForm({ ...editForm, severity: e.target.value });
+                  <SearchableSelect
+                    aria-label="Severity tier"
+                    value={editForm.severity ?? ''}
+                    onChange={(v) => {
+                      if (v === '__custom__') { setEditSeverityCustom(true); setEditForm({ ...editForm, severity: '' }); }
+                      else setEditForm({ ...editForm, severity: v });
                     }}
-                  >
-                    {SEVERITY_OPTIONS[editForm.type].map((s) => <option key={s} value={s}>{s}</option>)}
-                    <option value="__custom__">Custom…</option>
-                  </select>
+                    options={[
+                      ...SEVERITY_OPTIONS[editForm.type].map((s) => ({ value: s, label: s })),
+                      { value: '__custom__', label: 'Custom…' },
+                    ]}
+                  />
                 )}
               </div>
             </div>

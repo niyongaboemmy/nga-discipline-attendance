@@ -4,6 +4,7 @@ import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 import { Search, Download, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface AttendanceRecord {
@@ -122,10 +123,15 @@ export const AttendanceRecords: React.FC = () => {
             <Search className="field-icon" size={16} />
             <input className="input" placeholder="Search student name or ID…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
-          <select className="select" style={{ width: 'auto', minWidth: '150px' }} value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)}>
-            <option value="">All classes</option>
-            {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <div style={{ minWidth: '150px' }}>
+            <SearchableSelect
+              value={selectedClass}
+              onChange={(v) => setSelectedClass(v)}
+              options={[{ value: '', label: 'All classes' }, ...classes.map((c) => ({ value: c.id, label: c.name }))]}
+              placeholder="All classes"
+              aria-label="Filter by class"
+            />
+          </div>
           <input className="input" type="date" style={{ width: 'auto' }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           <span className="text-secondary text-sm">to</span>
           <input className="input" type="date" style={{ width: 'auto' }} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />

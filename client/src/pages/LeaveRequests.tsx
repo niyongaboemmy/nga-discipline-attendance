@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { apiGet, apiPost, ApiError } from '../api/client';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 import { Plus, FileText, Calendar, AlertCircle, Inbox, Info } from 'lucide-react';
 
 interface Excuse {
@@ -85,9 +86,14 @@ export const LeaveRequests: React.FC = () => {
               <div className="field">
                 <label className="label">Course</label>
                 {courses.length ? (
-                  <select className="select" value={form.className} onChange={(e) => setForm((p) => ({ ...p, className: e.target.value }))} required>
-                    {courses.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  <SearchableSelect
+                    value={form.className}
+                    onChange={(v) => setForm((p) => ({ ...p, className: v }))}
+                    options={courses.map((c) => ({ value: c, label: c }))}
+                    placeholder="Select a course…"
+                    required
+                    aria-label="Course"
+                  />
                 ) : (
                   <>
                     <input className="input" placeholder="Course name" value={form.className} onChange={(e) => setForm((p) => ({ ...p, className: e.target.value }))} required />
@@ -106,9 +112,17 @@ export const LeaveRequests: React.FC = () => {
                 </div>
                 <div className="field">
                   <label className="label">Reason</label>
-                  <select className="select" value={form.reason} onChange={(e) => setForm((p) => ({ ...p, reason: e.target.value }))}>
-                    <option>Medical</option><option>Family</option><option>Official</option><option>Other</option>
-                  </select>
+                  <SearchableSelect
+                    value={form.reason}
+                    onChange={(v) => setForm((p) => ({ ...p, reason: v }))}
+                    options={[
+                      { value: 'Medical', label: 'Medical' },
+                      { value: 'Family', label: 'Family' },
+                      { value: 'Official', label: 'Official' },
+                      { value: 'Other', label: 'Other' },
+                    ]}
+                    aria-label="Reason"
+                  />
                 </div>
               </div>
               <div className="field">

@@ -3,6 +3,7 @@ import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 import { Inbox, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
 interface AuditEntry {
@@ -95,10 +96,15 @@ export const AuditLog: React.FC = () => {
             <Search className="field-icon" size={16} />
             <input className="input" placeholder="Search actor or entity…" value={search} onChange={(e) => { setOffset(0); setSearch(e.target.value); }} />
           </div>
-          <select className="select" style={{ width: 'auto', minWidth: '180px' }} value={action} onChange={(e) => { setOffset(0); setAction(e.target.value); }}>
-            <option value="">All actions</option>
-            {actions.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
+          <div style={{ minWidth: '180px' }}>
+            <SearchableSelect
+              value={action}
+              onChange={(v) => { setOffset(0); setAction(v); }}
+              options={[{ value: '', label: 'All actions' }, ...actions.map((a) => ({ value: a, label: a }))]}
+              placeholder="All actions"
+              aria-label="Filter by action"
+            />
+          </div>
         </div>
       </div>
 

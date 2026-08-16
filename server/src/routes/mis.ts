@@ -160,6 +160,69 @@ router.get('/classes', async (req: any, res) => {
   }
 });
 
+/**
+ * Subjects on a class group's grade curriculum.
+ *
+ * The subject picker used to list every subject in the school, so a teacher
+ * could file "Advanced Database" attendance against a primary-school class.
+ * A class group belongs to a grade, and the MIS models which subjects a
+ * grade actually teaches, so scope the picker to that curriculum.
+ */
+router.get('/class-subjects', async (req: any, res) => {
+  const misToken = requireMisToken(req, res);
+  if (!misToken) return;
+  const classId = req.query.class_id as string | undefined;
+  if (!classId) {
+    return res.status(400).json({ success: false, message: 'class_id is required.' });
+  }
+
+  try {
+    const gradeId = await resolveGradeId(misToken, classId);
+    if (gradeId == null) {
+      return res.status(404).json({ success: false, message: 'That class group was not found.' });
+    }
+    const rows = await misGetList(
+      misToken,
+      `/academics/grades/${encodeURIComponent(String(gradeId))}/subjects`
+    );
+    const data = rows.map((s: any) => ({
+      id: Number(s.subject_id),
+      name: s.subject_name ?? s.name,
+      code: s.subject_code ?? s.code ?? null,
+    }));
+    return res.json({ success: true, data });
+  } catch (error) {
+    sendMisError(res, '/academics/grades/:id/subjects', error);
+  }
+});
+
+/** class_group_id -> grade_id, via the class-group list. */
+async function resolveGradeId(misToken: string, classId: string): Promise<number | null> {
+  const classGroups = await misGetList(misToken, '/academics/class-groups');
+  const match = classGroups.find(
+    (c: any) => String(c.class_group_id ?? c.id) === String(classId)
+  );
+  const gradeId = match?.grade_id;
+  return gradeId == null ? null : Number(gradeId);
+}
+
+/** True when `subjectId` is on `classId`'s grade curriculum. Used to reject
+ *  mismatched subject/class pairs server-side, since the client picker is a
+ *  convenience, not a guarantee. */
+export async function isSubjectOnClassCurriculum(
+  misToken: string,
+  classId: string,
+  subjectId: number
+): Promise<boolean> {
+  const gradeId = await resolveGradeId(misToken, classId);
+  if (gradeId == null) return false;
+  const rows = await misGetList(
+    misToken,
+    `/academics/grades/${encodeURIComponent(String(gradeId))}/subjects`
+  );
+  return rows.some((s: any) => Number(s.subject_id) === Number(subjectId));
+}
+
 router.get('/students', async (req: any, res) => {
   const misToken = requireMisToken(req, res);
   if (!misToken) return;

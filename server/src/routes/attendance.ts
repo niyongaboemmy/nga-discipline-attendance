@@ -5,6 +5,7 @@ import { authorizePermission, selfOrPermission } from '../middleware/authorize.j
 import { recordAudit } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
+import { isSubjectOnClassCurriculum } from './mis.js';
 
 const router = Router();
 
@@ -37,6 +38,28 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
   // A.1.2: course/subject attendance must be tied to a specific subject.
   if (sessionType === 'subject' && !subjectId) {
     return res.status(400).json({ success: false, message: 'subjectId is required when sessionType is "subject".' });
+  }
+  // ...and that subject must actually be taught to this class group's grade.
+  // The client only offers matching subjects, but that's a convenience, not
+  // a guarantee — without this check a stale tab or a direct API call could
+  // file attendance for a subject the class doesn't even take.
+  if (sessionType === 'subject' && subjectId) {
+    const misToken = authReq.user?.misToken;
+    if (misToken) {
+      try {
+        const allowed = await isSubjectOnClassCurriculum(misToken, String(classId), Number(subjectId));
+        if (!allowed) {
+          return res.status(400).json({
+            success: false,
+            message: 'That subject is not on this class group’s curriculum. Pick a subject taught to this class.',
+          });
+        }
+      } catch (error) {
+        // The MIS being unreachable shouldn't block attendance from being
+        // recorded — log and fall through rather than lose the teacher's work.
+        console.error('Subject/class curriculum check skipped:', (error as Error).message);
+      }
+    }
   }
   // Validate every record up front so the transaction can't fail halfway through
   // on the DB CHECK constraint (which would surface as an opaque 500).

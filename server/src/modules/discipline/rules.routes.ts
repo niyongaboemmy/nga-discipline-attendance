@@ -61,6 +61,105 @@ router.post('/rules', authorizePermission('DISCIPLINE_RULES_MANAGE'), validateBo
   }
 });
 
+/**
+ * Bulk rule import (spreadsheet upload).
+ *
+ * The client parses the workbook and posts plain JSON rows, so there's no
+ * multipart/file handling here — it also means the user sees validation
+ * errors against their own spreadsheet before anything is written.
+ *
+ * Rows are validated individually and reported per-row rather than failing
+ * the whole upload on one bad cell: a 200-row sheet with two typos should
+ * import 198 rows and tell you about the two, not reject everything.
+ * Duplicates (same type + title as an existing rule, case-insensitively)
+ * are skipped rather than erroring, so re-uploading a corrected sheet is
+ * safe and idempotent.
+ */
+// Rows are deliberately `unknown` here: validating them against ruleSchema
+// at the envelope level would fail the entire upload on one bad cell, which
+// is exactly the behaviour this endpoint exists to avoid. Each row is
+// validated individually below so the response can report per-row outcomes.
+const ruleImportSchema = z.object({
+  rules: z.array(z.unknown()).min(1).max(500),
+});
+
+router.post(
+  '/rules/import',
+  authorizePermission('DISCIPLINE_RULES_MANAGE'),
+  async (req: any, res: Response) => {
+    const authReq = req as AuthenticatedRequest;
+    const db = getDb();
+
+    const envelope = ruleImportSchema.safeParse(req.body);
+    if (!envelope.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'Provide between 1 and 500 rows to import.',
+      });
+    }
+
+    const rows = envelope.data.rules;
+    const created: Array<{ row: number; title: string }> = [];
+    const skipped: Array<{ row: number; title: string; reason: string }> = [];
+    const errors: Array<{ row: number; message: string }> = [];
+
+    try {
+      const existing = await rulesRepo.listRules(db);
+      // Track within-file duplicates too, not just clashes with the DB.
+      const seen = new Set(
+        existing.map((r) => `${r.type}::${r.title.trim().toLowerCase()}`)
+      );
+
+      await db.run('BEGIN');
+      for (let i = 0; i < rows.length; i++) {
+        // +2 so the number matches the spreadsheet row the user sees
+        // (1-based, and row 1 is the header).
+        const rowNumber = i + 2;
+        const parsed = ruleSchema.safeParse(rows[i]);
+        if (!parsed.success) {
+          errors.push({
+            row: rowNumber,
+            message: parsed.error.issues
+              .map((issue) => `${issue.path.join('.') || 'row'}: ${issue.message}`)
+              .join('; '),
+          });
+          continue;
+        }
+
+        const rule = parsed.data;
+        const key = `${rule.type}::${rule.title.trim().toLowerCase()}`;
+        if (seen.has(key)) {
+          skipped.push({ row: rowNumber, title: rule.title, reason: 'A rule with this type and title already exists.' });
+          continue;
+        }
+
+        await rulesRepo.createRule(db, { ...rule, createdBy: authReq.user!.id });
+        seen.add(key);
+        created.push({ row: rowNumber, title: rule.title });
+      }
+      await db.run('COMMIT');
+
+      if (created.length > 0) {
+        await recordAudit(db, authReq.user!, 'discipline_rule.import', 'discipline_rule', null, {
+          created: created.length,
+          skipped: skipped.length,
+          errors: errors.length,
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: { created, skipped, errors },
+        message: `Imported ${created.length} rule${created.length === 1 ? '' : 's'}.`,
+      });
+    } catch (error: any) {
+      await db.run('ROLLBACK').catch(() => undefined);
+      console.error('Error importing discipline rules:', error);
+      return res.status(500).json({ success: false, message: error.message || 'Error importing rules.' });
+    }
+  }
+);
+
 router.put('/rules/:id', authorizePermission('DISCIPLINE_RULES_MANAGE'), validateBody(ruleUpdateSchema), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const db = getDb();

@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../context/ToastContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { apiGet, apiPut, ApiError } from '../api/client';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 import { Gavel, Award, Inbox, ChevronLeft, ChevronRight, MoreVertical, FileBarChart, Download } from 'lucide-react';
 
 interface DisciplineRecord {
@@ -174,17 +175,33 @@ export const DisciplineRecords: React.FC = () => {
           </div>
           <div className="field">
             <label className="label">Type</label>
-            <select className="select" value={filters.type} onChange={(e) => setFilter({ type: e.target.value })}>
-              <option value="">All</option><option value="demerit">Demerits</option><option value="merit">Merits</option>
-            </select>
+            <SearchableSelect
+              value={filters.type}
+              onChange={(v) => setFilter({ type: v })}
+              options={[
+                { value: '', label: 'All' },
+                { value: 'demerit', label: 'Demerits' },
+                { value: 'merit', label: 'Merits' },
+              ]}
+              placeholder="All"
+              aria-label="Filter by type"
+            />
           </div>
           <div className="field">
             <label className="label">Status</label>
-            <select className="select" value={filters.status} onChange={(e) => setFilter({ status: e.target.value })}>
-              <option value="">All</option>
-              <option value="open">Open</option><option value="under_review">Under review</option>
-              <option value="resolved">Resolved</option><option value="dismissed">Dismissed</option>
-            </select>
+            <SearchableSelect
+              value={filters.status}
+              onChange={(v) => setFilter({ status: v })}
+              options={[
+                { value: '', label: 'All' },
+                { value: 'open', label: 'Open' },
+                { value: 'under_review', label: 'Under review' },
+                { value: 'resolved', label: 'Resolved' },
+                { value: 'dismissed', label: 'Dismissed' },
+              ]}
+              placeholder="All"
+              aria-label="Filter by status"
+            />
           </div>
         </div>
       </div>

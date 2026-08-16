@@ -7,6 +7,7 @@ import { useAuth, type Role } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { HeroBanner } from '../components/common/HeroBanner';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 import { useToast } from '../context/ToastContext';
 import { apiPost, ApiError } from '../api/client';
 
@@ -249,16 +250,16 @@ export const AdminDashboard: React.FC = () => {
                         <td className="text-right">
                           <div className="flex items-center gap-2 justify-end">
                             {savedId === u.id && <span className="text-success flex items-center gap-1 text-xs"><Check size={14} /> Saved</span>}
-                            <select
-                              className="select"
-                              style={{ width: 'auto', height: '34px' }}
-                              value={u.role_id ?? ''}
-                              disabled={savingId === u.id || !can('USERS_MANAGE')}
-                              onChange={(e) => requestRoleChange(u, Number(e.target.value))}
-                            >
-                              {u.role_id == null && <option value="" disabled>Unassigned</option>}
-                              {roles.map((r) => <option key={r.id} value={r.id}>{r.level} — {r.name}</option>)}
-                            </select>
+                            <div style={{ width: '200px' }}>
+                              <SearchableSelect
+                                value={u.role_id != null ? String(u.role_id) : ''}
+                                onChange={(v) => requestRoleChange(u, Number(v))}
+                                options={roles.map((r) => ({ value: String(r.id), label: r.name, hint: r.level }))}
+                                placeholder="Unassigned"
+                                disabled={savingId === u.id || !can('USERS_MANAGE')}
+                                aria-label={`Role for ${u.name}`}
+                              />
+                            </div>
                           </div>
                         </td>
                       </tr>

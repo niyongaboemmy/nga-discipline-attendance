@@ -6,6 +6,7 @@ import { Modal } from '../components/common/Modal';
 import { ErrorState } from '../components/common/ErrorState';
 import { useToast } from '../context/ToastContext';
 import { apiGet, apiPost, apiPut, apiDelete, ApiError } from '../api/client';
+import { SearchableSelect } from '../components/common/SearchableSelect';
 import { Plus, Trash2, Save, Lock, KeyRound, Search } from 'lucide-react';
 
 interface PermissionDef { key: string; category: string; description: string; }
@@ -272,9 +273,13 @@ export const RolesPermissions: React.FC = () => {
             <input className="input mt-1" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Discipline Coordinator" />
           </label>
           <label className="text-sm font-medium">Level
-            <select className="select mt-1" value={newLevel} onChange={(e) => setNewLevel(e.target.value as RoleDetail['level'])}>
-              {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-            </select>
+            <SearchableSelect
+              className="mt-1"
+              aria-label="Level"
+              value={newLevel}
+              onChange={(v) => setNewLevel(v as RoleDetail['level'])}
+              options={LEVELS.map((l) => ({ value: l, label: l }))}
+            />
           </label>
           <label className="text-sm font-medium">Description
             <textarea className="input mt-1" rows={2} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} />
