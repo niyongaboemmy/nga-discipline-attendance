@@ -10,6 +10,7 @@ import { disciplineApi, type DisciplineRule, type RuleInput } from '../api/disci
 import { ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { RuleImportModal } from '../components/discipline/RuleImportModal';
+import { Pager, clampPage } from '../components/common/Pager';
 import { Plus, Trash2, Pencil, Gavel, Award, ShieldCheck, Upload, Sparkles } from 'lucide-react';
 
 const emptyForm: RuleInput = {
@@ -38,6 +39,9 @@ export const DisciplineRules: React.FC = () => {
   const [creating, setCreating] = useState(false);
   // null = closed; otherwise which add-flow is open (spreadsheet or AI).
   const [addMode, setAddMode] = useState<'file' | 'ai' | null>(null);
+  const RULES_PAGE_SIZE = 10;
+  const [demeritPage, setDemeritPage] = useState(1);
+  const [meritPage, setMeritPage] = useState(1);
   const [form, setForm] = useState<RuleInput>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [retireTarget, setRetireTarget] = useState<DisciplineRule | null>(null);
@@ -137,7 +141,15 @@ export const DisciplineRules: React.FC = () => {
   const demerits = rules.filter((r) => r.type === 'demerit');
   const merits = rules.filter((r) => r.type === 'merit');
 
-  const renderTable = (list: DisciplineRule[], icon: React.ReactNode) => (
+  const renderTable = (
+    list: DisciplineRule[],
+    icon: React.ReactNode,
+    pager: { page: number; setPage: (p: number) => void; label: string }
+  ) => {
+    const pageCount = Math.max(1, Math.ceil(list.length / RULES_PAGE_SIZE));
+    const page = clampPage(pager.page, pageCount);
+    const rows = list.slice((page - 1) * RULES_PAGE_SIZE, page * RULES_PAGE_SIZE);
+    return (
     <div className="card">
       <table className="table">
         <thead>
@@ -148,7 +160,7 @@ export const DisciplineRules: React.FC = () => {
         <tbody>
           {list.length === 0 ? (
             <tr><td colSpan={6}><div className="empty-state" style={{ padding: '24px' }}>{icon}<span className="text-sm">No rules yet.</span></div></td></tr>
-          ) : list.map((r) => (
+          ) : rows.map((r) => (
             <tr key={r.id}>
               <td>
                 <div className="text-sm font-semibold">{r.title}</div>
@@ -176,8 +188,19 @@ export const DisciplineRules: React.FC = () => {
           ))}
         </tbody>
       </table>
+      {list.length > 0 && (
+        <Pager
+          page={page}
+          pageCount={pageCount}
+          total={list.length}
+          pageSize={RULES_PAGE_SIZE}
+          onChange={pager.setPage}
+          label={pager.label}
+        />
+      )}
     </div>
-  );
+    );
+  };
 
   return (
     <DashboardLayout>
@@ -286,11 +309,19 @@ export const DisciplineRules: React.FC = () => {
         <div className="flex flex-col gap-4">
           <div>
             <span className="section-title">Demerit rules</span>
-            <div className="mt-2">{renderTable(demerits, <Gavel size={24} />)}</div>
+            <div className="mt-2">
+              {renderTable(demerits, <Gavel size={24} />, {
+                page: demeritPage, setPage: setDemeritPage, label: 'Demerit rules pages',
+              })}
+            </div>
           </div>
           <div>
             <span className="section-title">Merit rules</span>
-            <div className="mt-2">{renderTable(merits, <ShieldCheck size={24} />)}</div>
+            <div className="mt-2">
+              {renderTable(merits, <ShieldCheck size={24} />, {
+                page: meritPage, setPage: setMeritPage, label: 'Merit rules pages',
+              })}
+            </div>
           </div>
         </div>
       )}

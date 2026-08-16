@@ -348,7 +348,7 @@ export const AdminDashboard: React.FC = () => {
                 </table>
               </div>
             )}
-            <div className="card-footer admin-pager">
+            <div className="card-footer pager">
               <span className="text-xs text-secondary">
                 {visible.length === 0
                   ? 'No users'
@@ -357,7 +357,7 @@ export const AdminDashboard: React.FC = () => {
               </span>
 
               {pageCount > 1 && (
-                <nav className="admin-pager-nav" aria-label="User list pages">
+                <nav className="pager-nav" aria-label="User list pages">
                   <button
                     className="btn btn-outline btn-sm"
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
