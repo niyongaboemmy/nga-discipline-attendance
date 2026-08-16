@@ -1,7 +1,22 @@
 import React, { useRef, useState } from 'react';
-import { Download, Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import { Download, Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, X, Sparkles } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import { apiPost, ApiError } from '../../api/client';
+
+type Mode = 'file' | 'ai';
+
+interface AiDraft {
+  index: number;
+  rule: ParsedRule;
+  error: string | null;
+  duplicate: boolean;
+}
+
+const AI_EXAMPLES = [
+  'Standard secondary-school rules for lateness, uniform and phone use',
+  '5 merit rules that reward helping classmates and school service',
+  'Rules for exam misconduct, with higher points for repeat offences',
+];
 
 /** Column order of the template — also the order rows are read back in. */
 const COLUMNS = [
@@ -133,6 +148,9 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
   const [report, setReport] = useState<ImportReport | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [mode, setMode] = useState<Mode>('file');
+  const [prompt, setPrompt] = useState('');
+  const [providerUsed, setProviderUsed] = useState<string | null>(null);
 
   const reset = () => {
     setFileName(null);
@@ -140,6 +158,44 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
     setParseError(null);
     setReport(null);
     setBusy(false);
+    setPrompt('');
+    setProviderUsed(null);
+  };
+
+  /** Ask the server to draft rules. Nothing is written — the drafts land in
+   *  the same preview table the spreadsheet path uses, and only reach the
+   *  database if the user confirms. */
+  const draftWithAi = async () => {
+    if (prompt.trim().length < 3) return;
+    setBusy(true);
+    setParseError(null);
+    setReport(null);
+    setRows(null);
+    setProviderUsed(null);
+    try {
+      const res = await apiPost<{ drafts: AiDraft[]; providerUsed: string }>(
+        '/api/discipline/rules/ai-draft',
+        { prompt: prompt.trim() }
+      );
+      const drafts = res.data?.drafts ?? [];
+      if (drafts.length === 0) {
+        setParseError('The AI returned no rules. Try describing the rules you want more specifically.');
+        return;
+      }
+      setProviderUsed(res.data?.providerUsed ?? null);
+      setRows(
+        drafts.map((d, i) => ({
+          // Drafts have no spreadsheet row, so number them from 1 for display.
+          rowNumber: i + 1,
+          rule: d.rule,
+          error: d.error ?? (d.duplicate ? 'A rule with this type and title already exists.' : null),
+        }))
+      );
+    } catch (err) {
+      setParseError(err instanceof ApiError ? err.message : 'Could not reach the AI service.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const close = () => {
@@ -327,8 +383,66 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
         </>
       }
     >
-      {/* Step 1 — template */}
       {!report && (
+        <div className="segmented mb-3">
+          <button
+            type="button"
+            className={`segmented-btn${mode === 'file' ? ' is-active' : ''}`}
+            onClick={() => { setMode('file'); setRows(null); setParseError(null); }}
+          >
+            <FileSpreadsheet size={14} /> From a spreadsheet
+          </button>
+          <button
+            type="button"
+            className={`segmented-btn${mode === 'ai' ? ' is-active' : ''}`}
+            onClick={() => { setMode('ai'); setRows(null); setParseError(null); setFileName(null); }}
+          >
+            <Sparkles size={14} /> Describe with AI
+          </button>
+        </div>
+      )}
+
+      {/* AI drafting */}
+      {!report && mode === 'ai' && (
+        <div className="field">
+          <label className="label" htmlFor="ai-rule-prompt">
+            Describe the rules you need
+          </label>
+          <textarea
+            id="ai-rule-prompt"
+            className="textarea"
+            rows={3}
+            value={prompt}
+            placeholder="e.g. Rules for lateness and uniform, with fines for repeat offences"
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') draftWithAi();
+            }}
+          />
+          <div className="ai-examples">
+            {AI_EXAMPLES.map((ex) => (
+              <button key={ex} type="button" className="chip" onClick={() => setPrompt(ex)}>
+                {ex}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center justify-between mt-2">
+            <p className="text-xs text-secondary">
+              Nothing is saved until you review the drafts and confirm.
+            </p>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={draftWithAi}
+              disabled={busy || prompt.trim().length < 3}
+            >
+              <Sparkles size={14} /> {busy ? 'Drafting…' : 'Draft rules'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 1 — template */}
+      {!report && mode === 'file' && (
         <div className="import-step">
           <div className="import-step-body">
             <span className="import-step-num">1</span>
@@ -347,7 +461,7 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
       )}
 
       {/* Step 2 — upload */}
-      {!report && (
+      {!report && mode === 'file' && (
         <>
           <div className="import-step" style={{ borderBottom: 'none', paddingBottom: 4 }}>
             <div className="import-step-body">
@@ -422,7 +536,9 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
               <span className="badge badge-danger">{invalidRows.length} need fixing</span>
             )}
             <span className="text-xs text-secondary">
-              Only the valid rows are imported — fix the rest and upload again.
+              {mode === 'ai'
+                ? `Only the valid drafts are added — review them before confirming.${providerUsed ? ` Drafted by ${providerUsed}.` : ''}`
+                : 'Only the valid rows are imported — fix the rest and upload again.'}
             </span>
           </div>
 
@@ -430,7 +546,7 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
             <table className="table">
               <thead>
                 <tr>
-                  <th style={{ width: 52 }}>Row</th>
+                  <th style={{ width: 52 }}>{mode === 'ai' ? '#' : 'Row'}</th>
                   <th>Rule</th>
                   <th style={{ width: 80 }}>Type</th>
                   <th style={{ width: 70 }}>Points</th>

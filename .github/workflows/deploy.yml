@@ -14,11 +14,18 @@ jobs:
         env:
           SSO_CLIENT_SECRET: ${{ secrets.SSO_CLIENT_SECRET }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # AI providers, same keys/fallback order as nga_central_mis. This
+          # step rewrites server/.env wholesale, so anything not listed here
+          # is lost on deploy -- these must stay in sync with the secrets.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: SSO_CLIENT_SECRET,JWT_SECRET
+          envs: SSO_CLIENT_SECRET,JWT_SECRET,OPENAI_API_KEY,GEMINI_API_KEY,GROQ_API_KEY,GLM_API_KEY
           script: |
             set -e
             cd /opt/apps/nga-discipline-attendance
@@ -43,6 +50,16 @@ jobs:
             DATABASE_PATH=/opt/apps/tendo-data/attendance.db
             CORS_ORIGINS=https://tendo.amashuri.com
             ADMIN_EMAILS=emmanuelniyongabo44@gmail.com
+
+            OPENAI_API_KEY="${OPENAI_API_KEY}"
+            OPENAI_MODEL=gpt-4o
+            GEMINI_API_KEY="${GEMINI_API_KEY}"
+            GEMINI_MODEL=gemini-2.5-flash
+            GROQ_API_KEY="${GROQ_API_KEY}"
+            GROQ_MODEL=openai/gpt-oss-20b
+            GLM_API_KEY="${GLM_API_KEY}"
+            GLM_MODEL=glm-4.5-flash
+            AI_PROVIDER_ORDER=openai,gemini,groq,glm
             EOF
 
             cat > client/.env <<EOF

@@ -9,6 +9,8 @@ import { resolveAcademicPeriod } from '../../utils/academicPeriod.js';
 import { notifyUserExternal } from '../../utils/notifier.js';
 import { SANCTIONS } from '../../utils/conduct.js';
 import * as rulesRepo from './rules.repository.js';
+import { generateStructuredContent, isAnyProviderConfigured } from '../../services/aiProviders/index.js';
+import type { JSONSchema } from '../../services/aiProviders/index.js';
 import { getStudentTermBalance, listTermBalances } from './ledger.service.js';
 
 /**
@@ -82,6 +84,134 @@ router.post('/rules', authorizePermission('DISCIPLINE_RULES_MANAGE'), validateBo
 const ruleImportSchema = z.object({
   rules: z.array(z.unknown()).min(1).max(500),
 });
+
+/**
+ * Draft rules from a natural-language prompt.
+ *
+ * Deliberately generates and returns only — nothing is written. The client
+ * shows the drafts for review and commits the approved ones through
+ * /rules/import, which is where validation and duplicate-skipping already
+ * live. That keeps the AI strictly advisory: a model can't create a rule
+ * without a human approving it.
+ */
+const AI_RULES_SCHEMA: JSONSchema = {
+  type: 'object',
+  properties: {
+    rules: {
+      type: 'array',
+      description: 'The generated discipline rules.',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', description: 'Either "demerit" (misconduct) or "merit" (positive behaviour).' },
+          category: { type: 'string', description: 'Short grouping, e.g. Tardiness, Uniform, Service.' },
+          title: { type: 'string', description: 'The rule itself, stated concisely.' },
+          description: { type: 'string', description: 'One sentence clarifying when it applies.' },
+          defaultPoints: { type: 'number', description: 'Whole number 1-100. Higher means more serious.' },
+          fineAmount: { type: 'number', description: 'Monetary fine, or 0 when none applies.' },
+          severity: { type: 'string', description: 'For demerits: minor|moderate|major. For merits: small|notable|outstanding.' },
+        },
+        required: ['type', 'category', 'title', 'description', 'defaultPoints', 'fineAmount', 'severity'],
+      },
+    },
+  },
+  required: ['rules'],
+};
+
+const aiDraftSchema = z.object({
+  prompt: z.string().min(3).max(2000),
+  count: z.number().int().min(1).max(25).optional(),
+});
+
+router.post(
+  '/rules/ai-draft',
+  authorizePermission('DISCIPLINE_RULES_MANAGE'),
+  validateBody(aiDraftSchema),
+  async (req: any, res: Response) => {
+    const { prompt, count } = req.body as { prompt: string; count?: number };
+    const db = getDb();
+
+    if (!isAnyProviderConfigured()) {
+      return res.status(503).json({
+        success: false,
+        message: 'AI drafting is not configured on this server.',
+      });
+    }
+
+    try {
+      // Existing titles let the model avoid proposing what's already there,
+      // rather than the user discovering it only at the import step.
+      const existing = await rulesRepo.listRules(db);
+      const existingTitles = existing.slice(0, 120).map((r) => `${r.type}: ${r.title}`);
+
+      const fullPrompt = [
+        'You are helping a school administrator build a student discipline rules catalog.',
+        `Generate ${count ?? 'an appropriate number of'} rule(s) for this request:`,
+        `"""${prompt}"""`,
+        '',
+        'Requirements:',
+        '- "type" must be exactly "demerit" or "merit".',
+        '- "defaultPoints" is a whole number from 1 to 100, proportional to seriousness.',
+        '- "fineAmount" is a number; use 0 when no fine applies.',
+        '- "severity" must be one of minor|moderate|major for demerits, or small|notable|outstanding for merits.',
+        '- "category" groups related rules; reuse the same category across similar rules.',
+        '- Keep "title" short and specific; put the clarification in "description".',
+        '- Write in the same language as the request.',
+        existingTitles.length
+          ? `\nThese rules already exist — do NOT duplicate them:\n${existingTitles.join('\n')}`
+          : '',
+      ].join('\n');
+
+      const { data, providerUsed } = await generateStructuredContent<{ rules: any[] }>(
+        {
+          prompt: fullPrompt,
+          schema: AI_RULES_SCHEMA,
+          schemaName: 'discipline_rules',
+          maxOutputTokens: 4000,
+        },
+      );
+
+      // The model is untrusted input: normalise here, but let the same
+      // ruleSchema used everywhere else decide what's actually valid, and
+      // flag rather than silently drop anything it rejects.
+      const drafts = (Array.isArray(data?.rules) ? data.rules : []).map((r: any, i: number) => {
+        const candidate = {
+          type: String(r?.type ?? '').toLowerCase().trim(),
+          category: String(r?.category ?? '').trim(),
+          title: String(r?.title ?? '').trim(),
+          description: r?.description ? String(r.description).trim() : undefined,
+          defaultPoints: Math.round(Number(r?.defaultPoints)),
+          fineAmount: Number.isFinite(Number(r?.fineAmount)) ? Number(r.fineAmount) : 0,
+          severity: r?.severity ? String(r.severity).trim() : undefined,
+        };
+        const parsed = ruleSchema.safeParse(candidate);
+        return {
+          index: i,
+          rule: candidate,
+          error: parsed.success
+            ? null
+            : parsed.error.issues.map((x) => `${x.path.join('.') || 'rule'}: ${x.message}`).join('; '),
+          duplicate: existing.some(
+            (e) => e.type === candidate.type && e.title.trim().toLowerCase() === candidate.title.toLowerCase()
+          ),
+        };
+      });
+
+      return res.json({
+        success: true,
+        data: { drafts, providerUsed },
+        message: `Drafted ${drafts.length} rule${drafts.length === 1 ? '' : 's'}.`,
+      });
+    } catch (error: any) {
+      const status = error?.status === 503 ? 503 : 500;
+      console.error('Error drafting rules with AI:', error?.message);
+      return res.status(status).json({
+        success: false,
+        message: error?.message || 'Could not draft rules right now.',
+      });
+    }
+  }
+);
 
 router.post(
   '/rules/import',
