@@ -1,13 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
 import { Pager, clampPage } from '../components/common/Pager';
 import { apiGet, apiPost, ApiError } from '../api/client';
-import { SearchableSelect } from '../components/common/SearchableSelect';
 import { useToast } from '../context/ToastContext';
 import {
   Plus, Calendar, AlertCircle, Inbox, Info, Search, X, RotateCcw,
-  CheckCircle2, Clock, XCircle,
+  CheckCircle2, Clock, XCircle, ChevronDown, Stethoscope, Home, Briefcase, MoreHorizontal,
 } from 'lucide-react';
 
 interface Excuse {
@@ -28,12 +27,121 @@ const STATUS_META: Record<StatusKey, { badge: string; icon: React.ReactNode; lab
   rejected: { badge: 'badge-danger',  icon: <XCircle size={13} />,      label: 'Rejected' },
 };
 
-const REASONS = ['Medical', 'Family', 'Official', 'Other'];
+const REASONS: Array<{ value: string; icon: React.ReactNode }> = [
+  { value: 'Medical',  icon: <Stethoscope size={14} /> },
+  { value: 'Family',   icon: <Home size={14} /> },
+  { value: 'Official', icon: <Briefcase size={14} /> },
+  { value: 'Other',    icon: <MoreHorizontal size={14} /> },
+];
 const PAGE_SIZE = 6;
 const today = () => new Date().toISOString().split('T')[0];
+const daysAgo = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
+};
 
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+/**
+ * Course picker.
+ *
+ * This used to swap between a SearchableSelect (which is a *button*) and a
+ * plain input depending on whether the class list had loaded — so whether you
+ * could type at all depended on a race with the network, and a list that
+ * arrived mid-typing replaced the element under the cursor. It is one control
+ * now: always a text input, with the known classes offered as suggestions.
+ * Free text stays valid because a student can need to explain an absence from
+ * a class they have no attendance record in yet — which is exactly the case
+ * where the list comes back empty.
+ */
+const CourseCombobox: React.FC<{
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  invalid: boolean;
+}> = ({ value, onChange, options, invalid }) => {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const listboxId = `${useId()}-courses`;
+
+  const matches = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    return options.filter((o) => !q || o.toLowerCase().includes(q)).slice(0, 8);
+  }, [options, value]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  const commit = (v: string) => { onChange(v); setOpen(false); };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!matches.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive((i) => (i + 1) % matches.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setOpen(true); setActive((i) => (i - 1 + matches.length) % matches.length); }
+    // Enter picks a highlighted suggestion, but never hijacks submit when the
+    // list is closed — typed-in text must be able to go straight through.
+    else if (e.key === 'Enter' && open) { e.preventDefault(); commit(matches[active] ?? value); }
+    else if (e.key === 'Escape') setOpen(false);
+  };
+
+  return (
+    <div className="ex-combo" ref={rootRef}>
+      <input
+        id="excuse-course"
+        className={`input${invalid ? ' is-invalid' : ''}`}
+        type="text"
+        role="combobox"
+        autoComplete="off"
+        aria-expanded={open && matches.length > 0}
+        aria-controls={listboxId}
+        aria-autocomplete="list"
+        aria-activedescendant={open && matches.length ? `${listboxId}-${active}` : undefined}
+        placeholder={options.length ? 'Type or pick a class…' : 'Type the class name…'}
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setActive(0); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={onKeyDown}
+      />
+      {options.length > 0 && (
+        <button
+          type="button"
+          className="ex-combo-toggle"
+          tabIndex={-1}
+          aria-label={open ? 'Hide class suggestions' : 'Show class suggestions'}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <ChevronDown size={15} />
+        </button>
+      )}
+      {open && matches.length > 0 && (
+        <ul className="ex-combo-panel" id={listboxId} role="listbox" aria-label="Your classes">
+          {matches.map((o, i) => (
+            <li
+              key={o}
+              id={`${listboxId}-${i}`}
+              role="option"
+              aria-selected={o === value}
+              className={`ex-option${i === active ? ' is-active' : ''}`}
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(e) => { e.preventDefault(); commit(o); }}
+            >
+              {o}
+              {o === value && <CheckCircle2 size={13} />}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
 
 export const LeaveRequests: React.FC = () => {
   const toast = useToast();
@@ -185,55 +293,71 @@ export const LeaveRequests: React.FC = () => {
           <div className="card-body">
             <form onSubmit={submit} className="flex flex-col gap-3" noValidate>
               <div className="field">
-                <label className="label" htmlFor="excuse-course">Course</label>
-                {courses.length ? (
-                  <SearchableSelect
-                    id="excuse-course"
-                    value={form.className}
-                    onChange={(v) => { setForm((p) => ({ ...p, className: v })); setFieldErrors((e) => ({ ...e, className: '' })); }}
-                    options={courses.map((c) => ({ value: c, label: c }))}
-                    placeholder="Select a course…"
-                    aria-label="Course"
-                  />
-                ) : (
-                  <>
-                    <input
-                      id="excuse-course"
-                      className="input"
-                      placeholder="Course name"
-                      value={form.className}
-                      onChange={(e) => setForm((p) => ({ ...p, className: e.target.value }))}
-                    />
-                    {courseListUnavailable && (
-                      <p className="text-xs text-secondary mt-1 flex items-center gap-1">
-                        <Info size={12} /> We couldn’t find your classes yet — type it in. It becomes a dropdown once you have an attendance record.
-                      </p>
-                    )}
-                  </>
-                )}
-                {fieldErrors.className && <p className="field-error">{fieldErrors.className}</p>}
+                <label className="label" htmlFor="excuse-course">Class</label>
+                <CourseCombobox
+                  value={form.className}
+                  options={courses}
+                  invalid={!!fieldErrors.className}
+                  onChange={(v) => {
+                    setForm((p) => ({ ...p, className: v }));
+                    setFieldErrors((e) => ({ ...e, className: '' }));
+                  }}
+                />
+                {fieldErrors.className ? (
+                  <p className="field-error">{fieldErrors.className}</p>
+                ) : courseListUnavailable ? (
+                  <p className="ex-hint">
+                    <Info size={12} />
+                    <span>No attendance records yet, so we can’t suggest your classes — type the name.</span>
+                  </p>
+                ) : null}
               </div>
 
-              <div className="grid grid-2" style={{ gap: '12px' }}>
-                <div className="field">
-                  <label className="label" htmlFor="excuse-date">Date of absence</label>
+              <div className="field">
+                <label className="label" htmlFor="excuse-date">Date of absence</label>
+                <div className="ex-date-row">
                   <input
                     id="excuse-date"
-                    className="input"
+                    className={`input${fieldErrors.date ? ' is-invalid' : ''}`}
                     type="date"
+                    max={today()}
                     value={form.date}
                     onChange={(e) => { setForm((p) => ({ ...p, date: e.target.value })); setFieldErrors((x) => ({ ...x, date: '' })); }}
                   />
-                  {fieldErrors.date && <p className="field-error">{fieldErrors.date}</p>}
+                  <div className="ex-quick">
+                    {[{ label: 'Today', v: today() }, { label: 'Yesterday', v: daysAgo(1) }].map((q) => (
+                      <button
+                        key={q.label}
+                        type="button"
+                        className={`ex-quick-btn${form.date === q.v ? ' is-on' : ''}`}
+                        aria-pressed={form.date === q.v}
+                        onClick={() => { setForm((p) => ({ ...p, date: q.v })); setFieldErrors((x) => ({ ...x, date: '' })); }}
+                      >
+                        {q.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="field">
-                  <label className="label">Reason</label>
-                  <SearchableSelect
-                    value={form.reason}
-                    onChange={(v) => setForm((p) => ({ ...p, reason: v }))}
-                    options={REASONS.map((r) => ({ value: r, label: r }))}
-                    aria-label="Reason"
-                  />
+                {fieldErrors.date && <p className="field-error">{fieldErrors.date}</p>}
+              </div>
+
+              {/* Four options — chips show them all at once, so picking a
+                  reason is one click instead of open-scan-click. */}
+              <div className="field">
+                <span className="label" id="excuse-reason-label">Reason</span>
+                <div className="ex-reasons" role="radiogroup" aria-labelledby="excuse-reason-label">
+                  {REASONS.map((r) => (
+                    <button
+                      key={r.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={form.reason === r.value}
+                      className={`ex-reason${form.reason === r.value ? ' is-on' : ''}`}
+                      onClick={() => setForm((p) => ({ ...p, reason: r.value }))}
+                    >
+                      {r.icon}<span>{r.value}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -241,7 +365,8 @@ export const LeaveRequests: React.FC = () => {
                 <label className="label" htmlFor="excuse-details">Details</label>
                 <textarea
                   id="excuse-details"
-                  className="textarea"
+                  className={`textarea${fieldErrors.details ? ' is-invalid' : ''}`}
+                  rows={4}
                   placeholder="Doctor’s name, event code, or anything that helps verify this…"
                   value={form.details}
                   onChange={(e) => { setForm((p) => ({ ...p, details: e.target.value })); setFieldErrors((x) => ({ ...x, details: '' })); }}
