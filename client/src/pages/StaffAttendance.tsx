@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { useToast } from '../context/ToastContext';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorState } from '../components/common/ErrorState';
@@ -26,6 +27,10 @@ const fmtTime = (t: string | null) =>
 
 export const StaffAttendance: React.FC = () => {
   const { user } = useAuth();
+  const { can } = usePermissions();
+  // Remediation X2: gate the all-staff view on the permission, not a hard-coded
+  // role string — a custom role with STAFF_ATTENDANCE_VIEW_ALL couldn't see it.
+  const canViewAll = can('STAFF_ATTENDANCE_VIEW_ALL');
   const toast = useToast();
   const [logs, setLogs] = useState<StaffLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +43,7 @@ export const StaffAttendance: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const path = user?.role === 'admin' ? '/api/staff/attendance' : '/api/staff/attendance/me';
+      const path = canViewAll ? '/api/staff/attendance' : '/api/staff/attendance/me';
       const res = await apiGet<StaffLog[]>(path);
       const data = res.data || [];
       setLogs(data);
@@ -85,7 +90,7 @@ export const StaffAttendance: React.FC = () => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Staff Attendance</h1>
-          <p className="page-subtitle">{user?.role === 'admin' ? 'Review all staff clock-ins and clock-outs.' : 'Clock in for your shift and view your logs.'}</p>
+          <p className="page-subtitle">{canViewAll ? 'Review all staff clock-ins and clock-outs.' : 'Clock in for your shift and view your logs.'}</p>
         </div>
       </div>
 
@@ -115,7 +120,7 @@ export const StaffAttendance: React.FC = () => {
 
       {error && <div className="mb-4"><ErrorState message={error} onRetry={fetchLogs} /></div>}
 
-      {user?.role === 'admin' && (
+      {canViewAll && (
         <div className="card card-body mb-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="input-with-icon" style={{ flex: 1, minWidth: '200px' }}>
@@ -136,8 +141,8 @@ export const StaffAttendance: React.FC = () => {
       {/* Logs */}
       <div className="card">
         <div className="card-header">
-          <span className="section-title">{user?.role === 'admin' ? 'All staff logs' : 'My shift history'}</span>
-          {user?.role === 'admin' && <span className="text-xs text-secondary">{visibleLogs.length} of {logs.length}</span>}
+          <span className="section-title">{canViewAll ? 'All staff logs' : 'My shift history'}</span>
+          {canViewAll && <span className="text-xs text-secondary">{visibleLogs.length} of {logs.length}</span>}
         </div>
         {loading ? (
           <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
@@ -148,14 +153,14 @@ export const StaffAttendance: React.FC = () => {
             <table className="table table--zebra">
               <thead>
                 <tr>
-                  {user?.role === 'admin' && <th>Staff member</th>}
+                  {canViewAll && <th>Staff member</th>}
                   <th>Date</th><th>Clock in</th><th>Clock out</th><th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleLogs.map((log) => (
                   <tr key={log.id}>
-                    {user?.role === 'admin' && (
+                    {canViewAll && (
                       <td>
                         <div className="font-medium">{log.staff_name}</div>
                         <div className="text-xs text-secondary mono">{log.staff_id}</div>

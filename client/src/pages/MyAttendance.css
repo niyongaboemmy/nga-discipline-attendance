@@ -1,0 +1,76 @@
+/* Weekly trend — a real scale: bars fill from a baseline, every bar labelled
+   with its percentage, low weeks coloured. */
+.att-trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 130px;
+  padding-top: 4px;
+}
+.att-trend-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 100%;
+}
+.att-trend-val {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.att-trend-track {
+  flex: 1;
+  width: 100%;
+  max-width: 34px;
+  display: flex;
+  align-items: flex-end;
+  background: var(--bg-subtle);
+  border-radius: 5px 5px 0 0;
+  overflow: hidden;
+}
+.att-trend-bar {
+  width: 100%;
+  min-height: 3px;
+  border-radius: 5px 5px 0 0;
+  transition: height 0.3s ease;
+}
+.att-trend-label {
+  font-size: 10px;
+  color: var(--text-tertiary, var(--text-secondary));
+  white-space: nowrap;
+}
+
+/* By-day cards */
+.att-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.att-day-subjects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.att-subject-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full, 999px);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface, var(--bg-subtle));
+  max-width: 100%;
+}
+.att-subject-pill > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-subject-pill.is-present { border-color: color-mix(in srgb, var(--success) 45%, transparent); color: var(--success); }
+.att-subject-pill.is-late    { border-color: color-mix(in srgb, var(--warning) 45%, transparent); color: var(--warning); }
+.att-subject-pill.is-excused { border-color: color-mix(in srgb, var(--info) 45%, transparent);    color: var(--info); }
+.att-subject-pill.is-absent  { border-color: color-mix(in srgb, var(--danger) 45%, transparent);  color: var(--danger); }

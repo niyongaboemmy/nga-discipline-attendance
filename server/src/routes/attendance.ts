@@ -1,48 +1,66 @@
 import { Router, Response } from 'express';
+import { z } from 'zod';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission, selfOrPermission } from '../middleware/authorize.js';
 import { recordAudit } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
-import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
+import { resolveAcademicPeriod, resolveAcademicPeriodForDate } from '../utils/academicPeriod.js';
 import { isSubjectOnClassCurriculum, resolveGradeId, misGetList } from './mis.js';
+import { validateBody, DATE_RE } from '../shared/validation.js';
+import { isFutureSchoolDate } from '../shared/schoolTime.js';
+import {
+  ATTENDANCE_STATUSES,
+  ATTENDED_SQL_CASE,
+  ATTENDANCE_WARN_THRESHOLD,
+  ATTENDANCE_MIN_SESSIONS,
+  attendanceRate,
+} from '../shared/attendancePolicy.js';
 
 const router = Router();
 
-const ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'excused'] as const;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Recognised session labels. Free text here meant `"Morning"` and `"morning"`
+ *  became two separate registers (remediation A5). */
+const PERIODS = ['Morning', 'Afternoon', 'Evening'] as const;
+const MAX_RECORDS_PER_MARK = 300;
+
+const markSchema = z.object({
+  classId: z.string().min(1).max(64),
+  className: z.string().min(1).max(120),
+  date: z.string().regex(DATE_RE, 'Expected YYYY-MM-DD.')
+    .refine((d) => !isFutureSchoolDate(d), 'Cannot record attendance for a future date.'),
+  period: z.enum(PERIODS).default('Morning'),
+  sessionType: z.enum(['homeroom', 'subject']).default('homeroom'),
+  subjectId: z.union([z.number().int().positive(), z.null()]).default(null),
+  records: z.array(z.object({
+    studentId: z.string().min(1).max(64),
+    studentName: z.string().min(1).max(160),
+    status: z.enum(ATTENDANCE_STATUSES),
+    notes: z.string().max(500).optional().default(''),
+  })).min(1, 'At least one student record is required.').max(MAX_RECORDS_PER_MARK),
+}).refine((v) => v.sessionType !== 'subject' || v.subjectId != null, {
+  message: 'subjectId is required when sessionType is "subject".',
+  path: ['subjectId'],
+});
 
 // Apply auth check on all attendance routes
 router.use(authMiddleware);
 
-// Mark attendance (Teacher/Admin only)
-router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+// Mark (or correct) attendance for one session (Teacher/Admin only).
+//
+// Upserts against the partial unique indexes added in the A1 remediation
+// (uq_attendance_homeroom / uq_attendance_subject) so a re-mark updates the
+// existing register in place instead of stacking duplicate rows. Every value
+// it overwrites is written to attendance_record_history in the same
+// transaction (A13), and one summary row lands in audit_log.
+router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSchema), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const {
-    classId, className, date, period = 'Morning', records,
-    sessionType = 'homeroom', subjectId = null,
-  } = req.body;
+  const { classId, className, date, period, records, sessionType } = req.body;
+  const subjectId: number | null = req.body.subjectId ?? null;
 
-  if (!classId || !className || !date || !records || !Array.isArray(records)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid payload. Missing classId, className, date, or records array.',
-    });
-  }
-  if (!DATE_RE.test(String(date))) {
-    return res.status(400).json({ success: false, message: 'Invalid date. Expected YYYY-MM-DD.' });
-  }
-  if (sessionType !== 'homeroom' && sessionType !== 'subject') {
-    return res.status(400).json({ success: false, message: "Invalid sessionType. Expected 'homeroom' or 'subject'." });
-  }
-  // A.1.2: course/subject attendance must be tied to a specific subject.
-  if (sessionType === 'subject' && !subjectId) {
-    return res.status(400).json({ success: false, message: 'subjectId is required when sessionType is "subject".' });
-  }
-  // ...and that subject must actually be taught to this class group's grade.
-  // The client only offers matching subjects, but that's a convenience, not
-  // a guarantee — without this check a stale tab or a direct API call could
-  // file attendance for a subject the class doesn't even take.
+  // The subject must be on this class group's grade curriculum. The client only
+  // offers matching subjects, but a stale tab or a direct API call could file
+  // against a subject the class doesn't take.
   if (sessionType === 'subject' && subjectId) {
     const misToken = authReq.user?.misToken;
     if (misToken) {
@@ -55,82 +73,97 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
           });
         }
       } catch (error) {
-        // The MIS being unreachable shouldn't block attendance from being
-        // recorded — log and fall through rather than lose the teacher's work.
+        // MIS unreachable shouldn't block a teacher's work — log and continue.
         console.error('Subject/class curriculum check skipped:', (error as Error).message);
       }
-    }
-  }
-  // Validate every record up front so the transaction can't fail halfway through
-  // on the DB CHECK constraint (which would surface as an opaque 500).
-  for (const record of records) {
-    if (!record?.studentId || !record?.studentName || !record?.status) {
-      return res.status(400).json({ success: false, message: 'Each record needs studentId, studentName, and status.' });
-    }
-    if (!ATTENDANCE_STATUSES.includes(record.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status '${record.status}'. Expected one of: ${ATTENDANCE_STATUSES.join(', ')}.`,
-      });
     }
   }
 
   const db = getDb();
   const teacherId = authReq.user!.id;
-  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
+  const teacherName = authReq.user!.name;
+  // Remediation X3: file the register under the term its *date* falls in, not
+  // whatever term the acting user's session currently points at.
+  const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
+    db, date, resolveAcademicPeriod(authReq)
+  );
+
+  const conflictClause = sessionType === 'homeroom'
+    ? `ON CONFLICT(student_id, class_id, session_date, period) WHERE session_type = 'homeroom'`
+    : `ON CONFLICT(student_id, class_id, session_date, subject_id, period) WHERE session_type = 'subject'`;
+
+  let updatedCount = 0;
+  let insertedCount = 0;
 
   try {
-    // Run all insertions in a transaction
     await db.run('BEGIN TRANSACTION');
 
     for (const record of records) {
       const { studentId, studentName, status, notes = '' } = record;
 
-      if (!studentId || !studentName || !status) {
-        throw new Error(`Record missing studentId, studentName, or status.`);
-      }
+      const existing = await db.get(
+        `SELECT id, status, notes FROM attendance_records
+          WHERE student_id = ? AND class_id = ? AND session_date = ? AND period = ?
+            AND session_type = ? AND (subject_id IS ? OR subject_id = ?)`,
+        studentId, classId, date, period, sessionType, subjectId, subjectId
+      );
 
       await db.run(
         `INSERT INTO attendance_records
          (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, notes, marked_by, academic_year_id, academic_term_id, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-         ON CONFLICT(student_id, class_id, session_date, session_type, subject_id, period) DO UPDATE SET
+         ${conflictClause} DO UPDATE SET
            status = excluded.status,
            notes = excluded.notes,
            marked_by = excluded.marked_by,
-           -- Re-marking a session must restamp the period too. Without
-           -- these, a record first marked under one term kept that term
-           -- forever, so corrections made after a term switch stayed
-           -- filed under the old period and vanished from the new one.
+           student_name = excluded.student_name,
+           class_name = excluded.class_name,
            academic_year_id = excluded.academic_year_id,
            academic_term_id = excluded.academic_term_id,
            updated_at = CURRENT_TIMESTAMP`,
-        studentId,
-        studentName,
-        classId,
-        className,
-        date,
-        period,
-        sessionType,
-        subjectId,
-        status,
-        notes,
-        teacherId,
-        academicYearId ?? null,
-        academicTermId ?? null
+        studentId, studentName, classId, className, date, period, sessionType, subjectId,
+        status, notes, teacherId, academicYearId ?? null, academicTermId ?? null
       );
+
+      if (existing) {
+        if (existing.status !== status || (existing.notes ?? '') !== (notes ?? '')) {
+          await db.run(
+            `INSERT INTO attendance_record_history
+             (attendance_record_id, student_id, class_id, session_date, period, session_type, subject_id,
+              previous_status, new_status, previous_notes, new_notes, changed_by, changed_by_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            existing.id, studentId, classId, date, period, sessionType, subjectId,
+            existing.status, status, existing.notes ?? '', notes ?? '', teacherId, teacherName
+          );
+        }
+        updatedCount += 1;
+      } else {
+        insertedCount += 1;
+      }
     }
+
+    await recordAudit(
+      db,
+      { id: teacherId, name: teacherName },
+      insertedCount > 0 && updatedCount === 0 ? 'attendance.mark' : 'attendance.update',
+      'attendance_session',
+      `${classId}:${date}:${period}:${sessionType}:${subjectId ?? '-'}`,
+      { classId, className, date, period, sessionType, subjectId, inserted: insertedCount, updated: updatedCount },
+      { required: true }
+    );
 
     await db.run('COMMIT');
 
-    // Trigger low attendance notification evaluation in background
-    // (scoped to this session type so subject-attendance drops don't get
-    // conflated with homeroom drops for the same class).
+    // Low-attendance evaluation runs in the background, scoped to this session
+    // type so subject drops don't get conflated with homeroom drops.
     triggerLowAttendanceCheck(classId, className, sessionType, academicTermId);
 
     return res.json({
       success: true,
-      message: 'Attendance saved successfully.',
+      message: updatedCount > 0
+        ? `Register updated — ${updatedCount} record${updatedCount === 1 ? '' : 's'} changed or confirmed${insertedCount ? `, ${insertedCount} added` : ''}.`
+        : 'Attendance recorded successfully.',
+      data: { inserted: insertedCount, updated: updatedCount },
     });
   } catch (error: any) {
     await db.run('ROLLBACK');
@@ -139,6 +172,72 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
       success: false,
       message: error.message || 'Error occurred while saving attendance records.',
     });
+  }
+});
+
+/**
+ * Remediation A2/A3 — return an existing register so it can be edited.
+ *
+ * `session-status` only ever reported a count; the client had no way to load
+ * the actual per-student statuses, so "editing" meant blind re-marking with
+ * every student defaulted back to Present. This returns the stored rows plus
+ * who marked it and when.
+ */
+router.get('/session', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+  const { classId, date } = req.query;
+  const period = String(req.query.period || 'Morning');
+  const sessionType = String(req.query.sessionType || 'homeroom');
+  const subjectId = req.query.subjectId ? Number(req.query.subjectId) : null;
+
+  if (!classId || !date || !DATE_RE.test(String(date))) {
+    return res.status(400).json({ success: false, message: 'classId and a valid date (YYYY-MM-DD) are required.' });
+  }
+  if (sessionType !== 'homeroom' && sessionType !== 'subject') {
+    return res.status(400).json({ success: false, message: "sessionType must be 'homeroom' or 'subject'." });
+  }
+
+  try {
+    const db = getDb();
+    const records = await db.all(
+      `SELECT id, student_id, student_name, status, notes, marked_by, updated_at
+         FROM attendance_records
+        WHERE class_id = ? AND session_date = ? AND period = ? AND session_type = ?
+          AND (subject_id IS ? OR subject_id = ?)
+        ORDER BY student_name ASC`,
+      classId, date, period, sessionType, subjectId, subjectId
+    );
+
+    let markedByName: string | null = null;
+    let markedById: string | null = null;
+    let lastMarkedAt: string | null = null;
+    if (records.length > 0) {
+      const latest = records.reduce((a: any, b: any) => (a.updated_at > b.updated_at ? a : b));
+      lastMarkedAt = latest.updated_at;
+      markedById = latest.marked_by;
+      const actor = await db.get('SELECT name FROM users WHERE id = ?', latest.marked_by);
+      markedByName = actor?.name ?? null;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        exists: records.length > 0,
+        classId, date, period, sessionType, subjectId,
+        markedById,
+        markedByName,
+        markedByMe: markedById === (req as AuthenticatedRequest).user!.id,
+        lastMarkedAt,
+        records: records.map((r: any) => ({
+          studentId: r.student_id,
+          studentName: r.student_name,
+          status: r.status,
+          notes: r.notes ?? '',
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error loading attendance session:', error);
+    return res.status(500).json({ success: false, message: 'Could not load this register.' });
   }
 });
 
@@ -348,40 +447,22 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
 
-  let query = 'SELECT * FROM attendance_records WHERE 1=1';
+  let where = ' WHERE 1=1';
   const params: any[] = [];
 
   if (academicTermId != null) {
     // Legacy rows (no academic_term_id recorded yet) stay visible under any period.
-    query += ' AND (academic_term_id = ? OR academic_term_id IS NULL)';
+    where += ' AND (ar.academic_term_id = ? OR ar.academic_term_id IS NULL)';
     params.push(academicTermId);
   }
-  if (classId) {
-    query += ' AND class_id = ?';
-    params.push(classId);
-  }
-  if (sessionType) {
-    query += ' AND session_type = ?';
-    params.push(sessionType);
-  }
-  if (subjectId) {
-    query += ' AND subject_id = ?';
-    params.push(subjectId);
-  }
-  if (status && status !== 'all') {
-    query += ' AND status = ?';
-    params.push(status);
-  }
-  if (dateFrom) {
-    query += ' AND session_date >= ?';
-    params.push(dateFrom);
-  }
-  if (dateTo) {
-    query += ' AND session_date <= ?';
-    params.push(dateTo);
-  }
+  if (classId) { where += ' AND ar.class_id = ?'; params.push(classId); }
+  if (sessionType) { where += ' AND ar.session_type = ?'; params.push(sessionType); }
+  if (subjectId) { where += ' AND ar.subject_id = ?'; params.push(subjectId); }
+  if (status && status !== 'all') { where += ' AND ar.status = ?'; params.push(status); }
+  if (dateFrom) { where += ' AND ar.session_date >= ?'; params.push(dateFrom); }
+  if (dateTo) { where += ' AND ar.session_date <= ?'; params.push(dateTo); }
   if (search) {
-    query += ' AND (student_name LIKE ? OR student_id LIKE ?)';
+    where += ' AND (ar.student_name LIKE ? OR ar.student_id LIKE ?)';
     params.push(`%${search}%`, `%${search}%`);
   }
 
@@ -389,9 +470,14 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   try {
-    const totalRow = await db.get(`SELECT COUNT(*) as count FROM (${query})`, ...params);
+    const totalRow = await db.get(`SELECT COUNT(*) as count FROM attendance_records ar${where}`, ...params);
     const records = await db.all(
-      `${query} ORDER BY session_date DESC, student_name ASC LIMIT ? OFFSET ?`,
+      `SELECT ar.*, s.name AS subject_name
+         FROM attendance_records ar
+         LEFT JOIN subjects s ON s.id = ar.subject_id
+        ${where}
+        ORDER BY ar.session_date DESC, ar.period ASC, ar.student_name ASC
+        LIMIT ? OFFSET ?`,
       ...params, limit, offset
     );
     return res.json({
@@ -416,21 +502,77 @@ router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN'), async (req: any, r
   const { academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
-    // Homeroom-only: a student's "overall attendance" (A.1.1) is the homeroom
-    // signal. Without this, a subject-session row (A.1.2) for the same day
-    // would double-count against the same rate calculation client-side.
-    const records = academicTermId != null
-      ? await db.all(
-          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC",
-          studentId, academicTermId
-        )
-      : await db.all(
-          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' ORDER BY session_date DESC",
-          studentId
-        );
+    // Remediation A16: return homeroom AND subject rows (tagged), plus a
+    // day-by-day merge and a summary. The headline rate stays the homeroom
+    // signal (A.1.1) — matching every report and the warning check (A6) — but
+    // the student can finally see their per-subject attendance too.
+    const termClause = academicTermId != null
+      ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
+    const termParams = academicTermId != null ? [academicTermId] : [];
+
+    const all = await db.all(
+      `SELECT id, class_id, class_name, session_date, period, session_type, subject_id, status, notes, updated_at
+         FROM attendance_records
+        WHERE student_id = ?${termClause}
+        ORDER BY session_date DESC, period ASC`,
+      studentId, ...termParams
+    );
+    const subjectNames = new Map<number, string>(
+      (await db.all('SELECT id, name FROM subjects')).map((s: any) => [s.id, s.name])
+    );
+
+    const homeroom = all.filter((r: any) => r.session_type === 'homeroom');
+    const subjects = all
+      .filter((r: any) => r.session_type === 'subject')
+      .map((r: any) => ({ ...r, subject_name: subjectNames.get(r.subject_id) ?? `Subject #${r.subject_id}` }));
+
+    const excuses = await db.all(
+      `SELECT id, class_id, class_name, session_date, status FROM excuse_requests
+        WHERE student_id = ?${termClause}`,
+      studentId, ...termParams
+    );
+    const excuseByDay = new Map<string, string>();
+    for (const e of excuses) {
+      const key = `${e.session_date}`;
+      // approved wins over pending wins over rejected for the day badge
+      const rank = (s: string) => (s === 'approved' ? 3 : s === 'pending' ? 2 : 1);
+      if (!excuseByDay.has(key) || rank(e.status) > rank(excuseByDay.get(key)!)) excuseByDay.set(key, e.status);
+    }
+
+    // Day-by-day merge (A16).
+    const dayMap = new Map<string, any>();
+    for (const r of [...homeroom, ...subjects]) {
+      if (!dayMap.has(r.session_date)) {
+        dayMap.set(r.session_date, {
+          date: r.session_date, classId: r.class_id, className: r.class_name,
+          homeroom: null, subjects: [], excuseStatus: excuseByDay.get(r.session_date) ?? null,
+        });
+      }
+      const day = dayMap.get(r.session_date);
+      if (r.session_type === 'homeroom') {
+        day.homeroom = { status: r.status, notes: r.notes, period: r.period };
+        day.classId = r.class_id; day.className = r.class_name;
+      } else {
+        day.subjects.push({ subjectId: r.subject_id, subjectName: (r as any).subject_name, status: r.status, notes: r.notes, period: r.period });
+      }
+    }
+    const days = [...dayMap.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+    const total = homeroom.length;
+    const attended = homeroom.filter((r: any) => ['present', 'late', 'excused'].includes(r.status)).length;
+    const summary = {
+      total,
+      present: homeroom.filter((r: any) => r.status === 'present').length,
+      late: homeroom.filter((r: any) => r.status === 'late').length,
+      excused: homeroom.filter((r: any) => r.status === 'excused').length,
+      absent: homeroom.filter((r: any) => r.status === 'absent').length,
+      rate: total > 0 ? Math.round((attended / total) * 100) : 100,
+      threshold: ATTENDANCE_WARN_THRESHOLD,
+    };
+
     return res.json({
       success: true,
-      data: records,
+      data: { summary, days, homeroom, subjects },
     });
   } catch (error) {
     console.error('Error fetching own attendance:', error);
@@ -509,7 +651,8 @@ router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, r
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const studentName = authReq.user!.name;
-  const { className, sessionDate, reason, description } = req.body;
+  const { className, classId = null, period = null, sessionDate, reason, description } = req.body;
+  const supersedesId = req.body.supersedesId ? Number(req.body.supersedesId) : null;
 
   if (!className || !sessionDate || !reason) {
     return res.status(400).json({
@@ -520,41 +663,56 @@ router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, r
   if (!DATE_RE.test(String(sessionDate))) {
     return res.status(400).json({ success: false, message: 'Invalid sessionDate. Expected YYYY-MM-DD.' });
   }
+  if (isFutureSchoolDate(String(sessionDate))) {
+    return res.status(400).json({ success: false, message: 'You can only request an excuse for a past or current date.' });
+  }
   if (String(reason).length > 100 || String(className).length > 100 || String(description || '').length > 2000) {
     return res.status(400).json({ success: false, message: 'Input too long: reason/className max 100 chars, description max 2000.' });
   }
+  if (period != null && !(PERIODS as readonly string[]).includes(String(period))) {
+    return res.status(400).json({ success: false, message: `Invalid period. Expected one of: ${PERIODS.join(', ')}.` });
+  }
 
   const db = getDb();
-  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
+  // Remediation X3: an excuse belongs to the term its date falls in.
+  const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
+    db, sessionDate, resolveAcademicPeriod(authReq)
+  );
   try {
-    // One pending request per class/date. Nothing prevented a student from
-    // submitting the same excuse repeatedly, which floods the reviewer's
-    // queue with duplicates of the same absence. A *decided* request can
-    // still be resubmitted — a rejection is often "send better evidence",
-    // and blocking that would leave the student no route back.
-    const duplicate = await db.get(
-      `SELECT id FROM excuse_requests
-       WHERE student_id = ? AND class_name = ? AND session_date = ? AND status = 'pending'`,
-      studentId, className, sessionDate
+    // Remediation A9: one request per student/class/date regardless of status.
+    // The previous guard only blocked a *pending* duplicate and matched on the
+    // free-text class name, so a re-typed name or a re-submit after a decision
+    // slipped straight through and flooded the reviewer's queue. A genuine
+    // appeal is still possible — the student passes `supersedesId` pointing at
+    // the decided request they're following up on.
+    const dupWhere = classId
+      ? `student_id = ? AND class_id = ? AND session_date = ?`
+      : `student_id = ? AND lower(class_name) = lower(?) AND session_date = ?`;
+    const existing = await db.get(
+      `SELECT * FROM excuse_requests WHERE ${dupWhere} ORDER BY created_at DESC LIMIT 1`,
+      studentId, classId ?? className, sessionDate
     );
-    if (duplicate) {
-      return res.status(409).json({
-        success: false,
-        message: 'You already have a pending request for this class on that date. Wait for it to be reviewed.',
-      });
+    if (existing) {
+      const appealingThis = supersedesId === existing.id && existing.status === 'rejected';
+      if (!appealingThis) {
+        return res.status(409).json({
+          success: false,
+          code: 'EXCUSE_EXISTS',
+          message: existing.status === 'pending'
+            ? 'You already have a request for this class on that date — wait for it to be reviewed.'
+            : `This absence already has a ${existing.status} excuse request. Open it to appeal if you have new evidence.`,
+          data: { existingId: existing.id, existingStatus: existing.status },
+        });
+      }
     }
 
     const result = await db.run(
-      `INSERT INTO excuse_requests (student_id, student_name, class_name, session_date, reason, description, status, academic_year_id, academic_term_id)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      studentId,
-      studentName,
-      className,
-      sessionDate,
-      reason,
-      description || '',
-      academicYearId ?? null,
-      academicTermId ?? null
+      `INSERT INTO excuse_requests
+         (student_id, student_name, class_id, class_name, period, session_date, reason, description, status, academic_year_id, academic_term_id, supersedes_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      studentId, studentName, classId, className, period, sessionDate,
+      reason, description || '', academicYearId ?? null, academicTermId ?? null,
+      supersedesId
     );
 
     const inserted = await db.get('SELECT * FROM excuse_requests WHERE id = ?', result.lastID);
@@ -572,6 +730,35 @@ router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, r
     });
   }
 });
+
+/**
+ * Remediation A8 — reconcile an excuse decision with the absence it covers.
+ * Approving flips the student's `absent` homeroom rows for that day (scoped to
+ * the excuse's period when it has one) to `excused`; moving an approved excuse
+ * back to rejected restores them. Returns how many rows changed for the audit.
+ */
+async function reconcileExcuseWithAttendance(
+  db: any,
+  excuse: { student_id: string; session_date: string; class_id: string | null; class_name: string; period: string | null },
+  direction: 'approve' | 'revert'
+): Promise<number> {
+  const from = direction === 'approve' ? 'absent' : 'excused';
+  const to = direction === 'approve' ? 'excused' : 'absent';
+  const classClause = excuse.class_id ? 'AND class_id = ?' : 'AND lower(class_name) = lower(?)';
+  const classVal = excuse.class_id ?? excuse.class_name;
+  const periodClause = excuse.period ? 'AND period = ?' : '';
+  const params: any[] = [to, from, excuse.student_id, excuse.session_date, classVal];
+  if (excuse.period) params.push(excuse.period);
+
+  const result = await db.run(
+    `UPDATE attendance_records
+        SET status = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE status = ? AND session_type = 'homeroom'
+        AND student_id = ? AND session_date = ? ${classClause} ${periodClause}`,
+    ...params
+  );
+  return result.changes ?? 0;
+}
 
 
 // List excuse requests for review (Teacher/Admin only)
@@ -596,18 +783,83 @@ router.get('/excuses', authorizePermission('EXCUSES_REVIEW'), async (req: any, r
 
   try {
     const excuses = await db.all(query, ...params);
-    return res.json({ success: true, data: excuses });
+
+    // Remediation A10: the reviewer needs context — is the student actually
+    // marked absent that day, and how many excuses have they filed before?
+    const enriched = await Promise.all(excuses.map(async (ex: any) => {
+      const classClause = ex.class_id ? 'AND class_id = ?' : 'AND lower(class_name) = lower(?)';
+      const classVal = ex.class_id ?? ex.class_name;
+      const att = await db.get(
+        `SELECT status FROM attendance_records
+          WHERE student_id = ? AND session_date = ? AND session_type = 'homeroom' ${classClause}
+          ORDER BY (status = 'absent') DESC LIMIT 1`,
+        ex.student_id, ex.session_date, classVal
+      );
+      const priorCount = await db.get(
+        `SELECT COUNT(*) AS n FROM excuse_requests WHERE student_id = ? AND id != ?`,
+        ex.student_id, ex.id
+      );
+      return {
+        ...ex,
+        attendanceStatus: att?.status ?? null,
+        isMarkedAbsent: att?.status === 'absent',
+        priorExcuseCount: priorCount?.n ?? 0,
+      };
+    }));
+
+    return res.json({ success: true, data: enriched });
   } catch (error) {
     console.error('Error fetching excuse requests:', error);
     return res.status(500).json({ success: false, message: 'Error fetching excuse requests.' });
   }
 });
 
+async function applyExcuseDecision(
+  db: any,
+  actor: { id: string; name: string },
+  existing: any,
+  status: 'approved' | 'rejected',
+  reviewerNote: string | null
+) {
+  await db.run(
+    `UPDATE excuse_requests
+        SET status = ?, reviewer_note = ?, reviewed_by = ?, reviewed_by_name = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`,
+    status, reviewerNote, actor.id, actor.name ?? null, existing.id
+  );
+
+  // Remediation A8: move the underlying absence.
+  let reconciled = 0;
+  if (status === 'approved' && existing.status !== 'approved') {
+    reconciled = await reconcileExcuseWithAttendance(db, existing, 'approve');
+  } else if (status === 'rejected' && existing.status === 'approved') {
+    reconciled = await reconcileExcuseWithAttendance(db, existing, 'revert');
+  }
+
+  await recordAudit(db, actor, 'excuse.review', 'excuse_request', existing.id,
+    { from: existing.status, to: status, attendanceRowsChanged: reconciled }, { required: true });
+
+  await db.run(
+    `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'system', ?, ?)`,
+    existing.student_id,
+    `Excuse ${status}`,
+    `Your excuse for ${existing.class_name} on ${existing.session_date} was ${status}${reviewerNote ? ` — "${reviewerNote}"` : ''}.`
+  );
+  await notifyUserExternal(
+    db,
+    existing.student_id,
+    `Excuse request ${status}`,
+    `Your excuse for ${existing.class_name} (${existing.session_date}) has been ${status} by ${actor.name}.`
+  );
+  return reconciled;
+}
+
 // Approve or reject an excuse request (Teacher/Admin only)
 router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const id = req.params.id;
   const { status } = req.body as { status?: string };
+  const reviewerNote = req.body.reviewerNote ? String(req.body.reviewerNote).slice(0, 500) : null;
 
   if (status !== 'approved' && status !== 'rejected') {
     return res.status(400).json({ success: false, message: "Invalid status. Expected 'approved' or 'rejected'." });
@@ -622,32 +874,69 @@ router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (r
       return res.status(404).json({ success: false, message: 'Excuse request not found.' });
     }
 
-    await db.run(
-      'UPDATE excuse_requests SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      status, id
-    );
+    await db.run('BEGIN TRANSACTION');
+    let reconciled = 0;
+    try {
+      reconciled = await applyExcuseDecision(db, actor, existing, status, reviewerNote);
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+
     const updated = await db.get('SELECT * FROM excuse_requests WHERE id = ?', id);
-
-    await recordAudit(db, actor, 'excuse.review', 'excuse_request', id, { from: existing.status, to: status });
-
-    // Notify the student in-app + on external channels.
-    await db.run(
-      `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'system', ?, ?)`,
-      existing.student_id,
-      `Excuse ${status}`,
-      `Your excuse for ${existing.class_name} on ${existing.session_date} was ${status}.`
-    );
-    await notifyUserExternal(
-      db,
-      existing.student_id,
-      `Excuse request ${status}`,
-      `Your excuse for ${existing.class_name} (${existing.session_date}) has been ${status} by ${actor.name}.`
-    );
-
-    return res.json({ success: true, data: updated, message: `Excuse ${status}.` });
+    return res.json({
+      success: true,
+      data: updated,
+      message: reconciled > 0
+        ? `Excuse ${status}; ${reconciled} attendance record${reconciled === 1 ? '' : 's'} updated to excused.`
+        : `Excuse ${status}.`,
+    });
   } catch (error: any) {
     console.error('Error reviewing excuse:', error);
     return res.status(500).json({ success: false, message: error.message || 'Error updating the excuse request.' });
+  }
+});
+
+// Bulk approve/reject pending excuse requests (Teacher/Admin only) — A10.
+router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const actor = authReq.user!;
+  const { ids, status } = req.body as { ids?: unknown; status?: string };
+  const reviewerNote = req.body.reviewerNote ? String(req.body.reviewerNote).slice(0, 500) : null;
+
+  if (status !== 'approved' && status !== 'rejected') {
+    return res.status(400).json({ success: false, message: "Invalid status. Expected 'approved' or 'rejected'." });
+  }
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200) {
+    return res.status(400).json({ success: false, message: 'Provide 1–200 excuse request ids.' });
+  }
+
+  const db = getDb();
+  let processed = 0;
+  let reconciled = 0;
+  try {
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const rawId of ids) {
+        const existing = await db.get('SELECT * FROM excuse_requests WHERE id = ?', rawId);
+        if (!existing || existing.status === status) continue;
+        reconciled += await applyExcuseDecision(db, actor, existing, status, reviewerNote);
+        processed += 1;
+      }
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+    return res.json({
+      success: true,
+      data: { processed, attendanceRowsChanged: reconciled },
+      message: `${processed} request${processed === 1 ? '' : 's'} ${status}.`,
+    });
+  } catch (error: any) {
+    console.error('Error bulk-reviewing excuses:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Error updating excuse requests.' });
   }
 });
 
@@ -660,15 +949,14 @@ async function triggerLowAttendanceCheck(
 ) {
   const db = getDb();
   try {
-    // Scoped to the term the session belongs to. Averaging over every term
-    // ever recorded meant a student's past-term absences dragged their
-    // current-term percentage down (and vice versa), so the 80% warning
-    // fired against a figure shown nowhere in the UI. NULL term rows are
-    // included when we have a term, matching the read paths' convention for
-    // records written before period tracking existed.
+    // Scoped to the term the session belongs to, and to the same "attended"
+    // definition (present + late + excused) the student sees on their own page
+    // and every report — remediation A6. Averaging over every term ever
+    // recorded, or counting only bare `present`, made the warning fire against
+    // a figure shown nowhere in the UI.
     const stats = await db.all(
       `SELECT student_id, student_name,
-              SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present,
+              SUM(${ATTENDED_SQL_CASE}) as attended,
               COUNT(*) as total
        FROM attendance_records
        WHERE class_id = ? AND session_type = ?
@@ -677,43 +965,42 @@ async function triggerLowAttendanceCheck(
       classId, sessionType, academicTermId ?? null, academicTermId ?? null
     );
 
+    const today = new Date().toISOString().split('T')[0];
+
     for (const student of stats) {
-      const percentage = (student.present / student.total) * 100;
-      if (student.total >= 3 && percentage < 80) { // Notify if attendance drops below 80% (over at least 3 records)
-        // Check if notification already pushed today to avoid spamming
-        const alreadyNotified = await db.get(
-          `SELECT id FROM notifications 
-           WHERE user_id = ? AND type = 'low_attendance' AND title LIKE ? AND created_at >= date('now')`,
-          student.student_id,
-          `%Low Attendance Warning%`
-        );
+      const percentage = attendanceRate(student.attended, student.total);
+      if (student.total < ATTENDANCE_MIN_SESSIONS || percentage >= ATTENDANCE_WARN_THRESHOLD) continue;
 
-        if (!alreadyNotified) {
-          await db.run(
-            `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'low_attendance', ?, ?)`,
-            student.student_id,
-            `Low Attendance Warning (${percentage.toFixed(0)}%)`,
-            `Your attendance in ${className} is currently ${percentage.toFixed(0)}% (${student.present}/${student.total} classes). Please contact your instructor.`
-          );
+      // One student alert per class per day — a real unique constraint now
+      // (remediation X4), not a title LIKE match.
+      const dedupeKey = `low_attendance:${student.student_id}:${classId}:${sessionType}:${today}`;
+      const already = await db.get(
+        `SELECT 1 FROM notifications WHERE dedupe_key = ?`, dedupeKey
+      );
+      if (already) continue;
 
-          // Also reach the student on external channels (respects their preferences).
-          await notifyUserExternal(
-            db,
-            student.student_id,
-            `Low attendance in ${className}`,
-            `Your attendance in ${className} has dropped to ${percentage.toFixed(0)}% (${student.present}/${student.total}). Please contact your instructor.`,
-            { kind: 'absence' }
-          );
+      await db.run(
+        `INSERT INTO notifications (user_id, type, title, message, dedupe_key) VALUES (?, 'low_attendance', ?, ?, ?)`,
+        student.student_id,
+        `Low attendance warning (${percentage}%)`,
+        `Your attendance in ${className} is currently ${percentage}% (${student.attended}/${student.total} sessions). Please contact your instructor.`,
+        dedupeKey
+      );
 
-          // Also notify admins/teachers
-          await db.run(
-            `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'low_attendance', ?, ?)`,
-            'all',
-            `Attendance Drop: ${student.student_name}`,
-            `${student.student_name}'s attendance in ${className} has dropped to ${percentage.toFixed(0)}%.`
-          );
-        }
-      }
+      await notifyUserExternal(
+        db,
+        student.student_id,
+        `Low attendance in ${className}`,
+        `Your attendance in ${className} has dropped to ${percentage}% (${student.attended}/${student.total}). Please contact your instructor.`,
+        { kind: 'absence' }
+      );
+
+      await db.run(
+        `INSERT INTO notifications (user_id, type, title, message, dedupe_key) VALUES ('all', 'low_attendance', ?, ?, ?)`,
+        `Attendance drop: ${student.student_name}`,
+        `${student.student_name}'s attendance in ${className} has dropped to ${percentage}%.`,
+        `${dedupeKey}:staff`
+      );
     }
   } catch (err) {
     console.error('Error in triggerLowAttendanceCheck:', err);

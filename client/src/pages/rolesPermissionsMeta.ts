@@ -21,6 +21,8 @@ export const PERMISSION_LABELS: Record<string, string> = {
   DISCIPLINE_VIEW_ALL: 'View everyone’s conduct',
   DISCIPLINE_VIEW_OWN: 'View own conduct',
   DISCIPLINE_REVIEW: 'Review conduct records',
+  DISCIPLINE_EDIT: 'Correct conduct record details',
+  DISCIPLINE_DELETE: 'Remove conduct records',
   DISCIPLINE_ADJUST: 'Adjust conduct points',
   DISCIPLINE_RULES_MANAGE: 'Manage the rules catalog',
 
@@ -65,6 +67,7 @@ export const SENSITIVE_PERMISSIONS = new Set([
   'USERS_MANAGE',
   'DISCIPLINE_RULES_MANAGE',
   'DISCIPLINE_ADJUST',
+  'DISCIPLINE_DELETE',
   'ROSTER_SYNC',
 ]);
 

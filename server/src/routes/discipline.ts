@@ -10,14 +10,45 @@ import {
   SANCTIONS,
   RECORD_STATUSES,
   DisciplineType,
+  DEMERIT_POINTS,
+  MERIT_POINTS,
+  DEMERIT_CATEGORIES,
+  MERIT_CATEGORIES,
 } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
-import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
+import { resolveAcademicPeriod, resolveAcademicPeriodForDate } from '../utils/academicPeriod.js';
 import { getRule } from '../modules/discipline/rules.repository.js';
+import { getStudentTermBalance } from '../modules/discipline/ledger.service.js';
 
 const router = Router();
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Remediation D1 — nothing stopped the same incident being logged twice (each
+ * time stacking points and firing a fresh notification). Flags an existing
+ * non-deleted record for the same student, date, type and rule/title logged by
+ * the same person. The caller can still force it through with `force: true`.
+ */
+async function findDuplicateIncident(
+  db: any,
+  opts: { studentId: string; incidentDate: string; type: string; ruleId: number | null; title: string; loggedBy: string }
+): Promise<{ id: number } | undefined> {
+  if (opts.ruleId != null) {
+    return db.get(
+      `SELECT id FROM discipline_records
+        WHERE deleted_at IS NULL AND student_id = ? AND incident_date = ? AND type = ?
+          AND rule_id = ? AND logged_by = ?`,
+      opts.studentId, opts.incidentDate, opts.type, opts.ruleId, opts.loggedBy
+    );
+  }
+  return db.get(
+    `SELECT id FROM discipline_records
+      WHERE deleted_at IS NULL AND student_id = ? AND incident_date = ? AND type = ?
+        AND rule_id IS NULL AND lower(title) = lower(?) AND logged_by = ?`,
+    opts.studentId, opts.incidentDate, opts.type, opts.title, opts.loggedBy
+  );
+}
 
 /** Shared field-shape checks for single + bulk logging. Returns an error string or null. */
 function validateIncidentFields(fields: { title: string; description: string; incidentDate: string; location: string | null; className: string | null }): string | null {
@@ -37,36 +68,55 @@ const CONDUCT_FLAG_THRESHOLD = 15;
 router.use(authMiddleware);
 
 /**
- * After demerits are logged, check whether a student's total demerit points have
- * crossed the follow-up threshold and, if so, raise a one-per-day escalation to
- * staff/admins. Best-effort: never blocks the primary write.
+ * After demerits are logged, check whether a student's demerit points for the
+ * *current term* have crossed the follow-up threshold and, if so, raise a
+ * one-per-day escalation to staff/admins. Best-effort: never blocks the primary
+ * write.
+ *
+ * Remediation D4: this used to `SUM(points)` across every term and include
+ * dismissed records, so it fired on a figure that matched no conduct score
+ * shown anywhere and never cleared. It now reads the same term-scoped,
+ * dismissed-excluding ledger balance the student and staff actually see.
  */
-async function triggerConductCheck(studentId: string, studentName: string) {
+async function triggerConductCheck(studentId: string, studentName: string, academicTermId?: number) {
   const db = getDb();
   try {
-    const row = await db.get(
-      `SELECT SUM(points) as demerit_points FROM discipline_records WHERE student_id = ? AND type = 'demerit'`,
-      studentId
-    );
-    const demeritPoints = row?.demerit_points || 0;
-    if (demeritPoints < CONDUCT_FLAG_THRESHOLD) return;
+    const balance = await getStudentTermBalance(db, studentId, undefined, academicTermId);
+    if (balance.demeritPoints < CONDUCT_FLAG_THRESHOLD) return;
 
-    const alreadyFlagged = await db.get(
-      `SELECT id FROM notifications
-       WHERE user_id = 'all' AND type = 'system' AND title LIKE ? AND created_at >= date('now')`,
-      `Conduct follow-up: ${studentName}%`
-    );
+    const today = new Date().toISOString().split('T')[0];
+    const dedupeKey = `conduct_followup:${studentId}:${academicTermId ?? 'none'}:${today}`;
+    const alreadyFlagged = await db.get(`SELECT 1 FROM notifications WHERE dedupe_key = ?`, dedupeKey);
     if (alreadyFlagged) return;
 
     await db.run(
-      `INSERT INTO notifications (user_id, type, title, message) VALUES ('all', 'system', ?, ?)`,
+      `INSERT INTO notifications (user_id, type, title, message, dedupe_key) VALUES ('all', 'system', ?, ?, ?)`,
       `Conduct follow-up: ${studentName}`,
-      `${studentName} has accumulated ${demeritPoints} demerit points and may need a disciplinary follow-up.`
+      `${studentName} has accumulated ${balance.demeritPoints} demerit points this term and may need a disciplinary follow-up.`,
+      dedupeKey
     );
   } catch (err) {
     console.error('Error in triggerConductCheck:', err);
   }
 }
+
+/**
+ * Remediation D9 — the client hard-coded copies of these vocabularies with a
+ * "mirrors the server" comment. Serve them so the log form can't drift.
+ */
+router.get('/config', (_req: any, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      demeritCategories: DEMERIT_CATEGORIES,
+      meritCategories: MERIT_CATEGORIES,
+      demeritTiers: DEMERIT_POINTS,
+      meritTiers: MERIT_POINTS,
+      sanctions: SANCTIONS,
+      recordStatuses: RECORD_STATUSES,
+    },
+  });
+});
 
 // Log a discipline record — demerit or merit (Teacher/Admin only)
 router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Response) => {
@@ -84,6 +134,7 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
     location = null,
     sanction = 'none',
     ruleId = null,
+    force = false,
   } = req.body;
 
   // --- Validation (server is authoritative; client-supplied points are ignored) ---
@@ -142,7 +193,25 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
 
   const db = getDb();
   const actor = authReq.user!;
-  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
+  // Remediation X3: file under the term the incident date falls in.
+  const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
+    db, incidentDate, resolveAcademicPeriod(authReq)
+  );
+
+  // Remediation D1: block an accidental re-submit of the same incident.
+  if (!force) {
+    const dup = await findDuplicateIncident(db, {
+      studentId, incidentDate, type, ruleId: resolvedRuleId, title, loggedBy: actor.id,
+    });
+    if (dup) {
+      return res.status(409).json({
+        success: false,
+        code: 'DUPLICATE_INCIDENT',
+        message: 'You already logged this incident for this student on this date. Re-send with "force" to log it anyway.',
+        data: { existingId: dup.id },
+      });
+    }
+  }
 
   try {
     const result = await db.run(
@@ -205,7 +274,7 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
       type === 'merit' ? `Merit awarded: ${title}` : `Conduct notice: ${title}`,
       `${type === 'merit' ? 'You received a merit' : 'A demerit was recorded'} (${resolvedCategory}, ${points} pts) on ${incidentDate}.`
     );
-    if (type === 'demerit') await triggerConductCheck(studentId, studentName);
+    if (type === 'demerit') await triggerConductCheck(studentId, studentName, academicTermId);
 
     return res.json({ success: true, data: inserted, message: 'Discipline record saved successfully.' });
   } catch (error: any) {
@@ -234,6 +303,21 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
   }
   if (type !== 'demerit' && type !== 'merit') {
     return res.status(400).json({ success: false, message: "Invalid type. Expected 'demerit' or 'merit'." });
+  }
+  // Remediation D1/D6: de-dupe the roster before doing any work — the same
+  // student listed twice would otherwise be logged twice in one call.
+  const seen = new Set<string>();
+  const uniqueStudents: Array<{ studentId: string; studentName: string }> = [];
+  for (const s of students) {
+    if (!s?.studentId || !s?.studentName) {
+      return res.status(400).json({ success: false, message: 'Each student needs studentId and studentName.' });
+    }
+    if (seen.has(s.studentId)) continue;
+    seen.add(s.studentId);
+    uniqueStudents.push({ studentId: String(s.studentId), studentName: String(s.studentName) });
+  }
+  if (uniqueStudents.length > 100) {
+    return res.status(400).json({ success: false, message: 'Too many students in one batch (max 100).' });
   }
 
   let resolvedRuleId: number | null = null;
@@ -271,13 +355,40 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
 
   const db = getDb();
   const actor = authReq.user!;
-  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
+  const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
+    db, incidentDate, resolveAcademicPeriod(authReq)
+  );
+
+  // Skip students who already have this exact incident logged by this actor
+  // (unless forced) rather than failing the whole batch.
+  const force = req.body.force === true;
+  const targets: Array<{ studentId: string; studentName: string }> = [];
+  let skipped = 0;
+  for (const s of uniqueStudents) {
+    if (!force) {
+      const dup = await findDuplicateIncident(db, {
+        studentId: s.studentId, incidentDate, type, ruleId: resolvedRuleId, title, loggedBy: actor.id,
+      });
+      if (dup) { skipped += 1; continue; }
+    }
+    targets.push(s);
+  }
+
+  if (targets.length === 0) {
+    return res.status(409).json({
+      success: false,
+      code: 'DUPLICATE_INCIDENT',
+      message: 'Every selected student already has this incident logged. Re-send with "force" to log it anyway.',
+      data: { skipped },
+    });
+  }
+
+  const notify: Array<{ studentId: string; studentName: string }> = [];
 
   try {
     await db.run('BEGIN TRANSACTION');
     const insertedIds: number[] = [];
-    for (const s of students) {
-      if (!s.studentId || !s.studentName) throw new Error('Each student needs studentId and studentName.');
+    for (const s of targets) {
       const result = await db.run(
         `INSERT INTO discipline_records
            (student_id, student_name, class_name, type, category, severity, points, title, description, incident_date, location, sanction, logged_by, logged_by_name, academic_year_id, academic_term_id, rule_id)
@@ -287,6 +398,18 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
         academicYearId ?? null, academicTermId ?? null, resolvedRuleId
       );
       insertedIds.push(result.lastID!);
+      notify.push(s);
+    }
+
+    await recordAudit(db, actor, 'discipline.create', 'discipline_record', null, {
+      bulk: true, count: insertedIds.length, skipped, type, category: resolvedCategory, severity: resolvedSeverity, points,
+    }, { required: true });
+
+    await db.run('COMMIT');
+
+    // Remediation D6: notification fan-out runs after the commit, not inside
+    // the critical transaction.
+    for (const s of notify) {
       await db.run(
         `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'system', ?, ?)`,
         s.studentId,
@@ -294,18 +417,19 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
         `${type === 'merit' ? 'You received a merit' : 'A demerit was recorded'} (${resolvedCategory}, ${points} pts) on ${incidentDate}.`
       );
     }
-    await db.run('COMMIT');
-
-    await recordAudit(db, actor, 'discipline.create', 'discipline_record', null, {
-      bulk: true, count: students.length, type, category: resolvedCategory, severity: resolvedSeverity, points,
-    });
 
     // Run conduct checks outside the transaction.
     if (type === 'demerit') {
-      for (const s of students) await triggerConductCheck(s.studentId, s.studentName);
+      for (const s of notify) await triggerConductCheck(s.studentId, s.studentName, academicTermId);
     }
 
-    return res.json({ success: true, data: { count: insertedIds.length }, message: `Logged ${insertedIds.length} records.` });
+    return res.json({
+      success: true,
+      data: { count: insertedIds.length, skipped },
+      message: skipped > 0
+        ? `Logged ${insertedIds.length} record${insertedIds.length === 1 ? '' : 's'}; skipped ${skipped} already logged.`
+        : `Logged ${insertedIds.length} record${insertedIds.length === 1 ? '' : 's'}.`,
+    });
   } catch (error: any) {
     await db.run('ROLLBACK');
     console.error('Error saving bulk discipline records:', error);
@@ -319,7 +443,7 @@ router.get('/', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
 
-  let where = ' WHERE 1=1';
+  let where = ' WHERE deleted_at IS NULL';
   const params: any[] = [];
 
   if (academicTermId != null) {
@@ -359,7 +483,8 @@ router.get('/', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res
 router.get('/overview', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res: Response) => {
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
-  const periodFilter = academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
+  const periodFilter = ' AND deleted_at IS NULL'
+    + (academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '');
   const periodParams = academicTermId != null ? [academicTermId] : [];
 
   try {
@@ -460,11 +585,11 @@ router.get('/me', authorizePermission('DISCIPLINE_VIEW_OWN'), async (req: any, r
   try {
     const records = academicTermId != null
       ? await db.all(
-          'SELECT * FROM discipline_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY incident_date DESC, created_at DESC',
+          "SELECT * FROM discipline_records WHERE student_id = ? AND deleted_at IS NULL AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY incident_date DESC, created_at DESC",
           studentId, academicTermId
         )
       : await db.all(
-          'SELECT * FROM discipline_records WHERE student_id = ? ORDER BY incident_date DESC, created_at DESC',
+          'SELECT * FROM discipline_records WHERE student_id = ? AND deleted_at IS NULL ORDER BY incident_date DESC, created_at DESC',
           studentId
         );
     return res.json({
@@ -492,11 +617,11 @@ router.get('/student/:id', selfOrPermission('id', 'DISCIPLINE_VIEW_ALL'), async 
   try {
     const records = academicTermId != null
       ? await db.all(
-          'SELECT * FROM discipline_records WHERE student_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY incident_date DESC, created_at DESC',
+          "SELECT * FROM discipline_records WHERE student_id = ? AND deleted_at IS NULL AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY incident_date DESC, created_at DESC",
           studentId, academicTermId
         )
       : await db.all(
-          'SELECT * FROM discipline_records WHERE student_id = ? ORDER BY incident_date DESC, created_at DESC',
+          'SELECT * FROM discipline_records WHERE student_id = ? AND deleted_at IS NULL ORDER BY incident_date DESC, created_at DESC',
           studentId
         );
     return res.json({
@@ -511,6 +636,30 @@ router.get('/student/:id', selfOrPermission('id', 'DISCIPLINE_VIEW_ALL'), async 
   } catch (error) {
     console.error('Error fetching student discipline records:', error);
     return res.status(500).json({ success: false, message: 'Error fetching student conduct records.' });
+  }
+});
+
+// Full detail for one record — every field plus its change history (D3).
+router.get('/:id(\\d+)', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res: Response) => {
+  const db = getDb();
+  try {
+    const record = await db.get('SELECT * FROM discipline_records WHERE id = ? AND deleted_at IS NULL', req.params.id);
+    if (!record) return res.status(404).json({ success: false, message: 'Discipline record not found.' });
+
+    const history = await db.all(
+      `SELECT action, actor_name, details, created_at
+         FROM audit_log
+        WHERE entity_type = 'discipline_record' AND entity_id = ?
+        ORDER BY created_at ASC`,
+      String(req.params.id)
+    );
+    let rule = null;
+    if (record.rule_id) rule = await getRule(db, record.rule_id);
+
+    return res.json({ success: true, data: { record, rule, history } });
+  } catch (error: any) {
+    console.error('Error fetching discipline record detail:', error);
+    return res.status(500).json({ success: false, message: 'Error fetching the discipline record.' });
   }
 });
 
@@ -535,7 +684,7 @@ router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'), async (req: 
   const actor = authReq.user!;
 
   try {
-    const existing = await db.get('SELECT * FROM discipline_records WHERE id = ?', id);
+    const existing = await db.get('SELECT * FROM discipline_records WHERE id = ? AND deleted_at IS NULL', id);
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Discipline record not found.' });
     }
@@ -546,12 +695,16 @@ router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'), async (req: 
              resolution_note = COALESCE(?, resolution_note),
              sanction = COALESCE(?, sanction),
              resolved_by = ?,
+             resolved_by_id = ?,
+             resolved_by_name = ?,
              updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       status,
       resolutionNote ?? null,
       sanction ?? null,
-      actor.name || actor.id,
+      actor.name || actor.id,   // legacy column kept in sync
+      actor.id,
+      actor.name ?? null,
       id
     );
 
@@ -561,13 +714,181 @@ router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'), async (req: 
       from: existing.status,
       to: status,
       sanction: sanction ?? existing.sanction,
-    });
+    }, { required: true });
+
+    // Remediation D4: dismissing (or un-dismissing) a demerit changes the
+    // term balance, so re-run the escalation check against the new figure.
+    if (existing.type === 'demerit' && existing.status !== status) {
+      await triggerConductCheck(existing.student_id, existing.student_name, existing.academic_term_id ?? undefined);
+    }
 
     return res.json({ success: true, data: updated, message: 'Record updated successfully.' });
   } catch (error: any) {
     console.error('Error updating discipline record:', error);
     return res.status(500).json({ success: false, message: error.message || 'Error updating the discipline record.' });
   }
+});
+
+/**
+ * Remediation D2 — correct the factual content of a record (wrong student,
+ * wrong date, typo, wrong rule). Points are re-derived when the rule or
+ * severity changes; the full before/after is audited. Allowed for a
+ * DISCIPLINE_EDIT holder, or the original logger within 24h of creating it.
+ */
+router.put('/:id(\\d+)', async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const actor = authReq.user!;
+  if (!actor) return res.status(401).json({ success: false, message: 'Unauthorized.' });
+  const db = getDb();
+
+  const existing = await db.get('SELECT * FROM discipline_records WHERE id = ? AND deleted_at IS NULL', req.params.id);
+  if (!existing) return res.status(404).json({ success: false, message: 'Discipline record not found.' });
+
+  const canEdit = actor.permissions.has('DISCIPLINE_EDIT');
+  const createdAtMs = new Date(String(existing.created_at).replace(' ', 'T') + 'Z').getTime();
+  const isRecentOwnEntry =
+    existing.logged_by === actor.id &&
+    Number.isFinite(createdAtMs) &&
+    Date.now() - createdAtMs < 24 * 60 * 60 * 1000;
+  if (!canEdit && !isRecentOwnEntry) {
+    return res.status(403).json({
+      success: false,
+      message: 'You can only edit a record you logged, and only within 24 hours. Ask a reviewer otherwise.',
+    });
+  }
+
+  const b = req.body ?? {};
+  const next = {
+    student_id: b.studentId ?? existing.student_id,
+    student_name: b.studentName ?? existing.student_name,
+    class_name: b.className !== undefined ? b.className : existing.class_name,
+    type: b.type ?? existing.type,
+    category: b.category ?? existing.category,
+    severity: b.severity !== undefined ? b.severity : existing.severity,
+    title: b.title ?? existing.title,
+    description: b.description !== undefined ? b.description : existing.description,
+    incident_date: b.incidentDate ?? existing.incident_date,
+    location: b.location !== undefined ? b.location : existing.location,
+    sanction: b.sanction ?? existing.sanction,
+    rule_id: b.ruleId !== undefined ? (b.ruleId == null ? null : Number(b.ruleId)) : existing.rule_id,
+    points: existing.points,
+  };
+
+  if (next.type !== 'demerit' && next.type !== 'merit') {
+    return res.status(400).json({ success: false, message: "Invalid type. Expected 'demerit' or 'merit'." });
+  }
+  const fieldError = validateIncidentFields({
+    title: next.title, description: next.description ?? '', incidentDate: next.incident_date,
+    location: next.location, className: next.class_name,
+  });
+  if (fieldError) return res.status(400).json({ success: false, message: fieldError });
+  if (!SANCTIONS.includes(next.type === 'demerit' ? next.sanction : 'none')) {
+    return res.status(400).json({ success: false, message: `Invalid sanction '${next.sanction}'.` });
+  }
+  if (next.type === 'merit') next.sanction = 'none';
+
+  // Re-derive points if the rule or severity/type changed.
+  const ruleChanged = next.rule_id !== existing.rule_id;
+  const severityChanged = next.severity !== existing.severity;
+  const typeChanged = next.type !== existing.type;
+  if (ruleChanged || severityChanged || typeChanged) {
+    if (next.rule_id != null) {
+      const rule = await getRule(db, next.rule_id);
+      if (!rule || rule.type !== next.type) {
+        return res.status(400).json({ success: false, message: 'Invalid ruleId for this discipline type.' });
+      }
+      next.category = rule.category;
+      next.severity = rule.severity ?? null;
+      next.points = rule.default_points;
+    } else {
+      if (!isValidCategory(next.type as DisciplineType, next.category)) {
+        return res.status(400).json({ success: false, message: `Invalid category '${next.category}' for ${next.type}.` });
+      }
+      try {
+        next.points = derivePoints(next.type as DisciplineType, next.severity);
+      } catch (err: any) {
+        return res.status(400).json({ success: false, message: err.message });
+      }
+    }
+  }
+
+  const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
+    db, next.incident_date, resolveAcademicPeriod(authReq)
+  );
+
+  try {
+    await db.run('BEGIN TRANSACTION');
+    await db.run(
+      `UPDATE discipline_records SET
+         student_id = ?, student_name = ?, class_name = ?, type = ?, category = ?, severity = ?,
+         points = ?, title = ?, description = ?, incident_date = ?, location = ?, sanction = ?,
+         rule_id = ?, academic_year_id = ?, academic_term_id = ?,
+         edited_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      next.student_id, next.student_name, next.class_name, next.type, next.category, next.severity,
+      next.points, next.title, next.description, next.incident_date, next.location, next.sanction,
+      next.rule_id, academicYearId ?? null, academicTermId ?? null, req.params.id
+    );
+    await recordAudit(db, actor, 'discipline.edit', 'discipline_record', req.params.id, {}, {
+      required: true,
+      previousValue: {
+        studentId: existing.student_id, type: existing.type, category: existing.category,
+        severity: existing.severity, points: existing.points, title: existing.title,
+        incidentDate: existing.incident_date, ruleId: existing.rule_id, sanction: existing.sanction,
+      },
+      newValue: {
+        studentId: next.student_id, type: next.type, category: next.category,
+        severity: next.severity, points: next.points, title: next.title,
+        incidentDate: next.incident_date, ruleId: next.rule_id, sanction: next.sanction,
+      },
+    });
+    await db.run('COMMIT');
+  } catch (err: any) {
+    await db.run('ROLLBACK');
+    console.error('Error editing discipline record:', err);
+    return res.status(500).json({ success: false, message: 'Could not save the correction.' });
+  }
+
+  // Points may have moved in either direction; re-check the balance.
+  const updated = await db.get('SELECT * FROM discipline_records WHERE id = ?', req.params.id);
+  if (updated.type === 'demerit') {
+    await triggerConductCheck(updated.student_id, updated.student_name, updated.academic_term_id ?? undefined);
+  }
+  return res.json({ success: true, data: updated, message: 'Record corrected.' });
+});
+
+/**
+ * Remediation D2 — permanently remove a record logged in error (soft delete,
+ * so it drops out of every aggregate but stays auditable). Admin-gated.
+ */
+router.delete('/:id(\\d+)', authorizePermission('DISCIPLINE_DELETE'), async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const actor = authReq.user!;
+  const db = getDb();
+
+  const existing = await db.get('SELECT * FROM discipline_records WHERE id = ? AND deleted_at IS NULL', req.params.id);
+  if (!existing) return res.status(404).json({ success: false, message: 'Discipline record not found.' });
+
+  try {
+    await db.run('BEGIN TRANSACTION');
+    await db.run('UPDATE discipline_records SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?', req.params.id);
+    await recordAudit(db, actor, 'discipline.delete', 'discipline_record', req.params.id, {
+      reason: (req.body?.reason ?? '').toString().slice(0, 500) || undefined,
+    }, {
+      required: true,
+      previousValue: { studentId: existing.student_id, type: existing.type, points: existing.points, title: existing.title },
+    });
+    await db.run('COMMIT');
+  } catch (err: any) {
+    await db.run('ROLLBACK');
+    console.error('Error deleting discipline record:', err);
+    return res.status(500).json({ success: false, message: 'Could not remove the record.' });
+  }
+
+  if (existing.type === 'demerit') {
+    await triggerConductCheck(existing.student_id, existing.student_name, existing.academic_term_id ?? undefined);
+  }
+  return res.json({ success: true, message: 'Record removed.' });
 });
 
 export default router;

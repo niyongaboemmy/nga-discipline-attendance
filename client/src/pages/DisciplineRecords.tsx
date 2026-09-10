@@ -8,7 +8,8 @@ import { useToast } from '../context/ToastContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { apiGet, apiPut, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
-import { Gavel, Award, Inbox, ChevronLeft, ChevronRight, MoreVertical, FileBarChart, Download } from 'lucide-react';
+import { DisciplineDetailModal } from '../components/discipline/DisciplineDetailModal';
+import { Gavel, Award, Inbox, ChevronLeft, ChevronRight, MoreVertical, FileBarChart, Download, Eye } from 'lucide-react';
 
 interface DisciplineRecord {
   id: number;
@@ -57,6 +58,7 @@ export const DisciplineRecords: React.FC = () => {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [dismissTarget, setDismissTarget] = useState<DisciplineRecord | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
   const [filters, setFilters] = useState({ type: '', status: '', search: '' });
@@ -227,7 +229,13 @@ export const DisciplineRecords: React.FC = () => {
                 {records.map((r) => (
                   <tr key={r.id}>
                     <td>
-                      <div className="font-medium">{r.student_name}</div>
+                      <button
+                        className="font-medium"
+                        style={{ textAlign: 'left', background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'var(--text-link, var(--primary))' }}
+                        onClick={() => setDetailId(r.id)}
+                      >
+                        {r.student_name}
+                      </button>
                       <div className="text-xs text-secondary">{r.title}</div>
                     </td>
                     <td>
@@ -253,6 +261,9 @@ export const DisciplineRecords: React.FC = () => {
                       </button>
                       {menuOpenId === r.id && (
                         <div className="menu menu--right animate-fade-in" style={{ position: 'absolute', right: 8, top: '100%', zIndex: 20 }}>
+                          <button className="menu-item" onClick={() => { setDetailId(r.id); setMenuOpenId(null); }}>
+                            <Eye size={16} /><span>Open details</span>
+                          </button>
                           <Link to={`/reports/student/${r.student_id}`} className="menu-item" onClick={() => setMenuOpenId(null)}>
                             <FileBarChart size={16} /><span>View full report</span>
                           </Link>
@@ -295,6 +306,14 @@ export const DisciplineRecords: React.FC = () => {
           </div>
         )}
       </div>
+
+      {detailId != null && (
+        <DisciplineDetailModal
+          id={detailId}
+          onClose={() => setDetailId(null)}
+          onChanged={() => { loadRecords(); loadOverview(); }}
+        />
+      )}
 
       <ConfirmDialog
         open={!!dismissTarget}

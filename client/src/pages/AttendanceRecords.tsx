@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
-import { Search, Download, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Download, Inbox, ChevronLeft, ChevronRight, PenLine } from 'lucide-react';
 
 interface AttendanceRecord {
   id: number;
@@ -15,6 +15,9 @@ interface AttendanceRecord {
   class_name: string;
   session_date: string;
   period: string;
+  session_type: 'homeroom' | 'subject';
+  subject_id: number | null;
+  subject_name: string | null;
   status: 'present' | 'absent' | 'late' | 'excused';
   notes: string;
   marked_by: string;
@@ -23,7 +26,17 @@ interface ClassData { id: string; name: string; }
 
 const STATUS_FILTERS = ['all', 'present', 'absent', 'late', 'excused'] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+const SESSION_FILTERS = ['all', 'homeroom', 'subject'] as const;
+type SessionFilter = (typeof SESSION_FILTERS)[number];
 const PAGE_SIZE = 50;
+
+const registerLink = (r: AttendanceRecord) => {
+  const p = new URLSearchParams({
+    classId: r.class_id, date: r.session_date, period: r.period, sessionType: r.session_type,
+  });
+  if (r.subject_id != null) p.set('subjectId', String(r.subject_id));
+  return `/attendance/mark?${p.toString()}`;
+};
 
 export const AttendanceRecords: React.FC = () => {
   // Supports deep-linking a student's history, e.g. from StudentReport's
@@ -37,6 +50,7 @@ export const AttendanceRecords: React.FC = () => {
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState(() => searchParams.get('search') || '');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sessionFilter, setSessionFilter] = useState<SessionFilter>('all');
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +65,7 @@ export const AttendanceRecords: React.FC = () => {
   }, []);
 
   // Reset to the first page whenever the filters change.
-  useEffect(() => { setOffset(0); }, [selectedClass, dateFrom, dateTo, search, statusFilter]);
+  useEffect(() => { setOffset(0); }, [selectedClass, dateFrom, dateTo, search, statusFilter, sessionFilter]);
 
   const fetchRecords = async () => {
     setLoading(true);
@@ -63,6 +77,7 @@ export const AttendanceRecords: React.FC = () => {
       if (dateTo) qp.append('dateTo', dateTo);
       if (search) qp.append('search', search);
       if (statusFilter !== 'all') qp.append('status', statusFilter);
+      if (sessionFilter !== 'all') qp.append('sessionType', sessionFilter);
       const res = await apiGet<AttendanceRecord[]>(`/api/attendance/records?${qp.toString()}`);
       setRecords(res.data || []);
       setTotal(res.total ?? res.data?.length ?? 0);
@@ -77,7 +92,7 @@ export const AttendanceRecords: React.FC = () => {
     const t = setTimeout(fetchRecords, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClass, dateFrom, dateTo, search, statusFilter, offset]);
+  }, [selectedClass, dateFrom, dateTo, search, statusFilter, sessionFilter, offset]);
 
   const visible = records;
 
@@ -94,9 +109,9 @@ export const AttendanceRecords: React.FC = () => {
   // Matches the CSV shape DisciplineRecords exports, so "Export" means the
   // same thing (a CSV you can open in a spreadsheet) across both list pages.
   const exportCSV = () => {
-    let csv = 'Student Name,Student ID,Class,Date,Period,Status,Notes\n';
+    let csv = 'Student Name,Student ID,Class,Date,Period,Session,Subject,Status,Notes\n';
     visible.forEach((r) => {
-      csv += `"${r.student_name}",${r.student_id},"${r.class_name}",${r.session_date},${r.period},${r.status},"${(r.notes || '').replace(/"/g, '""')}"\n`;
+      csv += `"${r.student_name}",${r.student_id},"${r.class_name}",${r.session_date},${r.period},${r.session_type},"${r.subject_name || ''}",${r.status},"${(r.notes || '').replace(/"/g, '""')}"\n`;
     });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -149,6 +164,12 @@ export const AttendanceRecords: React.FC = () => {
               {s}
             </button>
           ))}
+          <span style={{ width: 1, background: 'var(--border)', margin: '0 4px' }} />
+          {SESSION_FILTERS.map((s) => (
+            <button key={s} className={`chip capitalize${sessionFilter === s ? ' is-active' : ''}`} onClick={() => setSessionFilter(s)}>
+              {s === 'all' ? 'All sessions' : s}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -165,7 +186,7 @@ export const AttendanceRecords: React.FC = () => {
             <div className="table-wrap">
               <table className="table table--zebra">
                 <thead>
-                  <tr><th>Student</th><th>Class</th><th>Date</th><th>Period</th><th>Status</th><th>Notes</th></tr>
+                  <tr><th>Student</th><th>Class</th><th>Date</th><th>Period</th><th>Session</th><th>Status</th><th>Notes</th><th></th></tr>
                 </thead>
                 <tbody>
                   {visible.map((r) => (
@@ -177,8 +198,18 @@ export const AttendanceRecords: React.FC = () => {
                       <td>{r.class_name}</td>
                       <td>{new Date(r.session_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
                       <td className="text-secondary">{r.period}</td>
+                      <td>
+                        {r.session_type === 'subject'
+                          ? <span className="badge badge-info">{r.subject_name || `Subject #${r.subject_id}`}</span>
+                          : <span className="text-xs text-secondary">Homeroom</span>}
+                      </td>
                       <td><span className={`badge badge-${r.status}`}>{r.status}</span></td>
                       <td className={r.notes ? '' : 'text-tertiary'}>{r.notes || '—'}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <Link className="btn btn-outline btn-sm" to={registerLink(r)} title="Open this register to correct it">
+                          <PenLine size={13} /> Open
+                        </Link>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

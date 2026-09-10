@@ -1,16 +1,24 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { usePermissions } from '../hooks/usePermissions';
 import {
   Save, AlertCircle, CheckCircle2, XCircle, Clock, ShieldCheck, RotateCcw, Undo2, Info,
   LayoutDashboard, PenLine, Users, CalendarDays, Sun, BookOpen, Search, X, Command, Sparkles,
+  Pencil, History,
 } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { AttendanceCoverage } from './AttendanceCoverage';
 import './MarkAttendance.css';
+
+const fmtWhen = (iso: string | null) => {
+  if (!iso) return '';
+  const d = new Date(iso.replace(' ', 'T') + (iso.includes('Z') ? '' : 'Z'));
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+};
 
 interface ClassData { id: string; name: string; department: string; }
 interface Student { id: string; name: string; email: string; }
@@ -30,32 +38,56 @@ const initials = (name: string) => name.split(' ').map((n) => n[0]).join('').toU
 
 export const MarkAttendance: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { can } = usePermissions();
+  // Deep link from Attendance History / Coverage: /attendance/mark?classId=…&date=…&period=…&sessionType=…&subjectId=…
+  const qp = React.useRef({
+    classId: searchParams.get('classId') || '',
+    date: searchParams.get('date') || '',
+    period: searchParams.get('period') || '',
+    sessionType: (searchParams.get('sessionType') as SessionType) || '',
+    subjectId: searchParams.get('subjectId') || '',
+  }).current;
   const [classes, setClasses] = useState<ClassData[]>([]);
-  const [selectedClass, setSelectedClass] = useState('');
+  const [selectedClass, setSelectedClass] = useState(qp.classId);
   const [students, setStudents] = useState<Student[]>([]);
   const [attendance, setAttendance] = useState<Record<string, AttendanceState>>({});
-  const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
-  const [period, setPeriod] = useState('Morning');
+  const [sessionDate, setSessionDate] = useState(qp.date || new Date().toISOString().split('T')[0]);
+  const [period, setPeriod] = useState(qp.period || 'Morning');
   // A.1.1 vs A.1.2: homeroom is the class-group's overall daily attendance;
   // subject requires picking which course session this is.
-  const [sessionType, setSessionType] = useState<SessionType>('homeroom');
+  const [sessionType, setSessionType] = useState<SessionType>(qp.sessionType === 'subject' ? 'subject' : 'homeroom');
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
-  const [subjectId, setSubjectId] = useState<number | ''>('');
+  const [subjectId, setSubjectId] = useState<number | ''>(qp.subjectId ? Number(qp.subjectId) : '');
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  // Whether this exact session already has marks on the server, so an
-  // overwrite is announced rather than silent (POST /mark upserts).
-  const [existing, setExisting] = useState<{ count: number; markedByName: string | null; lastMarkedAt: string | null } | null>(null);
+  // The register already on the server for this exact session, if any — its
+  // per-student statuses are loaded so the teacher edits real data instead of
+  // blindly re-marking everyone as Present (remediation A2/A3/A11).
+  const [existing, setExisting] = useState<
+    { count: number; markedByName: string | null; markedByMe: boolean; lastMarkedAt: string | null } | null
+  >(null);
+  const [serverStatuses, setServerStatuses] = useState<Record<string, { status: Status; notes: string }>>({});
+  const [loadingSession, setLoadingSession] = useState(false);
+  const [confirmOverwrite, setConfirmOverwrite] = useState<null | (() => void)>(null);
   const [dirty, setDirty] = useState(false);
   // Snapshot taken at save time so the confirmation can offer an undo.
   const [undoSnapshot, setUndoSnapshot] = useState<Record<string, AttendanceState> | null>(null);
   // The monitoring view is the default landing: you check what's missing
   // before deciding what to record.
-  const [tab, setTab] = useState<'missing' | 'record'>('missing');
+  const [tab, setTab] = useState<'missing' | 'record'>(qp.classId ? 'record' : 'missing');
+
+  // Consume the deep-link params once, then drop them from the URL so a manual
+  // class change later isn't "stuck" on the linked session.
+  useEffect(() => {
+    if (qp.classId || qp.date || qp.period) {
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Badge on the Missing tab, so the outstanding count stays visible while
   // you're recording rather than only on the dashboard you left.
   const [missingCount, setMissingCount] = useState<number | null>(null);
@@ -79,7 +111,7 @@ export const MarkAttendance: React.FC = () => {
       try {
         const res = await apiGet<ClassData[]>('/api/mis/classes');
         setClasses(res.data || []);
-        if (res.data?.length) setSelectedClass(res.data[0].id);
+        if (res.data?.length) setSelectedClass((cur) => cur || res.data![0].id);
       } catch (err) { console.error('Error fetching classes:', err); }
       finally { setLoadingClasses(false); }
     })();
@@ -116,12 +148,22 @@ export const MarkAttendance: React.FC = () => {
     if (subjectId !== '' && !subjects.some((s) => s.id === subjectId)) setSubjectId('');
   }, [subjects, subjectId]);
 
-  const resetRoster = (list: Student[]) => {
-    const initial: Record<string, AttendanceState> = {};
-    list.forEach((s) => { initial[s.id] = { studentId: s.id, studentName: s.name, status: 'present', notes: '' }; });
-    setAttendance(initial);
-  };
-
+  // Build the working roster: each student starts from what's already on the
+  // server for this session, falling back to Present for anyone not in it.
+  const buildRoster = useCallback(
+    (list: Student[], fromServer: Record<string, { status: Status; notes: string }>) => {
+      const next: Record<string, AttendanceState> = {};
+      list.forEach((s) => {
+        const seed = fromServer[s.id];
+        next[s.id] = {
+          studentId: s.id, studentName: s.name,
+          status: seed?.status ?? 'present', notes: seed?.notes ?? '',
+        };
+      });
+      setAttendance(next);
+    },
+    []
+  );
   useEffect(() => {
     if (!selectedClass) return;
     (async () => {
@@ -130,11 +172,21 @@ export const MarkAttendance: React.FC = () => {
       try {
         const res = await apiGet<Student[]>(`/api/mis/students?class_id=${selectedClass}`);
         setStudents(res.data || []);
-        resetRoster(res.data || []);
       } catch (err) { console.error('Error fetching students:', err); }
       finally { setLoadingStudents(false); }
     })();
   }, [selectedClass]);
+
+  // Rebuild the roster whenever the class roster or the loaded server register
+  // changes — this is what makes "edit an existing register" work instead of
+  // resetting everyone to Present.
+  useEffect(() => {
+    if (students.length === 0) return;
+    if (loadingSession) return;
+    buildRoster(students, serverStatuses);
+    setDirty(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, serverStatuses, loadingSession]);
 
   const setStatus = (id: string, status: Status) => {
     setAttendance((p) => ({ ...p, [id]: { ...p[id], status } }));
@@ -149,27 +201,48 @@ export const MarkAttendance: React.FC = () => {
     setDirty(true);
   };
 
-  // Does this session already have marks? POST /mark upserts, so without
-  // this the teacher silently replaces someone else's register.
+  // Load the register already on the server for this session — its actual
+  // per-student statuses, not just a count — so a re-mark is a real edit
+  // (remediation A2/A3). POST /mark upserts, so without this a teacher
+  // silently replaced someone else's register with "everyone present".
   useEffect(() => {
-    if (!selectedClass || !sessionDate) { setExisting(null); return; }
-    if (sessionType === 'subject' && !subjectId) { setExisting(null); return; }
+    if (!selectedClass || !sessionDate) { setExisting(null); setServerStatuses({}); return; }
+    if (sessionType === 'subject' && !subjectId) { setExisting(null); setServerStatuses({}); return; }
     let cancelled = false;
+    setLoadingSession(true);
     (async () => {
       try {
-        const qs = new URLSearchParams({
-          classId: selectedClass, date: sessionDate, period, sessionType,
-        });
+        const qs = new URLSearchParams({ classId: selectedClass, date: sessionDate, period, sessionType });
         if (sessionType === 'subject' && subjectId) qs.set('subjectId', String(subjectId));
-        const res = await apiGet<{ exists: boolean; count: number; markedByName: string | null; lastMarkedAt: string | null }>(
-          `/api/attendance/session-status?${qs.toString()}`
-        );
+        const res = await apiGet<{
+          exists: boolean; markedByName: string | null; markedByMe: boolean; lastMarkedAt: string | null;
+          records: { studentId: string; status: Status; notes: string }[];
+        }>(`/api/attendance/session?${qs.toString()}`);
         if (cancelled) return;
-        setExisting(res.data?.exists ? res.data : null);
-      } catch { if (!cancelled) setExisting(null); }
+        const d = res.data;
+        if (d?.exists) {
+          setExisting({ count: d.records.length, markedByName: d.markedByName, markedByMe: d.markedByMe, lastMarkedAt: d.lastMarkedAt });
+          setServerStatuses(Object.fromEntries(d.records.map((r) => [r.studentId, { status: r.status, notes: r.notes ?? '' }])));
+        } else {
+          setExisting(null);
+          setServerStatuses({});
+        }
+      } catch { if (!cancelled) { setExisting(null); setServerStatuses({}); } }
+      finally { if (!cancelled) setLoadingSession(false); }
     })();
     return () => { cancelled = true; };
   }, [selectedClass, sessionDate, period, sessionType, subjectId]);
+
+  const isEditing = !!existing;
+  const changedIds = React.useMemo(() => {
+    const s = new Set<string>();
+    for (const [id, rec] of Object.entries(attendance)) {
+      const srv = serverStatuses[id];
+      if (!srv) { if (rec.status !== 'present' || rec.notes) s.add(id); continue; }
+      if (srv.status !== rec.status || (srv.notes ?? '') !== (rec.notes ?? '')) s.add(id);
+    }
+    return s;
+  }, [attendance, serverStatuses]);
 
   // A half-marked register is easy to lose to a stray navigation.
   useEffect(() => {
@@ -199,32 +272,34 @@ export const MarkAttendance: React.FC = () => {
    *  or stay on the page with the roster reset for another period — a
    *  teacher marking several periods back-to-back no longer has to
    *  re-select the class from scratch each time. */
-  const handleSave = async (andContinue: boolean) => {
-    if (!selectedClass || !students.length) return;
-    if (sessionType === 'subject' && !subjectId) {
-      setMessage({ type: 'error', text: 'Select a subject for course attendance.' });
-      return;
-    }
+  const doSave = async (andContinue: boolean) => {
     setSaving(true); setMessage(null);
     const activeClass = classes.find((c) => c.id === selectedClass);
     const snapshot = attendance;
     try {
-      await apiPost('/api/attendance/mark', {
+      const res = await apiPost<{ inserted: number; updated: number }>('/api/attendance/mark', {
         classId: selectedClass, className: activeClass?.name ?? 'Unknown Class',
         date: sessionDate, period, records: Object.values(attendance),
         sessionType, subjectId: sessionType === 'subject' ? subjectId : null,
       });
       setDirty(false);
-      setExisting({ count: students.length, markedByName: 'you', lastMarkedAt: new Date().toISOString() });
+      // Adopt what we just saved as the new server baseline, so a follow-up
+      // correction diffs against it rather than re-flagging every row.
+      setServerStatuses(Object.fromEntries(
+        Object.values(attendance).map((a) => [a.studentId, { status: a.status, notes: a.notes }])
+      ));
+      setExisting({ count: students.length, markedByName: 'you', markedByMe: true, lastMarkedAt: new Date().toISOString() });
+      const wasUpdate = (res.data?.updated ?? 0) > 0;
+      void snapshot;
       if (andContinue) {
-        // Keep the marks recoverable: "reset to all present" is destructive
-        // if the teacher only meant to save.
-        setUndoSnapshot(snapshot);
-        setMessage({ type: 'success', text: `Saved ${students.length} record${students.length === 1 ? '' : 's'}. Roster reset for the next period.` });
-        resetRoster(students);
+        setUndoSnapshot(null);
+        setMessage({
+          type: 'success',
+          text: `${wasUpdate ? 'Register updated' : `Saved ${students.length} record${students.length === 1 ? '' : 's'}`}. Pick another period or subject to keep going — the class stays selected.`,
+        });
       } else {
         setUndoSnapshot(null);
-        setMessage({ type: 'success', text: 'Attendance recorded successfully.' });
+        setMessage({ type: 'success', text: wasUpdate ? 'Register updated successfully.' : 'Attendance recorded successfully.' });
         setTimeout(() => navigate('/dashboard'), 1200);
       }
     } catch (err) {
@@ -233,6 +308,27 @@ export const MarkAttendance: React.FC = () => {
         text: err instanceof ApiError ? err.message : 'Could not reach the server — your marks are still here, try saving again.',
       });
     } finally { setSaving(false); }
+  };
+
+  const handleSave = (andContinue: boolean) => {
+    if (!selectedClass || !students.length) return;
+    if (sessionType === 'subject' && !subjectId) {
+      setMessage({ type: 'error', text: 'Select a subject for course attendance.' });
+      return;
+    }
+    // Overwriting a register another teacher took needs an explicit yes
+    // (remediation A12).
+    if (existing && !existing.markedByMe && existing.markedByName) {
+      setConfirmOverwrite(() => () => { setConfirmOverwrite(null); doSave(andContinue); });
+      return;
+    }
+    doSave(andContinue);
+  };
+
+  const reloadServerRegister = () => {
+    buildRoster(students, serverStatuses);
+    setDirty(false);
+    setMessage(null);
   };
 
   const restoreSnapshot = () => {
@@ -275,7 +371,9 @@ export const MarkAttendance: React.FC = () => {
           <p className="page-subtitle">
             {tab === 'missing'
               ? 'See which registers still need taking, then jump straight in.'
-              : 'Select a session, then record each student’s status.'}
+              : isEditing
+                ? 'This session already has a register — adjust any status and save to update it.'
+                : 'Select a session, then record each student’s status.'}
           </p>
         </div>
       </div>
@@ -414,16 +512,29 @@ export const MarkAttendance: React.FC = () => {
             ))}
           </div>
 
-          {existing && !message && (
-            <div className="alert alert-warning mt-4">
-              <Info size={16} />
+          {isEditing && !message && (
+            <div className={`alert mt-4 ${existing!.markedByMe ? 'alert-info' : 'alert-warning'}`}>
+              <Pencil size={16} />
               <span>
-                This session already has <strong>{existing.count}</strong> record
-                {existing.count === 1 ? '' : 's'}
-                {existing.markedByName ? <> marked by <strong>{existing.markedByName}</strong></> : null}.
-                Saving will overwrite them.
+                Editing an existing register —{' '}
+                <strong>{existing!.count}</strong> record{existing!.count === 1 ? '' : 's'}
+                {existing!.markedByName
+                  ? <>, last marked by <strong>{existing!.markedByMe ? 'you' : existing!.markedByName}</strong></>
+                  : null}
+                {existing!.lastMarkedAt ? <> {fmtWhen(existing!.lastMarkedAt)}</> : null}.
+                {changedIds.size > 0
+                  ? <> You've changed <strong>{changedIds.size}</strong>.</>
+                  : <> Change a status, then save to update it.</>}
+                {changedIds.size > 0 && (
+                  <button type="button" className="btn btn-ghost btn-sm ml-2" onClick={reloadServerRegister}>
+                    <History size={13} /> Discard changes
+                  </button>
+                )}
               </span>
             </div>
+          )}
+          {loadingSession && !isEditing && (
+            <p className="text-xs text-secondary mt-3"><Info size={12} /> Checking for an existing register…</p>
           )}
 
           {message && (
@@ -537,20 +648,28 @@ export const MarkAttendance: React.FC = () => {
               visibleStudents.map((s, index) => {
                 const rec = attendance[s.id];
                 const isException = rec && rec.status !== 'present';
+                const isChanged = changedIds.has(s.id);
                 return (
                   <div
                     key={s.id}
-                    className={`mark-row${isException ? ' is-exception' : ''}`}
+                    className={`mark-row${isException ? ' is-exception' : ''}${isChanged ? ' is-changed' : ''}`}
                     data-mark-row={index}
                     tabIndex={0}
                     onKeyDown={(e) => onRowKeyDown(e, index, visibleStudents)}
-                    aria-label={`${s.name}, marked ${rec?.status ?? 'present'}. Press 1 to 4 to change.`}
+                    aria-label={`${s.name}, marked ${rec?.status ?? 'present'}${isChanged ? ', changed' : ''}. Press 1 to 4 to change.`}
                   >
                     <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
                       <div className="avatar avatar-square">{initials(s.name)}</div>
                       <div style={{ minWidth: 0 }}>
-                        <div className="text-sm font-semibold truncate">{s.name}</div>
-                        <div className="text-xs text-secondary mono truncate">{s.id}</div>
+                        <div className="text-sm font-semibold truncate">
+                          {s.name}
+                          {isChanged && <span className="mark-changed-dot" title="Changed since last saved" aria-hidden="true" />}
+                        </div>
+                        <div className="text-xs text-secondary mono truncate">
+                          {isEditing && serverStatuses[s.id]
+                            ? <>was {serverStatuses[s.id].status}</>
+                            : s.id}
+                        </div>
                       </div>
                     </div>
                     <div className="segmented mark-segmented">
@@ -601,20 +720,20 @@ export const MarkAttendance: React.FC = () => {
                 <button
                   type="button"
                   className="btn btn-outline"
-                  disabled={saving || !can('ATTENDANCE_MARK')}
+                  disabled={saving || !can('ATTENDANCE_MARK') || (isEditing && changedIds.size === 0)}
                   title={can('ATTENDANCE_MARK') ? undefined : "You don't have permission to mark attendance."}
                   onClick={() => handleSave(true)}
                 >
-                  <RotateCcw size={16} /> Save & mark another
+                  <RotateCcw size={16} /> {isEditing ? 'Update & mark another' : 'Save & mark another'}
                 </button>
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={saving || !can('ATTENDANCE_MARK')}
+                  disabled={saving || !can('ATTENDANCE_MARK') || (isEditing && changedIds.size === 0)}
                   title={can('ATTENDANCE_MARK') ? undefined : "You don't have permission to mark attendance."}
                   onClick={() => handleSave(false)}
                 >
-                  <Save size={16} /> {saving ? 'Saving…' : 'Save & done'}
+                  <Save size={16} /> {saving ? 'Saving…' : isEditing ? `Update register${changedIds.size ? ` (${changedIds.size})` : ''}` : 'Save & done'}
                 </button>
               </div>
             </div>
@@ -622,6 +741,20 @@ export const MarkAttendance: React.FC = () => {
         </section>
       </div>
       )}
+
+      <ConfirmDialog
+        open={!!confirmOverwrite}
+        title="Overwrite another teacher's register?"
+        message={
+          existing?.markedByName
+            ? `This register was last marked by ${existing.markedByName}. Your changes will replace what they recorded (the previous values are kept in the register's history).`
+            : 'Your changes will replace the existing register.'
+        }
+        confirmLabel="Overwrite"
+        danger
+        onCancel={() => setConfirmOverwrite(null)}
+        onConfirm={() => confirmOverwrite?.()}
+      />
     </DashboardLayout>
   );
 };

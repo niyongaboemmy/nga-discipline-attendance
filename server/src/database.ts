@@ -241,6 +241,11 @@ export async function initDatabase(filenameOverride?: string) {
   await migrateRosterCache(db);
   await migrateDisciplineRules(db);
   await migrateAttendanceSessionType(db);
+  await migrateAttendanceUniqueness(db);
+  await migrateAttendanceHistory(db);
+  await migrateExcuseRequestLinkage(db);
+  await migrateDisciplineResolvedBy(db);
+  await migrateNotificationDedupe(db);
   await migrateStaffType(db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
@@ -513,6 +518,152 @@ async function migrateAttendanceSessionType(db: Database) {
     await db.run('ROLLBACK');
     throw err;
   }
+}
+
+/**
+ * Remediation A1 — homeroom attendance could be duplicated.
+ *
+ * The table-level `UNIQUE(student_id, class_id, session_date, session_type,
+ * subject_id, period)` from `migrateAttendanceSessionType` never fires for a
+ * homeroom row because `subject_id` is NULL and SQLite treats NULL as distinct
+ * from NULL in a UNIQUE index — so `POST /mark`'s `ON CONFLICT ... DO UPDATE`
+ * upsert silently became a plain INSERT and every re-mark of a homeroom
+ * register stacked a fresh set of rows.
+ *
+ * Fix: collapse any existing duplicates (keeping the most recently updated row
+ * per logical session), then add two *partial* unique indexes that don't
+ * depend on a nullable column — one for homeroom sessions, one for subject
+ * sessions. `POST /mark` targets these explicitly via
+ * `ON CONFLICT(...) WHERE session_type = ...`.
+ */
+async function migrateAttendanceUniqueness(db: Database) {
+  const already = await db.get(
+    `SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'uq_attendance_homeroom'`
+  );
+  if (already) return;
+
+  await db.run('BEGIN TRANSACTION');
+  try {
+    // Collapse duplicate homeroom rows: keep the row with the newest
+    // updated_at (tie-break on the highest id).
+    await db.exec(`
+      DELETE FROM attendance_records
+      WHERE session_type = 'homeroom' AND id NOT IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY student_id, class_id, session_date, period
+            ORDER BY updated_at DESC, id DESC
+          ) AS rn
+          FROM attendance_records WHERE session_type = 'homeroom'
+        ) WHERE rn = 1
+      );
+
+      DELETE FROM attendance_records
+      WHERE session_type = 'subject' AND id NOT IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY student_id, class_id, session_date, subject_id, period
+            ORDER BY updated_at DESC, id DESC
+          ) AS rn
+          FROM attendance_records WHERE session_type = 'subject'
+        ) WHERE rn = 1
+      );
+
+      CREATE UNIQUE INDEX uq_attendance_homeroom
+        ON attendance_records(student_id, class_id, session_date, period)
+        WHERE session_type = 'homeroom';
+
+      CREATE UNIQUE INDEX uq_attendance_subject
+        ON attendance_records(student_id, class_id, session_date, subject_id, period)
+        WHERE session_type = 'subject';
+    `);
+    await db.run('COMMIT');
+    console.log('Migrated attendance_records: partial unique indexes for homeroom/subject registers.');
+  } catch (err) {
+    await db.run('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * Remediation A13 — attendance writes left no audit trail. This table keeps
+ * the prior value of every attendance row that `POST /mark` overwrites, so a
+ * correction (or a mistaken overwrite of someone else's register) is
+ * recoverable and attributable. Written inside the same transaction as the
+ * upsert in routes/attendance.ts.
+ */
+async function migrateAttendanceHistory(db: Database) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS attendance_record_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      attendance_record_id INTEGER,
+      student_id TEXT NOT NULL,
+      class_id TEXT NOT NULL,
+      session_date DATE NOT NULL,
+      period TEXT,
+      session_type TEXT,
+      subject_id INTEGER,
+      previous_status TEXT,
+      new_status TEXT,
+      previous_notes TEXT,
+      new_notes TEXT,
+      changed_by TEXT NOT NULL,
+      changed_by_name TEXT,
+      changed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_att_history_lookup
+      ON attendance_record_history(class_id, session_date, period, session_type);
+    CREATE INDEX IF NOT EXISTS idx_att_history_student
+      ON attendance_record_history(student_id, session_date);
+  `);
+}
+
+/**
+ * Remediation A8/A9 — an approved excuse never touched the absence it excused,
+ * and `excuse_requests` only stored a free-text `class_name` with no reliable
+ * key back to an attendance row. Add the identifying columns (all nullable so
+ * existing rows are untouched) plus review metadata.
+ */
+async function migrateExcuseRequestLinkage(db: Database) {
+  const cols = await db.all(`PRAGMA table_info(excuse_requests)`);
+  const has = (n: string) => cols.some((c: any) => c.name === n);
+  if (!has('class_id')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN class_id TEXT`);
+  if (!has('period')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN period TEXT`);
+  if (!has('reviewer_note')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN reviewer_note TEXT`);
+  if (!has('reviewed_by')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN reviewed_by TEXT`);
+  if (!has('reviewed_by_name')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN reviewed_by_name TEXT`);
+  if (!has('supersedes_id')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN supersedes_id INTEGER`);
+  await db.run(`CREATE INDEX IF NOT EXISTS idx_excuse_student_date ON excuse_requests(student_id, session_date)`);
+}
+
+/**
+ * Remediation D7 — `resolved_by` stored a display name (`actor.name || actor.id`)
+ * where `logged_by` stores an id + `logged_by_name`. Add the id column and the
+ * name column so review attribution can be joined like everything else.
+ */
+async function migrateDisciplineResolvedBy(db: Database) {
+  const cols = await db.all(`PRAGMA table_info(discipline_records)`);
+  const has = (n: string) => cols.some((c: any) => c.name === n);
+  if (!has('resolved_by_id')) await db.run(`ALTER TABLE discipline_records ADD COLUMN resolved_by_id TEXT`);
+  if (!has('resolved_by_name')) await db.run(`ALTER TABLE discipline_records ADD COLUMN resolved_by_name TEXT`);
+  if (!has('deleted_at')) await db.run(`ALTER TABLE discipline_records ADD COLUMN deleted_at DATETIME`);
+  if (!has('edited_at')) await db.run(`ALTER TABLE discipline_records ADD COLUMN edited_at DATETIME`);
+}
+
+/**
+ * Remediation X4 — the "one alert per day" guards were `title LIKE '%...%'`
+ * string matches. A `dedupe_key` column plus a unique index makes the guard a
+ * real constraint. Additive; existing rows get NULL keys (never matched).
+ */
+async function migrateNotificationDedupe(db: Database) {
+  const cols = await db.all(`PRAGMA table_info(notifications)`);
+  if (!cols.some((c: any) => c.name === 'dedupe_key')) {
+    await db.run(`ALTER TABLE notifications ADD COLUMN dedupe_key TEXT`);
+  }
+  await db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_dedupe
+     ON notifications(dedupe_key) WHERE dedupe_key IS NOT NULL`
+  );
 }
 
 /** Phase 3 (staff half): distinguish teachers (whose "attendance" is really

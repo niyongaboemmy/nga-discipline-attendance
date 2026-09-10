@@ -3,6 +3,10 @@ import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
+import { schoolDateString, schoolMinutesOfDay } from '../shared/schoolTime.js';
+
+/** Staff are "late" if they clock in after this local time (minutes from midnight). */
+const LATE_CUTOFF_MINUTES = Number(process.env.STAFF_LATE_CUTOFF_MINUTES || 8 * 60 + 30);
 
 const router = Router();
 
@@ -14,13 +18,11 @@ router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (r
   const staffId = authReq.user!.id;
   const staffName = authReq.user!.name;
   
-  const today = new Date().toISOString().split('T')[0];
+  // Remediation A15: "today" and the late cutoff are both evaluated in the
+  // school's timezone, not a mix of UTC and server-local.
+  const today = schoolDateString();
   const now = new Date().toISOString();
-  
-  // Decide if check-in is late (cutoff 8:30 AM)
-  const cutoff = new Date();
-  cutoff.setHours(8, 30, 0, 0);
-  const status = new Date() > cutoff ? 'late' : 'present';
+  const status = schoolMinutesOfDay() > LATE_CUTOFF_MINUTES ? 'late' : 'present';
 
   const db = getDb();
   try {
@@ -81,7 +83,7 @@ router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (r
 router.post('/clock-out', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const staffId = authReq.user!.id;
-  const today = new Date().toISOString().split('T')[0];
+  const today = schoolDateString();
   const now = new Date().toISOString();
 
   const db = getDb();

@@ -227,19 +227,17 @@ export const AttendanceCoverage: React.FC<Props> = ({ onTakeRegister }) => {
                         {c.subjectsRecorded > 0 && ` · ${c.subjectsRecorded} subject${c.subjectsRecorded === 1 ? '' : 's'} recorded`}
                       </span>
                     </span>
-                    {!c.homeroomRecorded && (
-                      <span
-                        className="btn btn-primary btn-sm cov-take"
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => { e.stopPropagation(); onTakeRegister({ classId: c.classId }); }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onTakeRegister({ classId: c.classId }); }
-                        }}
-                      >
-                        <PenLine size={13} /> Take register
-                      </span>
-                    )}
+                    <span
+                      className={`btn btn-sm cov-take ${c.homeroomRecorded ? 'btn-outline' : 'btn-primary'}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => { e.stopPropagation(); onTakeRegister({ classId: c.classId }); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onTakeRegister({ classId: c.classId }); }
+                      }}
+                    >
+                      <PenLine size={13} /> {c.homeroomRecorded ? 'Edit register' : 'Take register'}
+                    </span>
                     <ChevronRight size={15} className={`audit-caret${open ? ' is-open' : ''}`} />
                   </button>
 
@@ -280,9 +278,17 @@ export const AttendanceCoverage: React.FC<Props> = ({ onTakeRegister }) => {
                                   {s.code && <span className="cov-subject-code">{s.code}</span>}
                                 </span>
                                 {s.recorded ? (
-                                  <span className="text-xs text-secondary">
-                                    {s.students} student{s.students === 1 ? '' : 's'}
-                                    {s.lastMarkedAt ? ` · ${fmtTime(s.lastMarkedAt)}` : ''}
+                                  <span className="flex items-center gap-2">
+                                    <span className="text-xs text-secondary">
+                                      {s.students} student{s.students === 1 ? '' : 's'}
+                                      {s.lastMarkedAt ? ` · ${fmtTime(s.lastMarkedAt)}` : ''}
+                                    </span>
+                                    <button
+                                      className="btn btn-outline btn-sm"
+                                      onClick={() => onTakeRegister({ classId: c.classId, subjectId: s.id })}
+                                    >
+                                      <PenLine size={12} /> Edit
+                                    </button>
                                   </span>
                                 ) : (
                                   <button
