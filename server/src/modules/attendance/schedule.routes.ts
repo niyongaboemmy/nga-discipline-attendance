@@ -363,6 +363,66 @@ router.get('/schedule/week', authorizePermission(...ATT_PERMS), async (req: any,
   }
 });
 
+// GET /api/attendance/schedule/month?month=YYYY-MM — per-day register status
+// for a whole month, for the calendar month grid.
+router.get('/schedule/month', authorizePermission(...ATT_PERMS), async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const month = str(req.query.month) ?? schoolDateString().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ success: false, message: 'month must be YYYY-MM.' });
+  }
+  const [y, m] = month.split('-').map(Number);
+  const first = `${month}-01`;
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const last = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const isStudent = authReq.user?.role === 'student';
+
+  try {
+    const { slots, source } = await fetchTimetable(
+      authReq,
+      academicTermId != null ? String(academicTermId) : undefined
+    );
+    const classIds = [...new Set(slots.map((s) => s.classId))];
+    const agg = await loadAttendance(
+      classIds, first, last, isStudent ? authReq.user!.id : null, academicTermId
+    );
+
+    const days = Array.from({ length: daysInMonth }, (_, i) => {
+      const date = addDays(first, i);
+      const dow = dayOfWeekFor(date);
+      const daySlots = slots.filter((s) => s.dayOfWeek === dow);
+      const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id);
+      let seenHome = false;
+      const recordable = sessions.filter((s) => {
+        if (s.kind === 'subject') return true;
+        if (seenHome) return false;
+        seenHome = true;
+        return true;
+      });
+      const done = recordable.filter((s) => s.status === 'recorded').length;
+      return {
+        date,
+        dayOfWeek: dow,
+        lessonCount: sessions.filter((s) => s.kind === 'subject').length,
+        colors: [...new Set(sessions.filter((s) => s.kind === 'subject').map((s) => s.color).filter(Boolean))].slice(0, 4),
+        progress: { done, total: recordable.length },
+        ownStatuses: isStudent
+          ? sessions.filter((s) => s.kind === 'subject' && s.ownStatus).map((s) => s.ownStatus)
+          : [],
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: { month, first, last, timetableAvailable: source === 'mis' && slots.length > 0, days },
+    });
+  } catch (error) {
+    console.error('Error building schedule/month:', (error as Error).message);
+    return res.status(502).json({ success: false, message: 'Could not load the month.' });
+  }
+});
+
 // GET /api/attendance/schedule/upcoming — next unrecorded sessions today.
 router.get('/schedule/upcoming', authorizePermission(...ATT_PERMS), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;

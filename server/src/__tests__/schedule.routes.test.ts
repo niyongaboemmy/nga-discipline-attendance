@@ -108,6 +108,20 @@ describe('GET /api/attendance/schedule/day', () => {
     expect(res.body.data.progress.done).toBe(1);
   });
 
+  it('month view aggregates per-day register progress', async () => {
+    mockMis([slot()]); // Mondays only
+    const res = await request(app)
+      .get('/api/attendance/schedule/month?month=2026-09')
+      .set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data.days).toHaveLength(30);
+    const mon14 = res.body.data.days.find((d: any) => d.date === '2026-09-14');
+    expect(mon14.lessonCount).toBe(1);
+    expect(mon14.progress.total).toBe(2); // homeroom + 1 subject
+    const tue15 = res.body.data.days.find((d: any) => d.date === '2026-09-15');
+    expect(tue15.progress.total).toBe(0);
+  });
+
   it('is graceful when the session has no MIS link', async () => {
     const plain = (await createTestUser(db, { id: 't-nomis', name: 'No Mis', email: 'n@s.test', roleLevel: 'TEACHER' })).token;
     const res = await request(app)

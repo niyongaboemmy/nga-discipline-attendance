@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { AcademicPeriodProvider } from './context/AcademicPeriodContext';
 import { ToastProvider } from './context/ToastContext';
@@ -10,8 +10,7 @@ import { Login } from './pages/Login';
 import { SSOCallback } from './pages/SSOCallback';
 import { Welcome } from './pages/Welcome';
 import { Dashboard } from './pages/Dashboard';
-import { Today } from './pages/Today';
-import { Schedule } from './pages/Schedule';
+import { AttendanceCalendar } from './pages/AttendanceCalendar';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { RolesPermissions } from './pages/RolesPermissions';
 import { Pending } from './pages/Pending';
@@ -108,21 +107,15 @@ export const App: React.FC = () => {
             }
           />
           <Route
-            path="/today"
+            path="/attendance"
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
-                <Today />
+                <AttendanceCalendar />
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/schedule"
-            element={
-              <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
-                <Schedule />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/today" element={<Navigate to="/attendance?view=day" replace />} />
+          <Route path="/schedule" element={<Navigate to="/attendance?view=week" replace />} />
           <Route
             path="/attendance/mark"
             element={
