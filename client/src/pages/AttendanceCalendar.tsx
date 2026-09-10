@@ -99,39 +99,55 @@ const MonthView: React.FC<{ data: MonthResponse; cursor: string; onPickDay: (d: 
 /* -------------------------------------------------------------------------- */
 /* Week                                                                      */
 /* -------------------------------------------------------------------------- */
-const HOUR_H = 58;
+const HOUR_H = 62;
+
+/** Assign overlapping events to side-by-side lanes so their text never
+ *  collides — the standard calendar column-packing approach. */
+function packLanes<T extends { startTime: string; endTime: string }>(events: T[]) {
+  const items = [...events]
+    .map((ev) => ({ ev, s: toMin(ev.startTime), e: Math.max(toMin(ev.startTime) + 20, toMin(ev.endTime || ev.startTime)) }))
+    .sort((a, b) => a.s - b.s || a.e - b.e);
+  const laneEnds: number[] = [];
+  const placed = items.map((it) => {
+    let lane = laneEnds.findIndex((end) => end <= it.s);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(it.e); } else { laneEnds[lane] = it.e; }
+    return { ...it, lane };
+  });
+  return placed.map((p) => {
+    const clash = placed.filter((q) => q.s < p.e && q.e > p.s);
+    return { ev: p.ev, s: p.s, e: p.e, lane: p.lane, lanes: Math.max(...clash.map((q) => q.lane)) + 1 };
+  });
+}
+
 const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date: string) => void }> = ({ data, onOpen }) => {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canMark = can('ATTENDANCE_MARK');
   const today = isoDate();
 
-  const days = data.days.filter((d) => d.sessions.some((s) => s.kind === 'subject'));
+  // Always show the working week (Mon–Fri), plus any weekend day that has
+  // lessons and always today — an empty weekday stays as an empty column
+  // rather than collapsing the grid and looking like a skipped day.
+  const days = data.days.filter(
+    (d) => (d.dayOfWeek >= 1 && d.dayOfWeek <= 5) || d.date === today || d.sessions.some((s) => s.kind === 'subject')
+  );
   const cols = days.length || 1;
 
   const allSubjects = days.flatMap((d) => d.sessions.filter((s) => s.kind === 'subject'));
-  if (allSubjects.length === 0) {
-    return (
-      <div className="cal-empty">
-        <CalendarRange size={30} />
-        <span className="text-sm">No lessons scheduled this week.</span>
-      </div>
-    );
-  }
-  const minStart = Math.min(...allSubjects.map((s) => toMin(s.startTime))) - 15;
-  const maxEnd = Math.max(...allSubjects.map((s) => toMin(s.endTime || s.startTime) + 45));
-  const startHour = Math.floor(minStart / 60);
-  const endHour = Math.ceil(maxEnd / 60);
+  const hasAny = allSubjects.length > 0;
+
+  // Grid window: fit the lessons, falling back to a normal school day.
+  const minStart = hasAny ? Math.min(...allSubjects.map((s) => toMin(s.startTime))) - 15 : 7 * 60;
+  const maxEnd = hasAny ? Math.max(...allSubjects.map((s) => toMin(s.endTime || s.startTime) + 25)) : 15 * 60;
+  const startHour = Math.max(0, Math.floor(minStart / 60));
+  const endHour = Math.min(24, Math.ceil(maxEnd / 60));
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const gridTop = startHour * 60;
   const bodyH = (endHour - startHour) * HOUR_H;
 
   const style = { ['--cols' as string]: String(cols), ['--hour-h' as string]: `${HOUR_H}px` };
-  const todayCol = days.findIndex((d) => d.date === today);
-  const showNow = todayCol >= 0 && nowMin() >= gridTop && nowMin() <= endHour * 60;
-
-  const homerooms = days.map((d) => d.sessions.find((s) => s.kind === 'homeroom'));
-  const anyHomeroom = homerooms.some(Boolean);
+  const showNow = days.some((d) => d.date === today) && nowMin() >= gridTop && nowMin() <= endHour * 60;
+  const anyHomeroom = days.some((d) => d.sessions.some((s) => s.kind === 'homeroom'));
 
   return (
     <div className="cal-week">
@@ -150,19 +166,15 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date
           {anyHomeroom && (
             <div className="cal-week-homeroom">
               <span className="hr-label"><Sun size={11} /> AM</span>
-              {days.map((d, i) => {
-                const hr = homerooms[i];
+              {days.map((d) => {
+                const hr = d.sessions.find((s) => s.kind === 'homeroom');
                 if (!hr) return <div key={d.date} className="cal-hr-cell" />;
                 const past = d.date < today || (d.date === today && nowMin() > toMin(hr.startTime) + 15);
                 const st = hr.status === 'recorded' ? 'is-recorded' : past ? 'is-missing-past' : '';
                 return (
                   <div key={d.date} className="cal-hr-cell">
-                    <button
-                      className={`cal-hr-pill ${st}`}
-                      onClick={() => onOpen(hr, d.date)}
-                    >
-                      {hr.status === 'recorded' ? <StatusChip kind="recorded" label="Done" /> : <PenLine size={12} />}
-                      <span>Check</span>
+                    <button className={`cal-hr-pill ${st}`} onClick={() => onOpen(hr, d.date)}>
+                      {hr.status === 'recorded' ? <StatusChip kind="recorded" label="Done" /> : <><PenLine size={12} /> <span>Check</span></>}
                     </button>
                   </div>
                 );
@@ -176,36 +188,41 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date
                 <div key={h} className="cal-hour" style={{ height: HOUR_H }}>{String(h).padStart(2, '0')}:00</div>
               ))}
             </div>
-            {days.map((d) => (
-              <div key={d.date} className={`cal-daycol${d.date === today ? ' is-today' : ''}`}>
-                {d.sessions.filter((s) => s.kind === 'subject').map((s, i) => {
-                  const top = ((toMin(s.startTime) - gridTop) / 60) * HOUR_H;
-                  const h = Math.max(26, ((toMin(s.endTime || s.startTime) - toMin(s.startTime)) / 60) * HOUR_H || 40);
-                  const past = d.date < today || (d.date === today && nowMin() > toMin(s.endTime || s.startTime));
-                  const isNow = d.date === today && nowMin() >= toMin(s.startTime) && nowMin() < toMin(s.endTime || s.startTime);
-                  const cls = s.status === 'recorded' ? 'is-recorded' : past ? 'is-missing-past' : 'is-future';
-                  return (
-                    <button
-                      key={i}
-                      className={`cal-event ${cls}${isNow ? ' is-now' : ''}`}
-                      style={{ top, height: h, ...(s.color ? { ['--spine' as string]: s.color } : {}) }}
-                      onClick={() => (canMark ? onOpen(s, d.date) : navigate(s.deepLink))}
-                      title={`${s.subjectName} · ${s.className}`}
-                    >
-                      <div className="ev-time">{clock(s.startTime)}</div>
-                      <div className="ev-title">{s.subjectName}</div>
-                      <div className="ev-sub">{s.className}{s.room ? ` · ${s.room}` : ''}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-            {showNow && (
-              <div
-                className="cal-nowline"
-                style={{ top: ((nowMin() - gridTop) / 60) * HOUR_H }}
-              />
-            )}
+            {days.map((d) => {
+              const subjects = d.sessions.filter((s) => s.kind === 'subject');
+              const laid = packLanes(subjects);
+              return (
+                <div key={d.date} className={`cal-daycol${d.date === today ? ' is-today' : ''}`}>
+                  {subjects.length === 0 && <span className="cal-daycol-empty">No lessons</span>}
+                  {laid.map(({ ev: s, s: sMin, e: eMin, lane, lanes }, i) => {
+                    const top = ((sMin - gridTop) / 60) * HOUR_H;
+                    const h = Math.max(30, ((eMin - sMin) / 60) * HOUR_H);
+                    const past = d.date < today || (d.date === today && nowMin() > eMin);
+                    const isNow = d.date === today && nowMin() >= sMin && nowMin() < eMin;
+                    const cls = s.status === 'recorded' ? 'is-recorded' : past ? 'is-missing-past' : 'is-future';
+                    return (
+                      <button
+                        key={i}
+                        className={`cal-event ${cls}${isNow ? ' is-now' : ''}${lanes > 1 ? ' is-narrow' : ''}`}
+                        style={{
+                          top, height: h,
+                          left: `calc(${(lane / lanes) * 100}% + 2px)`,
+                          width: `calc(${100 / lanes}% - 4px)`,
+                          ...(s.color ? { ['--spine' as string]: s.color } : {}),
+                        }}
+                        onClick={() => (canMark ? onOpen(s, d.date) : navigate(s.deepLink))}
+                        title={`${clock(s.startTime)}–${clock(s.endTime)} · ${s.subjectName} · ${s.className}${s.room ? ` · ${s.room}` : ''}`}
+                      >
+                        <div className="ev-time">{clock(s.startTime)}–{clock(s.endTime)}</div>
+                        <div className="ev-title">{s.subjectName}</div>
+                        <div className="ev-sub">{s.className}{s.room ? ` · ${s.room}` : ''}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            {showNow && <div className="cal-nowline" style={{ top: ((nowMin() - gridTop) / 60) * HOUR_H }} />}
           </div>
         </div>
       </div>
