@@ -8,6 +8,7 @@ import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod, resolveAcademicPeriodForDate } from '../utils/academicPeriod.js';
 import { isSubjectOnClassCurriculum, resolveGradeId, misGetList } from './mis.js';
 import { validateBody, DATE_RE } from '../shared/validation.js';
+import { notifyExcuseDecision, generateForUser } from '../modules/attendance/notifier.service.js';
 import { isFutureSchoolDate } from '../shared/schoolTime.js';
 import {
   ATTENDANCE_STATUSES,
@@ -157,6 +158,10 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
     // Low-attendance evaluation runs in the background, scoped to this session
     // type so subject drops don't get conflated with homeroom drops.
     triggerLowAttendanceCheck(classId, className, sessionType, academicTermId);
+
+    // Recording a register can clear an outstanding "register missing" nudge
+    // and surface the next one — reconcile in the background.
+    void generateForUser(db, authReq).catch(() => {});
 
     return res.json({
       success: true,
@@ -884,6 +889,15 @@ router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (r
       throw err;
     }
 
+    if (existing.student_id) {
+      await notifyExcuseDecision(db, {
+        studentId: String(existing.student_id),
+        approved: status === 'approved',
+        sessionDate: String(existing.session_date),
+        excuseId: Number(id),
+      });
+    }
+
     const updated = await db.get('SELECT * FROM excuse_requests WHERE id = ?', id);
     return res.json({
       success: true,
@@ -923,6 +937,14 @@ router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: a
         if (!existing || existing.status === status) continue;
         reconciled += await applyExcuseDecision(db, actor, existing, status, reviewerNote);
         processed += 1;
+        if (existing.student_id) {
+          await notifyExcuseDecision(db, {
+            studentId: String(existing.student_id),
+            approved: status === 'approved',
+            sessionDate: String(existing.session_date),
+            excuseId: Number(rawId),
+          });
+        }
       }
       await db.run('COMMIT');
     } catch (err) {

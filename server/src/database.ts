@@ -246,6 +246,7 @@ export async function initDatabase(filenameOverride?: string) {
   await migrateExcuseRequestLinkage(db);
   await migrateDisciplineResolvedBy(db);
   await migrateNotificationDedupe(db);
+  await migrateNotificationsSchema(db);
   await migrateStaffType(db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
@@ -664,6 +665,46 @@ async function migrateNotificationDedupe(db: Database) {
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_dedupe
      ON notifications(dedupe_key) WHERE dedupe_key IS NOT NULL`
   );
+}
+
+/**
+ * Calendar-driven refactor — the notification engine writes richer rows:
+ * a deep `link` into the app, a `severity`, an `updated_at`, and arbitrary
+ * `type` values (`register_missing`, `homeroom_missing`, `lesson_soon`,
+ * `excuse_decided`, …) that the original `CHECK(type IN (...))` constraint
+ * forbade. SQLite can't drop a CHECK in place, so rebuild the table (same
+ * pattern as migrateAttendanceSessionType), preserving every existing row.
+ */
+async function migrateNotificationsSchema(db: Database) {
+  const cols = await db.all(`PRAGMA table_info(notifications)`);
+  if (cols.some((c: any) => c.name === 'link')) return; // already migrated
+  const hasDedupe = cols.some((c: any) => c.name === 'dedupe_key');
+
+  await db.exec(`
+    CREATE TABLE notifications_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      link TEXT,
+      severity TEXT NOT NULL DEFAULT 'info',
+      read INTEGER DEFAULT 0,
+      dedupe_key TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO notifications_new (id, user_id, type, title, message, read, dedupe_key, created_at, updated_at)
+      SELECT id, user_id, type, title, message, read,
+             ${hasDedupe ? 'dedupe_key' : 'NULL'}, created_at, created_at
+      FROM notifications;
+    DROP TABLE notifications;
+    ALTER TABLE notifications_new RENAME TO notifications;
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_notifications_dedupe
+      ON notifications(dedupe_key) WHERE dedupe_key IS NOT NULL;
+  `);
+  console.log('Migrated notifications: free-text type + link/severity/updated_at columns.');
 }
 
 /** Phase 3 (staff half): distinguish teachers (whose "attendance" is really

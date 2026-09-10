@@ -3,6 +3,7 @@
 @import './styles/design-system.css';
 @import './styles/animations.css';
 @import './styles/overlays.css';
+@import './styles/schedule.css';
 
 /* ==========================================================================
    Global typography — Inter (UI) + JetBrains Mono (code)

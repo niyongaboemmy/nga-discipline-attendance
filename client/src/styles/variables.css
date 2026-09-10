@@ -43,6 +43,18 @@
   --info: #0284c7;
   --info-light: rgba(2, 132, 199, 0.10);
 
+  /* --- Attendance status (one source of truth; icon always accompanies) --- */
+  --status-present: var(--success);
+  --status-present-bg: var(--success-light);
+  --status-absent: var(--danger);
+  --status-absent-bg: var(--danger-light);
+  --status-late: var(--warning);
+  --status-late-bg: var(--warning-light);
+  --status-excused: var(--info);
+  --status-excused-bg: var(--info-light);
+  /* Fallback spine colour for a timetable slot with no subject colour set. */
+  --subject-fallback: var(--primary);
+
   /* --- Surfaces (slate neutral) --- */
   --bg-page: #f3f4f6;          /* gray-100, matches SystemLayout shell bg */
   --bg-page-solid: #f3f4f6;

@@ -36,3 +36,39 @@ export function schoolMinutesOfDay(at: Date = new Date()): number {
 export function isFutureSchoolDate(dateStr: string): boolean {
   return dateStr > schoolDateString();
 }
+
+/**
+ * Day of week for a `YYYY-MM-DD` string, using the MIS convention
+ * (0=Sunday .. 6=Saturday — see nga_central_mis calendarConstants.ts and the
+ * CalendarSlot.day_of_week column). Computed from the date parts directly so
+ * it never drifts with the server's own timezone.
+ */
+export function dayOfWeekFor(dateStr: string): number {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** `HH:MM` -> minutes since midnight. Tolerates `HH:MM:SS` and empty input. */
+export function timeToMinutes(hhmm: string | null | undefined): number {
+  if (!hhmm) return 0;
+  const [h, m] = hhmm.split(':').map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+/** Monday-based start of the week (YYYY-MM-DD) containing `dateStr`. */
+export function weekStartFor(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dow = dt.getUTCDay(); // 0=Sun
+  const backToMonday = (dow + 6) % 7;
+  dt.setUTCDate(dt.getUTCDate() - backToMonday);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Add `n` days to a `YYYY-MM-DD` string, returning `YYYY-MM-DD`. */
+export function addDays(dateStr: string, n: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
