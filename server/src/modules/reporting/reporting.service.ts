@@ -1,5 +1,6 @@
 import { Database } from 'sqlite';
 import { listTermBalances } from '../discipline/ledger.service.js';
+import { ATTENDED_SQL_CASE, attendanceRate } from '../../shared/attendancePolicy.js';
 
 /** Unified reporting (C): termly/annual/combined/comparison views reading
  *  from attendance_records + discipline_records + the term-balance view,
@@ -20,26 +21,29 @@ export interface AttendanceSummary {
 export async function getAttendanceSummary(db: Database, academicTermId?: number): Promise<AttendanceSummary> {
   const { clause, params } = periodFilter('academic_term_id', academicTermId);
   const [overall, bySessionType] = await Promise.all([
+    // Remediation A7: the headline rate is the homeroom (overall daily
+    // attendance) signal only. Mixing subject sessions in counted a day with a
+    // homeroom register plus three subject registers as four "sessions".
     db.get(
-      `SELECT COUNT(*) as total, SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) as present
-       FROM attendance_records WHERE 1=1${clause}`,
+      `SELECT COUNT(*) as total, SUM(${ATTENDED_SQL_CASE}) as attended
+       FROM attendance_records WHERE session_type = 'homeroom'${clause}`,
       ...params
     ),
     db.all(
       `SELECT session_type as sessionType, COUNT(*) as total,
-              SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) as present
+              SUM(${ATTENDED_SQL_CASE}) as attended
        FROM attendance_records WHERE 1=1${clause}
        GROUP BY session_type`,
       ...params
     ),
   ]);
   return {
-    overallRate: overall.total > 0 ? Math.round((overall.present / overall.total) * 100) : 100,
+    overallRate: attendanceRate(overall.attended, overall.total),
     totalRecords: overall.total || 0,
     bySessionType: bySessionType.map((r: any) => ({
       sessionType: r.sessionType,
       total: r.total,
-      presentRate: r.total > 0 ? Math.round((r.present / r.total) * 100) : 100,
+      presentRate: attendanceRate(r.attended, r.total),
     })),
   };
 }
@@ -100,8 +104,8 @@ export async function getCombinedReport(db: Database, academicTermId?: number): 
   const [attendanceByStudent, balanceByStudent] = await Promise.all([
     db.all(
       `SELECT student_id as studentId, student_name as studentName,
-              COUNT(*) as total, SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) as present
-       FROM attendance_records WHERE 1=1${clause}
+              COUNT(*) as total, SUM(${ATTENDED_SQL_CASE}) as attended
+       FROM attendance_records WHERE session_type = 'homeroom'${clause}
        GROUP BY student_id
        HAVING total >= 3`,
       ...params
@@ -114,7 +118,7 @@ export async function getCombinedReport(db: Database, academicTermId?: number): 
     .map((a: any) => ({
       studentId: a.studentId,
       studentName: a.studentName,
-      attendanceRate: Math.round((a.present / a.total) * 100),
+      attendanceRate: attendanceRate(a.attended, a.total),
       conductBalance: balanceMap.get(a.studentId) ?? 100,
     }))
     .filter((s) => s.attendanceRate < 80 && s.conductBalance < 80)

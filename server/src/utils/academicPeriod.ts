@@ -1,3 +1,4 @@
+import { Database } from 'sqlite';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 
 export interface AcademicPeriod {
@@ -31,4 +32,39 @@ export function resolveAcademicPeriod(req: AuthenticatedRequest): AcademicPeriod
     academicYearId: Number.isFinite(academicYearId) ? academicYearId : undefined,
     academicTermId: Number.isFinite(academicTermId) ? academicTermId : undefined,
   };
+}
+
+/**
+ * Remediation X3 — a record must be filed under the academic period its *date*
+ * falls in, not whichever term the acting user's session currently points at.
+ * Back-dating attendance or an incident into a previous term otherwise stamps
+ * it with today's term and it vanishes from that term's reports.
+ *
+ * Looks the date up against the cached `academic_terms` calendar. Falls back to
+ * the caller's session period only when the date matches no known term (e.g.
+ * the calendar hasn't been synced yet), so behaviour never regresses to worse
+ * than today's.
+ */
+export async function resolveAcademicPeriodForDate(
+  db: Database,
+  dateStr: string,
+  fallback: AcademicPeriod = {}
+): Promise<AcademicPeriod> {
+  try {
+    const term = await db.get(
+      `SELECT id, academic_year_id
+         FROM academic_terms
+        WHERE start_date IS NOT NULL AND end_date IS NOT NULL
+          AND date(?) BETWEEN date(start_date) AND date(end_date)
+        ORDER BY start_date DESC
+        LIMIT 1`,
+      dateStr
+    );
+    if (term) {
+      return { academicYearId: term.academic_year_id ?? undefined, academicTermId: term.id };
+    }
+  } catch (err) {
+    console.error('resolveAcademicPeriodForDate lookup failed:', (err as Error).message);
+  }
+  return fallback;
 }

@@ -50,7 +50,7 @@ export async function getStudentTermBalance(
 
   const row = await db.get(
     `SELECT ${AGGREGATE_SQL} FROM discipline_records
-     WHERE student_id = ? AND status != 'dismissed' ${termClause}
+     WHERE student_id = ? AND status != 'dismissed' AND deleted_at IS NULL ${termClause}
      GROUP BY student_id`,
     ...params
   );
@@ -93,7 +93,7 @@ export async function listTermBalances(
 
   const rows = await db.all(
     `SELECT ${AGGREGATE_SQL} FROM discipline_records
-     WHERE status != 'dismissed' ${termClause}
+     WHERE status != 'dismissed' AND deleted_at IS NULL ${termClause}
      GROUP BY student_id`,
     ...params
   );

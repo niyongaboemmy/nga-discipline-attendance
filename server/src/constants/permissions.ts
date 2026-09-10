@@ -33,6 +33,8 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'DISCIPLINE_VIEW_ALL', category: PERMISSION_CATEGORIES.DISCIPLINE, description: "View any student's discipline records." },
   { key: 'DISCIPLINE_VIEW_OWN', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'View your own discipline records.' },
   { key: 'DISCIPLINE_REVIEW', category: PERMISSION_CATEGORIES.DISCIPLINE, description: "Update a discipline record's review status/sanction." },
+  { key: 'DISCIPLINE_EDIT', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Correct the factual details of a discipline record (student, date, rule, description).' },
+  { key: 'DISCIPLINE_DELETE', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Permanently remove a discipline record logged in error.' },
   { key: 'DISCIPLINE_ADJUST', category: PERMISSION_CATEGORIES.DISCIPLINE, description: "Add or reduce a student's points against a specific discipline rule." },
   { key: 'DISCIPLINE_RULES_MANAGE', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Create, edit, and retire discipline rules in the rules catalog.' },
 
@@ -95,7 +97,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', s
     'ATTENDANCE_MARK', 'ATTENDANCE_VIEW_ALL', 'ATTENDANCE_VIEW_OWN',
     'EXCUSES_SUBMIT', 'EXCUSES_VIEW_OWN', 'EXCUSES_REVIEW',
     'DISCIPLINE_LOG', 'DISCIPLINE_VIEW_ALL', 'DISCIPLINE_VIEW_OWN', 'DISCIPLINE_REVIEW',
-    'DISCIPLINE_ADJUST', 'DISCIPLINE_RULES_MANAGE',
+    'DISCIPLINE_EDIT', 'DISCIPLINE_DELETE', 'DISCIPLINE_ADJUST', 'DISCIPLINE_RULES_MANAGE',
     'STAFF_ATTENDANCE_CLOCK', 'STAFF_ATTENDANCE_VIEW_OWN', 'STAFF_ATTENDANCE_VIEW_ALL',
     'REPORTS_VIEW',
     'USERS_VIEW', 'USERS_MANAGE', 'AUDIT_VIEW',

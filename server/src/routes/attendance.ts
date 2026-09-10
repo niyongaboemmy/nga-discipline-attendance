@@ -1,48 +1,66 @@
 import { Router, Response } from 'express';
+import { z } from 'zod';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission, selfOrPermission } from '../middleware/authorize.js';
 import { recordAudit } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
-import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
+import { resolveAcademicPeriod, resolveAcademicPeriodForDate } from '../utils/academicPeriod.js';
 import { isSubjectOnClassCurriculum, resolveGradeId, misGetList } from './mis.js';
+import { validateBody, DATE_RE } from '../shared/validation.js';
+import { isFutureSchoolDate } from '../shared/schoolTime.js';
+import {
+  ATTENDANCE_STATUSES,
+  ATTENDED_SQL_CASE,
+  ATTENDANCE_WARN_THRESHOLD,
+  ATTENDANCE_MIN_SESSIONS,
+  attendanceRate,
+} from '../shared/attendancePolicy.js';
 
 const router = Router();
 
-const ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'excused'] as const;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Recognised session labels. Free text here meant `"Morning"` and `"morning"`
+ *  became two separate registers (remediation A5). */
+const PERIODS = ['Morning', 'Afternoon', 'Evening'] as const;
+const MAX_RECORDS_PER_MARK = 300;
+
+const markSchema = z.object({
+  classId: z.string().min(1).max(64),
+  className: z.string().min(1).max(120),
+  date: z.string().regex(DATE_RE, 'Expected YYYY-MM-DD.')
+    .refine((d) => !isFutureSchoolDate(d), 'Cannot record attendance for a future date.'),
+  period: z.enum(PERIODS).default('Morning'),
+  sessionType: z.enum(['homeroom', 'subject']).default('homeroom'),
+  subjectId: z.union([z.number().int().positive(), z.null()]).default(null),
+  records: z.array(z.object({
+    studentId: z.string().min(1).max(64),
+    studentName: z.string().min(1).max(160),
+    status: z.enum(ATTENDANCE_STATUSES),
+    notes: z.string().max(500).optional().default(''),
+  })).min(1, 'At least one student record is required.').max(MAX_RECORDS_PER_MARK),
+}).refine((v) => v.sessionType !== 'subject' || v.subjectId != null, {
+  message: 'subjectId is required when sessionType is "subject".',
+  path: ['subjectId'],
+});
 
 // Apply auth check on all attendance routes
 router.use(authMiddleware);
 
-// Mark attendance (Teacher/Admin only)
-router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+// Mark (or correct) attendance for one session (Teacher/Admin only).
+//
+// Upserts against the partial unique indexes added in the A1 remediation
+// (uq_attendance_homeroom / uq_attendance_subject) so a re-mark updates the
+// existing register in place instead of stacking duplicate rows. Every value
+// it overwrites is written to attendance_record_history in the same
+// transaction (A13), and one summary row lands in audit_log.
+router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSchema), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const {
-    classId, className, date, period = 'Morning', records,
-    sessionType = 'homeroom', subjectId = null,
-  } = req.body;
+  const { classId, className, date, period, records, sessionType } = req.body;
+  const subjectId: number | null = req.body.subjectId ?? null;
 
-  if (!classId || !className || !date || !records || !Array.isArray(records)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid payload. Missing classId, className, date, or records array.',
-    });
-  }
-  if (!DATE_RE.test(String(date))) {
-    return res.status(400).json({ success: false, message: 'Invalid date. Expected YYYY-MM-DD.' });
-  }
-  if (sessionType !== 'homeroom' && sessionType !== 'subject') {
-    return res.status(400).json({ success: false, message: "Invalid sessionType. Expected 'homeroom' or 'subject'." });
-  }
-  // A.1.2: course/subject attendance must be tied to a specific subject.
-  if (sessionType === 'subject' && !subjectId) {
-    return res.status(400).json({ success: false, message: 'subjectId is required when sessionType is "subject".' });
-  }
-  // ...and that subject must actually be taught to this class group's grade.
-  // The client only offers matching subjects, but that's a convenience, not
-  // a guarantee — without this check a stale tab or a direct API call could
-  // file attendance for a subject the class doesn't even take.
+  // The subject must be on this class group's grade curriculum. The client only
+  // offers matching subjects, but a stale tab or a direct API call could file
+  // against a subject the class doesn't take.
   if (sessionType === 'subject' && subjectId) {
     const misToken = authReq.user?.misToken;
     if (misToken) {
@@ -55,82 +73,97 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
           });
         }
       } catch (error) {
-        // The MIS being unreachable shouldn't block attendance from being
-        // recorded — log and fall through rather than lose the teacher's work.
+        // MIS unreachable shouldn't block a teacher's work — log and continue.
         console.error('Subject/class curriculum check skipped:', (error as Error).message);
       }
-    }
-  }
-  // Validate every record up front so the transaction can't fail halfway through
-  // on the DB CHECK constraint (which would surface as an opaque 500).
-  for (const record of records) {
-    if (!record?.studentId || !record?.studentName || !record?.status) {
-      return res.status(400).json({ success: false, message: 'Each record needs studentId, studentName, and status.' });
-    }
-    if (!ATTENDANCE_STATUSES.includes(record.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid status '${record.status}'. Expected one of: ${ATTENDANCE_STATUSES.join(', ')}.`,
-      });
     }
   }
 
   const db = getDb();
   const teacherId = authReq.user!.id;
-  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
+  const teacherName = authReq.user!.name;
+  // Remediation X3: file the register under the term its *date* falls in, not
+  // whatever term the acting user's session currently points at.
+  const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
+    db, date, resolveAcademicPeriod(authReq)
+  );
+
+  const conflictClause = sessionType === 'homeroom'
+    ? `ON CONFLICT(student_id, class_id, session_date, period) WHERE session_type = 'homeroom'`
+    : `ON CONFLICT(student_id, class_id, session_date, subject_id, period) WHERE session_type = 'subject'`;
+
+  let updatedCount = 0;
+  let insertedCount = 0;
 
   try {
-    // Run all insertions in a transaction
     await db.run('BEGIN TRANSACTION');
 
     for (const record of records) {
       const { studentId, studentName, status, notes = '' } = record;
 
-      if (!studentId || !studentName || !status) {
-        throw new Error(`Record missing studentId, studentName, or status.`);
-      }
+      const existing = await db.get(
+        `SELECT id, status, notes FROM attendance_records
+          WHERE student_id = ? AND class_id = ? AND session_date = ? AND period = ?
+            AND session_type = ? AND (subject_id IS ? OR subject_id = ?)`,
+        studentId, classId, date, period, sessionType, subjectId, subjectId
+      );
 
       await db.run(
         `INSERT INTO attendance_records
          (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, notes, marked_by, academic_year_id, academic_term_id, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-         ON CONFLICT(student_id, class_id, session_date, session_type, subject_id, period) DO UPDATE SET
+         ${conflictClause} DO UPDATE SET
            status = excluded.status,
            notes = excluded.notes,
            marked_by = excluded.marked_by,
-           -- Re-marking a session must restamp the period too. Without
-           -- these, a record first marked under one term kept that term
-           -- forever, so corrections made after a term switch stayed
-           -- filed under the old period and vanished from the new one.
+           student_name = excluded.student_name,
+           class_name = excluded.class_name,
            academic_year_id = excluded.academic_year_id,
            academic_term_id = excluded.academic_term_id,
            updated_at = CURRENT_TIMESTAMP`,
-        studentId,
-        studentName,
-        classId,
-        className,
-        date,
-        period,
-        sessionType,
-        subjectId,
-        status,
-        notes,
-        teacherId,
-        academicYearId ?? null,
-        academicTermId ?? null
+        studentId, studentName, classId, className, date, period, sessionType, subjectId,
+        status, notes, teacherId, academicYearId ?? null, academicTermId ?? null
       );
+
+      if (existing) {
+        if (existing.status !== status || (existing.notes ?? '') !== (notes ?? '')) {
+          await db.run(
+            `INSERT INTO attendance_record_history
+             (attendance_record_id, student_id, class_id, session_date, period, session_type, subject_id,
+              previous_status, new_status, previous_notes, new_notes, changed_by, changed_by_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            existing.id, studentId, classId, date, period, sessionType, subjectId,
+            existing.status, status, existing.notes ?? '', notes ?? '', teacherId, teacherName
+          );
+        }
+        updatedCount += 1;
+      } else {
+        insertedCount += 1;
+      }
     }
+
+    await recordAudit(
+      db,
+      { id: teacherId, name: teacherName },
+      insertedCount > 0 && updatedCount === 0 ? 'attendance.mark' : 'attendance.update',
+      'attendance_session',
+      `${classId}:${date}:${period}:${sessionType}:${subjectId ?? '-'}`,
+      { classId, className, date, period, sessionType, subjectId, inserted: insertedCount, updated: updatedCount },
+      { required: true }
+    );
 
     await db.run('COMMIT');
 
-    // Trigger low attendance notification evaluation in background
-    // (scoped to this session type so subject-attendance drops don't get
-    // conflated with homeroom drops for the same class).
+    // Low-attendance evaluation runs in the background, scoped to this session
+    // type so subject drops don't get conflated with homeroom drops.
     triggerLowAttendanceCheck(classId, className, sessionType, academicTermId);
 
     return res.json({
       success: true,
-      message: 'Attendance saved successfully.',
+      message: updatedCount > 0
+        ? `Register updated — ${updatedCount} record${updatedCount === 1 ? '' : 's'} changed or confirmed${insertedCount ? `, ${insertedCount} added` : ''}.`
+        : 'Attendance recorded successfully.',
+      data: { inserted: insertedCount, updated: updatedCount },
     });
   } catch (error: any) {
     await db.run('ROLLBACK');
@@ -139,6 +172,72 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), async (req: any, re
       success: false,
       message: error.message || 'Error occurred while saving attendance records.',
     });
+  }
+});
+
+/**
+ * Remediation A2/A3 — return an existing register so it can be edited.
+ *
+ * `session-status` only ever reported a count; the client had no way to load
+ * the actual per-student statuses, so "editing" meant blind re-marking with
+ * every student defaulted back to Present. This returns the stored rows plus
+ * who marked it and when.
+ */
+router.get('/session', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+  const { classId, date } = req.query;
+  const period = String(req.query.period || 'Morning');
+  const sessionType = String(req.query.sessionType || 'homeroom');
+  const subjectId = req.query.subjectId ? Number(req.query.subjectId) : null;
+
+  if (!classId || !date || !DATE_RE.test(String(date))) {
+    return res.status(400).json({ success: false, message: 'classId and a valid date (YYYY-MM-DD) are required.' });
+  }
+  if (sessionType !== 'homeroom' && sessionType !== 'subject') {
+    return res.status(400).json({ success: false, message: "sessionType must be 'homeroom' or 'subject'." });
+  }
+
+  try {
+    const db = getDb();
+    const records = await db.all(
+      `SELECT id, student_id, student_name, status, notes, marked_by, updated_at
+         FROM attendance_records
+        WHERE class_id = ? AND session_date = ? AND period = ? AND session_type = ?
+          AND (subject_id IS ? OR subject_id = ?)
+        ORDER BY student_name ASC`,
+      classId, date, period, sessionType, subjectId, subjectId
+    );
+
+    let markedByName: string | null = null;
+    let markedById: string | null = null;
+    let lastMarkedAt: string | null = null;
+    if (records.length > 0) {
+      const latest = records.reduce((a: any, b: any) => (a.updated_at > b.updated_at ? a : b));
+      lastMarkedAt = latest.updated_at;
+      markedById = latest.marked_by;
+      const actor = await db.get('SELECT name FROM users WHERE id = ?', latest.marked_by);
+      markedByName = actor?.name ?? null;
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        exists: records.length > 0,
+        classId, date, period, sessionType, subjectId,
+        markedById,
+        markedByName,
+        markedByMe: markedById === (req as AuthenticatedRequest).user!.id,
+        lastMarkedAt,
+        records: records.map((r: any) => ({
+          studentId: r.student_id,
+          studentName: r.student_name,
+          status: r.status,
+          notes: r.notes ?? '',
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error loading attendance session:', error);
+    return res.status(500).json({ success: false, message: 'Could not load this register.' });
   }
 });
 
@@ -660,15 +759,14 @@ async function triggerLowAttendanceCheck(
 ) {
   const db = getDb();
   try {
-    // Scoped to the term the session belongs to. Averaging over every term
-    // ever recorded meant a student's past-term absences dragged their
-    // current-term percentage down (and vice versa), so the 80% warning
-    // fired against a figure shown nowhere in the UI. NULL term rows are
-    // included when we have a term, matching the read paths' convention for
-    // records written before period tracking existed.
+    // Scoped to the term the session belongs to, and to the same "attended"
+    // definition (present + late + excused) the student sees on their own page
+    // and every report — remediation A6. Averaging over every term ever
+    // recorded, or counting only bare `present`, made the warning fire against
+    // a figure shown nowhere in the UI.
     const stats = await db.all(
       `SELECT student_id, student_name,
-              SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present,
+              SUM(${ATTENDED_SQL_CASE}) as attended,
               COUNT(*) as total
        FROM attendance_records
        WHERE class_id = ? AND session_type = ?
@@ -677,43 +775,42 @@ async function triggerLowAttendanceCheck(
       classId, sessionType, academicTermId ?? null, academicTermId ?? null
     );
 
+    const today = new Date().toISOString().split('T')[0];
+
     for (const student of stats) {
-      const percentage = (student.present / student.total) * 100;
-      if (student.total >= 3 && percentage < 80) { // Notify if attendance drops below 80% (over at least 3 records)
-        // Check if notification already pushed today to avoid spamming
-        const alreadyNotified = await db.get(
-          `SELECT id FROM notifications 
-           WHERE user_id = ? AND type = 'low_attendance' AND title LIKE ? AND created_at >= date('now')`,
-          student.student_id,
-          `%Low Attendance Warning%`
-        );
+      const percentage = attendanceRate(student.attended, student.total);
+      if (student.total < ATTENDANCE_MIN_SESSIONS || percentage >= ATTENDANCE_WARN_THRESHOLD) continue;
 
-        if (!alreadyNotified) {
-          await db.run(
-            `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'low_attendance', ?, ?)`,
-            student.student_id,
-            `Low Attendance Warning (${percentage.toFixed(0)}%)`,
-            `Your attendance in ${className} is currently ${percentage.toFixed(0)}% (${student.present}/${student.total} classes). Please contact your instructor.`
-          );
+      // One student alert per class per day — a real unique constraint now
+      // (remediation X4), not a title LIKE match.
+      const dedupeKey = `low_attendance:${student.student_id}:${classId}:${sessionType}:${today}`;
+      const already = await db.get(
+        `SELECT 1 FROM notifications WHERE dedupe_key = ?`, dedupeKey
+      );
+      if (already) continue;
 
-          // Also reach the student on external channels (respects their preferences).
-          await notifyUserExternal(
-            db,
-            student.student_id,
-            `Low attendance in ${className}`,
-            `Your attendance in ${className} has dropped to ${percentage.toFixed(0)}% (${student.present}/${student.total}). Please contact your instructor.`,
-            { kind: 'absence' }
-          );
+      await db.run(
+        `INSERT INTO notifications (user_id, type, title, message, dedupe_key) VALUES (?, 'low_attendance', ?, ?, ?)`,
+        student.student_id,
+        `Low attendance warning (${percentage}%)`,
+        `Your attendance in ${className} is currently ${percentage}% (${student.attended}/${student.total} sessions). Please contact your instructor.`,
+        dedupeKey
+      );
 
-          // Also notify admins/teachers
-          await db.run(
-            `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'low_attendance', ?, ?)`,
-            'all',
-            `Attendance Drop: ${student.student_name}`,
-            `${student.student_name}'s attendance in ${className} has dropped to ${percentage.toFixed(0)}%.`
-          );
-        }
-      }
+      await notifyUserExternal(
+        db,
+        student.student_id,
+        `Low attendance in ${className}`,
+        `Your attendance in ${className} has dropped to ${percentage}% (${student.attended}/${student.total}). Please contact your instructor.`,
+        { kind: 'absence' }
+      );
+
+      await db.run(
+        `INSERT INTO notifications (user_id, type, title, message, dedupe_key) VALUES ('all', 'low_attendance', ?, ?, ?)`,
+        `Attendance drop: ${student.student_name}`,
+        `${student.student_name}'s attendance in ${className} has dropped to ${percentage}%.`,
+        `${dedupeKey}:staff`
+      );
     }
   } catch (err) {
     console.error('Error in triggerLowAttendanceCheck:', err);
