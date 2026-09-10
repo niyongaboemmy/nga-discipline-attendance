@@ -1,6 +1,5 @@
 import {
   LayoutDashboard,
-  CheckSquare,
   CalendarClock,
   History,
   Clock,
@@ -45,8 +44,9 @@ export const navItems: NavItem[] = [
   { label: 'Discipline Rules', path: '/discipline/rules', icon: BookOpen, roles: ['admin'], section: 'Administration' },
   { label: 'Audit Log', path: '/admin/audit', icon: AuditIcon, roles: ['admin'], section: 'Administration' },
 
-  // Attendance (staff)
-  { label: 'Take a Register', path: '/attendance/mark', icon: CheckSquare, roles: ['admin', 'teacher'], section: 'Attendance' },
+  // Attendance (staff) — taking a register now happens inside the Attendance
+  // Calendar (open a lesson) or its "Record a session" action; the standalone
+  // /attendance/mark page stays reachable from there for the full-screen view.
   { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
 

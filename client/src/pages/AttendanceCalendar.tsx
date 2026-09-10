@@ -2,12 +2,13 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
-  Sun, BookOpen, MapPin, Clock, PenLine, RotateCcw,
+  Sun, BookOpen, MapPin, Clock, PenLine, RotateCcw, Plus, ArrowRight, CheckCircle2,
 } from 'lucide-react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
 import { StatusChip } from '../components/attendance/StatusChip';
-import { RegisterDrawer } from '../components/attendance/RegisterDrawer';
+import { RegisterDrawer, type DrawerTarget } from '../components/attendance/RegisterDrawer';
+import { ManualSessionModal } from '../components/attendance/ManualSessionModal';
 import { usePermissions } from '../hooks/usePermissions';
 import {
   getScheduleMonth, getScheduleWeek, getScheduleDay,
@@ -31,6 +32,33 @@ const rangeTitle = (a: string, b: string) => {
   const f = (s: string) => new Date(s + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return `${f(a)} – ${f(b)}`;
 };
+
+/** Build a drawer target for `session`, resolving the next un-recorded lesson
+ *  that same day so the drawer can offer "take the next one" after a save. */
+function buildTarget(daySessions: CalendarSession[], session: CalendarSession, date: string): DrawerTarget {
+  const start = toMin(session.startTime || '00:00');
+  const nxt = daySessions
+    .filter((x) => x.kind === 'subject' && x.status === 'missing' && toMin(x.startTime) > start && x !== session)
+    .sort((a, b) => toMin(a.startTime) - toMin(b.startTime))[0];
+  return {
+    session,
+    date,
+    next: nxt ? { session: nxt, date, label: `${nxt.subjectName ?? 'Lesson'} · ${nxt.className}` } : null,
+  };
+}
+
+/** done / total registers for one day, counting the subject lessons plus the
+ *  first homeroom entry (mirrors the server's `progress` for the day view). */
+function dayProgress(sessions: CalendarSession[]) {
+  let seenHr = false;
+  const recordable = sessions.filter((s) => {
+    if (s.kind === 'subject') return true;
+    if (seenHr) return false;
+    seenHr = true;
+    return true;
+  });
+  return { done: recordable.filter((s) => s.status === 'recorded').length, total: recordable.length };
+}
 
 /* -------------------------------------------------------------------------- */
 /* Month                                                                     */
@@ -119,7 +147,7 @@ function packLanes<T extends { startTime: string; endTime: string }>(events: T[]
   });
 }
 
-const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date: string) => void }> = ({ data, onOpen }) => {
+const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void }> = ({ data, onOpen }) => {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canMark = can('ATTENDANCE_MARK');
@@ -155,12 +183,21 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date
         <div className="cal-week-inner" style={style}>
           <div className="cal-week-head">
             <span />
-            {days.map((d) => (
-              <div key={d.date} className={`cal-dh${d.date === today ? ' is-today' : ''}`}>
-                <div className="cal-dh-dow">{DOW_LABEL[d.dayOfWeek]}</div>
-                <div className="cal-dh-date">{new Date(d.date + 'T00:00:00').getDate()}</div>
-              </div>
-            ))}
+            {days.map((d) => {
+              const pg = dayProgress(d.sessions);
+              const cls = pg.total === 0 ? '' : pg.done === pg.total ? 'is-done' : pg.done > 0 ? 'is-partial' : 'is-none';
+              return (
+                <div key={d.date} className={`cal-dh${d.date === today ? ' is-today' : ''}`}>
+                  <div className="cal-dh-dow">{DOW_LABEL[d.dayOfWeek]}</div>
+                  <div className="cal-dh-date">{new Date(d.date + 'T00:00:00').getDate()}</div>
+                  {pg.total > 0 && (
+                    <span className={`cal-dh-prog ${cls}`} title={`${pg.done} of ${pg.total} registers taken`}>
+                      {pg.done}/{pg.total}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {anyHomeroom && (
@@ -173,7 +210,7 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date
                 const st = hr.status === 'recorded' ? 'is-recorded' : past ? 'is-missing-past' : '';
                 return (
                   <div key={d.date} className="cal-hr-cell">
-                    <button className={`cal-hr-pill ${st}`} onClick={() => onOpen(hr, d.date)}>
+                    <button className={`cal-hr-pill ${st}`} onClick={() => onOpen(buildTarget(d.sessions, hr, d.date))}>
                       {hr.status === 'recorded' ? <StatusChip kind="recorded" label="Done" /> : <><PenLine size={12} /> <span>Check</span></>}
                     </button>
                   </div>
@@ -210,7 +247,7 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date
                           width: `calc(${100 / lanes}% - 4px)`,
                           ...(s.color ? { ['--spine' as string]: s.color } : {}),
                         }}
-                        onClick={() => (canMark ? onOpen(s, d.date) : navigate(s.deepLink))}
+                        onClick={() => (canMark ? onOpen(buildTarget(d.sessions, s, d.date)) : navigate(s.deepLink))}
                         title={`${clock(s.startTime)}–${clock(s.endTime)} · ${s.subjectName} · ${s.className}${s.room ? ` · ${s.room}` : ''}`}
                       >
                         <div className="ev-time">{clock(s.startTime)}–{clock(s.endTime)}</div>
@@ -233,7 +270,7 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (s: CalendarSession, date
 /* -------------------------------------------------------------------------- */
 /* Day (agenda)                                                              */
 /* -------------------------------------------------------------------------- */
-const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (s: CalendarSession) => void }> = ({
+const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: DrawerTarget) => void }> = ({
   data, canMark, onOpen,
 }) => {
   const navigate = useNavigate();
@@ -241,6 +278,11 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (s: Calen
   const now = nowMin();
   const homeroom = data.sessions.filter((s) => s.kind === 'homeroom');
   const lessons = data.sessions.filter((s) => s.kind === 'subject');
+  const open = (s: CalendarSession) => onOpen(buildTarget(data.sessions, s, data.date));
+  const nextMissing = [...lessons]
+    .filter((s) => s.status === 'missing')
+    .sort((a, b) => toMin(a.startTime) - toMin(b.startTime))[0]
+    ?? homeroom.find((s) => s.status === 'missing');
 
   if (!data.timetableAvailable) {
     return (
@@ -298,10 +340,10 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (s: Calen
           {s.status === 'recorded' ? (
             <>
               <StatusChip kind="recorded" />
-              {canMark && <button className="btn btn-outline btn-sm" onClick={() => onOpen(s)}><PenLine size={13} /> Edit</button>}
+              {canMark && <button className="btn btn-outline btn-sm" onClick={() => open(s)}><PenLine size={13} /> Edit</button>}
             </>
           ) : canMark ? (
-            <button className="btn btn-primary btn-sm" onClick={() => onOpen(s)}><PenLine size={13} /> Take register</button>
+            <button className="btn btn-primary btn-sm" onClick={() => open(s)}><PenLine size={13} /> Take register</button>
           ) : (
             <StatusChip kind={s.ownStatus ?? 'missing'} label={s.ownStatus ? undefined : 'Awaiting'} />
           )}
@@ -310,8 +352,32 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (s: Calen
     );
   };
 
+  const pg = dayProgress(data.sessions);
+
   return (
     <div className="agenda">
+      {pg.total > 0 && (
+        <div className="agenda-progress">
+          <div className="agenda-progress-text">
+            {pg.done === pg.total ? (
+              <><CheckCircle2 size={15} style={{ color: 'var(--success)' }} /> All {pg.total} registers done</>
+            ) : (
+              <><strong>{pg.done}</strong> of {pg.total} registers done</>
+            )}
+          </div>
+          <div className="progress" style={{ flex: 1, maxWidth: 260 }}>
+            <div
+              className={`progress-fill ${pg.done === pg.total ? 'is-success' : pg.done > 0 ? 'is-warning' : 'is-danger'}`}
+              style={{ width: `${(pg.done / pg.total) * 100}%` }}
+            />
+          </div>
+          {canMark && nextMissing && pg.done < pg.total && (
+            <button className="btn btn-primary btn-sm" onClick={() => open(nextMissing)}>
+              Next register <ArrowRight size={14} />
+            </button>
+          )}
+        </div>
+      )}
       {homeroom.length > 0 && <>
         <div className="agenda-group-label">Morning check</div>
         {homeroom.map((s) => <Card key={`hr-${s.classId}`} s={s} />)}
@@ -334,7 +400,8 @@ export const AttendanceCalendar: React.FC = () => {
 
   const [view, setView] = useState<View>((params.get('view') as View) || 'week');
   const [cursor, setCursor] = useState(params.get('date') || isoDate());
-  const [drawer, setDrawer] = useState<{ session: CalendarSession; date: string } | null>(null);
+  const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const [month, setMonth] = useState<MonthResponse | null>(null);
   const [week, setWeek] = useState<WeekResponse | null>(null);
@@ -364,6 +431,14 @@ export const AttendanceCalendar: React.FC = () => {
   }, [view, cursor]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The day's full session list, from whichever payload is loaded — lets the
+  // drawer's "next register" chain keep resolving the one after that.
+  const sessionsForDate = useCallback((date: string): CalendarSession[] => {
+    if (day && day.date === date) return day.sessions;
+    if (week) return week.days.find((d) => d.date === date)?.sessions ?? [];
+    return [];
+  }, [day, week]);
 
   const step = (dir: -1 | 1) => {
     if (view === 'month') setCursor(addMonths(cursor, dir));
@@ -421,6 +496,11 @@ export const AttendanceCalendar: React.FC = () => {
               )
             )}
           </div>
+          {canMark && (
+            <button className="btn btn-outline btn-sm" onClick={() => setManualOpen(true)}>
+              <Plus size={14} /> <span className="hide-mobile">Record a session</span>
+            </button>
+          )}
           <button className="icon-btn" aria-label="Refresh" onClick={load}><RotateCcw size={15} /></button>
         </div>
 
@@ -438,20 +518,27 @@ export const AttendanceCalendar: React.FC = () => {
         ) : view === 'month' && month ? (
           <MonthView data={month} cursor={cursor} onPickDay={(d) => { setCursor(d); setView('day'); }} />
         ) : view === 'week' && week ? (
-          <WeekView data={week} onOpen={(s, d) => setDrawer({ session: s, date: d })} />
+          <WeekView data={week} onOpen={setDrawer} />
         ) : view === 'day' && day ? (
-          <DayView data={day} canMark={canMark} onOpen={(s) => setDrawer({ session: s, date: cursor })} />
+          <DayView data={day} canMark={canMark} onOpen={setDrawer} />
         ) : null}
       </div>
 
       {drawer && (
         <RegisterDrawer
-          session={drawer.session}
-          date={drawer.date}
+          key={drawer.session.deepLink}
+          target={drawer}
           onClose={() => setDrawer(null)}
           onSaved={load}
+          onOpenNext={(t) => setDrawer(buildTarget(sessionsForDate(t.date), t.session, t.date))}
         />
       )}
+
+      <ManualSessionModal
+        open={manualOpen}
+        onClose={() => setManualOpen(false)}
+        onPick={(t) => { setManualOpen(false); setDrawer({ ...t, next: null }); }}
+      />
     </DashboardLayout>
   );
 };
