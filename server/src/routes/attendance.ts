@@ -447,40 +447,22 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
 
-  let query = 'SELECT * FROM attendance_records WHERE 1=1';
+  let where = ' WHERE 1=1';
   const params: any[] = [];
 
   if (academicTermId != null) {
     // Legacy rows (no academic_term_id recorded yet) stay visible under any period.
-    query += ' AND (academic_term_id = ? OR academic_term_id IS NULL)';
+    where += ' AND (ar.academic_term_id = ? OR ar.academic_term_id IS NULL)';
     params.push(academicTermId);
   }
-  if (classId) {
-    query += ' AND class_id = ?';
-    params.push(classId);
-  }
-  if (sessionType) {
-    query += ' AND session_type = ?';
-    params.push(sessionType);
-  }
-  if (subjectId) {
-    query += ' AND subject_id = ?';
-    params.push(subjectId);
-  }
-  if (status && status !== 'all') {
-    query += ' AND status = ?';
-    params.push(status);
-  }
-  if (dateFrom) {
-    query += ' AND session_date >= ?';
-    params.push(dateFrom);
-  }
-  if (dateTo) {
-    query += ' AND session_date <= ?';
-    params.push(dateTo);
-  }
+  if (classId) { where += ' AND ar.class_id = ?'; params.push(classId); }
+  if (sessionType) { where += ' AND ar.session_type = ?'; params.push(sessionType); }
+  if (subjectId) { where += ' AND ar.subject_id = ?'; params.push(subjectId); }
+  if (status && status !== 'all') { where += ' AND ar.status = ?'; params.push(status); }
+  if (dateFrom) { where += ' AND ar.session_date >= ?'; params.push(dateFrom); }
+  if (dateTo) { where += ' AND ar.session_date <= ?'; params.push(dateTo); }
   if (search) {
-    query += ' AND (student_name LIKE ? OR student_id LIKE ?)';
+    where += ' AND (ar.student_name LIKE ? OR ar.student_id LIKE ?)';
     params.push(`%${search}%`, `%${search}%`);
   }
 
@@ -488,9 +470,14 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   try {
-    const totalRow = await db.get(`SELECT COUNT(*) as count FROM (${query})`, ...params);
+    const totalRow = await db.get(`SELECT COUNT(*) as count FROM attendance_records ar${where}`, ...params);
     const records = await db.all(
-      `${query} ORDER BY session_date DESC, student_name ASC LIMIT ? OFFSET ?`,
+      `SELECT ar.*, s.name AS subject_name
+         FROM attendance_records ar
+         LEFT JOIN subjects s ON s.id = ar.subject_id
+        ${where}
+        ORDER BY ar.session_date DESC, ar.period ASC, ar.student_name ASC
+        LIMIT ? OFFSET ?`,
       ...params, limit, offset
     );
     return res.json({

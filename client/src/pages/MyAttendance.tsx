@@ -29,7 +29,7 @@ interface Summary {
 interface SubjectRow {
   subject_id: number; subject_name: string; session_date: string; status: Status;
 }
-interface MeResponse { summary: Summary; days: Day[]; homeroom: any[]; subjects: SubjectRow[] }
+interface MeResponse { summary: Summary; days: Day[]; homeroom: unknown[]; subjects: SubjectRow[] }
 
 interface Period { time: string; subject: string; room: string; teacher: string }
 interface DaySchedule { day: string; periods: Period[] }

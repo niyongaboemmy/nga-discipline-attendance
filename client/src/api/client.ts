@@ -72,6 +72,6 @@ export async function apiPut<T>(path: string, data?: unknown): Promise<Envelope<
   return request<T>(path, { method: 'PUT', body: data !== undefined ? JSON.stringify(data) : undefined });
 }
 
-export async function apiDelete<T>(path: string): Promise<Envelope<T>> {
-  return request<T>(path, { method: 'DELETE' });
+export async function apiDelete<T>(path: string, data?: unknown): Promise<Envelope<T>> {
+  return request<T>(path, { method: 'DELETE', body: data !== undefined ? JSON.stringify(data) : undefined });
 }

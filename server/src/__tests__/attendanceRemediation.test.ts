@@ -115,6 +115,20 @@ describe('Attendance remediation — recording, editing, validation', () => {
     expect(history).toHaveLength(0);
   });
 
+  it('A17: /records returns session_type + subject_name and can filter by session type', async () => {
+    await mark({ ...base, records: [{ studentId: 's1', studentName: 'Sam One', status: 'present' }] });
+    await mark({ ...base, sessionType: 'subject', subjectId: 7, records: [{ studentId: 's1', studentName: 'Sam One', status: 'late' }] });
+
+    const all = await request(app).get('/api/attendance/records').query({ classId: base.classId }).set(authHeader(teacherToken));
+    expect(all.body.data.length).toBe(2);
+    const subjRow = all.body.data.find((r: any) => r.session_type === 'subject');
+    expect(subjRow.subject_name).toBe('History');
+
+    const subjectOnly = await request(app).get('/api/attendance/records')
+      .query({ classId: base.classId, sessionType: 'subject' }).set(authHeader(teacherToken));
+    expect(subjectOnly.body.data.length).toBe(1);
+  });
+
   it('X3: a back-dated register is filed under the term its date falls in', async () => {
     await db.run(`INSERT INTO academic_years (id, name) VALUES (1, '2025-2026')`);
     await db.run(

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
@@ -38,19 +38,28 @@ const initials = (name: string) => name.split(' ').map((n) => n[0]).join('').toU
 
 export const MarkAttendance: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { can } = usePermissions();
+  // Deep link from Attendance History / Coverage: /attendance/mark?classId=…&date=…&period=…&sessionType=…&subjectId=…
+  const qp = React.useRef({
+    classId: searchParams.get('classId') || '',
+    date: searchParams.get('date') || '',
+    period: searchParams.get('period') || '',
+    sessionType: (searchParams.get('sessionType') as SessionType) || '',
+    subjectId: searchParams.get('subjectId') || '',
+  }).current;
   const [classes, setClasses] = useState<ClassData[]>([]);
-  const [selectedClass, setSelectedClass] = useState('');
+  const [selectedClass, setSelectedClass] = useState(qp.classId);
   const [students, setStudents] = useState<Student[]>([]);
   const [attendance, setAttendance] = useState<Record<string, AttendanceState>>({});
-  const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0]);
-  const [period, setPeriod] = useState('Morning');
+  const [sessionDate, setSessionDate] = useState(qp.date || new Date().toISOString().split('T')[0]);
+  const [period, setPeriod] = useState(qp.period || 'Morning');
   // A.1.1 vs A.1.2: homeroom is the class-group's overall daily attendance;
   // subject requires picking which course session this is.
-  const [sessionType, setSessionType] = useState<SessionType>('homeroom');
+  const [sessionType, setSessionType] = useState<SessionType>(qp.sessionType === 'subject' ? 'subject' : 'homeroom');
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
-  const [subjectId, setSubjectId] = useState<number | ''>('');
+  const [subjectId, setSubjectId] = useState<number | ''>(qp.subjectId ? Number(qp.subjectId) : '');
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -69,7 +78,16 @@ export const MarkAttendance: React.FC = () => {
   const [undoSnapshot, setUndoSnapshot] = useState<Record<string, AttendanceState> | null>(null);
   // The monitoring view is the default landing: you check what's missing
   // before deciding what to record.
-  const [tab, setTab] = useState<'missing' | 'record'>('missing');
+  const [tab, setTab] = useState<'missing' | 'record'>(qp.classId ? 'record' : 'missing');
+
+  // Consume the deep-link params once, then drop them from the URL so a manual
+  // class change later isn't "stuck" on the linked session.
+  useEffect(() => {
+    if (qp.classId || qp.date || qp.period) {
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Badge on the Missing tab, so the outstanding count stays visible while
   // you're recording rather than only on the dashboard you left.
   const [missingCount, setMissingCount] = useState<number | null>(null);
@@ -93,7 +111,7 @@ export const MarkAttendance: React.FC = () => {
       try {
         const res = await apiGet<ClassData[]>('/api/mis/classes');
         setClasses(res.data || []);
-        if (res.data?.length) setSelectedClass(res.data[0].id);
+        if (res.data?.length) setSelectedClass((cur) => cur || res.data![0].id);
       } catch (err) { console.error('Error fetching classes:', err); }
       finally { setLoadingClasses(false); }
     })();

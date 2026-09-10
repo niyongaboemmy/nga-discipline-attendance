@@ -51,6 +51,22 @@ export const disciplineApi = {
     className?: string; description?: string; location?: string; sanction?: string;
   }) => apiPost('/api/discipline/adjust', input),
 
+  config: () => apiGet<{
+    demeritCategories: string[]; meritCategories: string[];
+    demeritTiers: Record<string, number>; meritTiers: Record<string, number>;
+    sanctions: string[]; recordStatuses: string[];
+  }>('/api/discipline/config'),
+
+  detail: (id: number) => apiGet<{
+    record: Record<string, unknown>;
+    rule: DisciplineRule | null;
+    history: { action: string; actor_name: string | null; details: string | null; created_at: string }[];
+  }>(`/api/discipline/${id}`),
+  edit: (id: number, patch: Record<string, unknown>) => apiPut(`/api/discipline/${id}`, patch),
+  remove: (id: number, reason?: string) => apiDelete(`/api/discipline/${id}`, reason ? { reason } : undefined),
+  setStatus: (id: number, body: { status: string; resolutionNote?: string; sanction?: string }) =>
+    apiPut(`/api/discipline/${id}/status`, body),
+
   myTermBalance: () => apiGet<TermBalance>('/api/discipline/term-balance/me'),
   studentTermBalance: (studentId: string) => apiGet<TermBalance>(`/api/discipline/term-balance/${studentId}`),
   stats: () => apiGet<{ studentCount: number; averageBalance: number; atRiskCount: number; students: TermBalance[] }>(
