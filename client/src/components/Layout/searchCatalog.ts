@@ -17,6 +17,14 @@ export interface SearchItem {
  *  this searches page/feature names, not live record data. */
 export const searchCatalog: SearchItem[] = [
   {
+    label: 'Today', description: 'Your timetable for the day — take each register from its lesson', path: '/today',
+    roles: ['admin', 'teacher', 'student'], keywords: ['agenda', 'schedule today', 'my day', 'registers', 'timetable', 'take attendance'],
+  },
+  {
+    label: 'My Schedule', description: 'Your week from the Central MIS calendar', path: '/schedule',
+    roles: ['admin', 'teacher', 'student'], keywords: ['timetable', 'week', 'calendar', 'lessons'],
+  },
+  {
     label: 'Dashboard', description: 'Overview and quick stats', path: '/dashboard',
     roles: ['admin', 'teacher', 'student'], keywords: ['home', 'overview', 'summary'],
   },
@@ -41,8 +49,8 @@ export const searchCatalog: SearchItem[] = [
 
   // Attendance (staff)
   {
-    label: 'Mark Attendance', description: 'Take attendance for a class session', path: '/attendance/mark',
-    roles: ['admin', 'teacher'], keywords: ['roll call', 'check in', 'present absent late excused'],
+    label: 'Take a Register', description: 'Record attendance for a class session', path: '/attendance/mark',
+    roles: ['admin', 'teacher'], keywords: ['roll call', 'check in', 'mark attendance', 'present absent late excused'],
   },
   {
     label: 'Attendance History', description: 'Past attendance sessions and records', path: '/attendance/records',

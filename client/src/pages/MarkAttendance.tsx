@@ -79,6 +79,10 @@ export const MarkAttendance: React.FC = () => {
   // The monitoring view is the default landing: you check what's missing
   // before deciding what to record.
   const [tab, setTab] = useState<'missing' | 'record'>(qp.classId ? 'record' : 'missing');
+  // Arrived from Today / Schedule with the session already chosen — keep the
+  // config collapsed so the register itself is the focus. Manual entry (no
+  // deep-link params) still opens with the full picker for corrections.
+  const [showConfig, setShowConfig] = useState(!qp.classId);
 
   // Consume the deep-link params once, then drop them from the URL so a manual
   // class change later isn't "stuck" on the linked session.
@@ -420,7 +424,27 @@ export const MarkAttendance: React.FC = () => {
           <div className="mark-config-head">
             <span className="mark-config-icon"><CalendarDays size={15} /></span>
             <span className="section-title">Session</span>
+            {!showConfig && (
+              <button type="button" className="btn btn-ghost btn-sm ml-auto" onClick={() => setShowConfig(true)}>
+                <PenLine size={13} /> Change
+              </button>
+            )}
           </div>
+
+          {!showConfig && (
+            <div className="alert alert-info mt-3">
+              <CalendarDays size={16} />
+              <span>
+                <strong>{className_ ?? 'Class'}</strong>
+                {sessionType === 'subject' && subjectName ? <> · {subjectName}</> : <> · Homeroom</>}
+                <br />
+                {new Date(sessionDate).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · {period}
+              </span>
+            </div>
+          )}
+
+          {showConfig && (
+          <>
           <div className="field mt-4">
             <label className="label">Session type</label>
             <div className="segmented">
@@ -492,6 +516,8 @@ export const MarkAttendance: React.FC = () => {
               ]}
             />
           </div>
+          </>
+          )}
 
           <div className="nav-divider" style={{ margin: '20px 0' }} />
           <span className="label">Mark everyone as</span>

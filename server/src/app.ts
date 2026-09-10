@@ -16,6 +16,7 @@ import academicsRoutes from './routes/academics.js';
 import rolesPermissionsRoutes from './routes/rolesPermissions.js';
 import disciplineRulesRoutes from './modules/discipline/rules.routes.js';
 import subjectAttendanceRoutes from './modules/attendance/subjectAttendance.routes.js';
+import scheduleRoutes from './modules/attendance/schedule.routes.js';
 import reportingRoutes from './modules/reporting/reporting.routes.js';
 
 /** The Express app, with no side effects (no DB init, no `listen`) — so
@@ -40,6 +41,7 @@ app.use((_req, res, next) => {
 app.use('/api/sso', ssoRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/attendance', subjectAttendanceRoutes);
+app.use('/api/attendance', scheduleRoutes);
 app.use('/api/discipline', disciplineRoutes);
 app.use('/api/discipline', disciplineRulesRoutes);
 app.use('/api/staff', staffRoutes);

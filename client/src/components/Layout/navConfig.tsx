@@ -1,6 +1,8 @@
 import {
   LayoutDashboard,
   CheckSquare,
+  CalendarClock,
+  CalendarRange,
   History,
   Clock,
   FileText,
@@ -33,6 +35,7 @@ export interface NavItem {
 /* Items are ordered so that, after filtering by role, every section's items
    are consecutive — the sidebar renders one heading per run. */
 export const navItems: NavItem[] = [
+  { label: 'Today', path: '/today', icon: CalendarClock, roles: ['admin', 'teacher', 'student'] },
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'teacher', 'student'] },
 
   // Admin — Discipline Rules lives here, not under Discipline: it's catalog
@@ -44,11 +47,13 @@ export const navItems: NavItem[] = [
   { label: 'Audit Log', path: '/admin/audit', icon: AuditIcon, roles: ['admin'], section: 'Administration' },
 
   // Attendance (staff)
-  { label: 'Mark Attendance', path: '/attendance/mark', icon: CheckSquare, roles: ['admin', 'teacher'], section: 'Attendance' },
+  { label: 'Take a Register', path: '/attendance/mark', icon: CheckSquare, roles: ['admin', 'teacher'], section: 'Attendance' },
+  { label: 'My Schedule', path: '/schedule', icon: CalendarRange, roles: ['admin', 'teacher'], section: 'Attendance' },
   { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
 
-  // Attendance (student) — My Attendance now includes a Schedule tab.
+  // Attendance (student)
+  { label: 'My Schedule', path: '/schedule', icon: CalendarRange, roles: ['student'], section: 'Attendance' },
   { label: 'My Attendance', path: '/attendance/me', icon: History, roles: ['student'], section: 'Attendance' },
   { label: 'Leaves & Excuses', path: '/excuses', icon: FileText, roles: ['student'], section: 'Attendance' },
 

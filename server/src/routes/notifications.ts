@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { getDb } from '../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission } from '../middleware/authorize.js';
+import { generateForUser } from '../modules/attendance/notifier.service.js';
 
 const router = Router();
 
@@ -14,11 +15,15 @@ router.get('/', async (req: any, res: Response) => {
   const userId = authReq.user!.id;
   const db = getDb();
 
+  // Reconcile schedule-derived notifications on read — idempotent via
+  // dedupe_key, so polling this endpoint is cheap.
+  await generateForUser(db, authReq);
+
   try {
     const list = await db.all(
-      `SELECT * FROM notifications 
+      `SELECT * FROM notifications
        WHERE user_id = ? OR user_id = 'all'
-       ORDER BY created_at DESC 
+       ORDER BY created_at DESC
        LIMIT 30`,
       userId
     );

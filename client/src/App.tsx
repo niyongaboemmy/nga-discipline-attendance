@@ -10,6 +10,8 @@ import { Login } from './pages/Login';
 import { SSOCallback } from './pages/SSOCallback';
 import { Welcome } from './pages/Welcome';
 import { Dashboard } from './pages/Dashboard';
+import { Today } from './pages/Today';
+import { Schedule } from './pages/Schedule';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { RolesPermissions } from './pages/RolesPermissions';
 import { Pending } from './pages/Pending';
@@ -102,6 +104,22 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/today"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+                <Today />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/schedule"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+                <Schedule />
               </ProtectedRoute>
             }
           />

@@ -19,7 +19,7 @@ export interface User {
  *  makes ProtectedRoute's post-login redirect and the "/" auth-guard below
  *  behave consistently across admin/teacher/student. */
 export const homeRouteForRole = (role: Role): string =>
-  role === 'unassigned' ? '/pending' : '/welcome';
+  role === 'unassigned' ? '/pending' : '/today';
 
 interface AuthContextType {
   isAuthenticated: boolean;
