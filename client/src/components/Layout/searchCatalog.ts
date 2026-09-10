@@ -46,8 +46,8 @@ export const searchCatalog: SearchItem[] = [
 
   // Attendance (staff)
   {
-    label: 'Take a Register', description: 'Record attendance for a class session', path: '/attendance/mark',
-    roles: ['admin', 'teacher'], keywords: ['roll call', 'check in', 'mark attendance', 'present absent late excused'],
+    label: 'Take a Register', description: 'Open a lesson in the Attendance Calendar to record it', path: '/attendance?view=day',
+    roles: ['admin', 'teacher'], keywords: ['roll call', 'check in', 'mark attendance', 'record a session', 'present absent late excused'],
   },
   {
     label: 'Attendance History', description: 'Past attendance sessions and records', path: '/attendance/records',
