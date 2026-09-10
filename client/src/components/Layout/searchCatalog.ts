@@ -17,12 +17,9 @@ export interface SearchItem {
  *  this searches page/feature names, not live record data. */
 export const searchCatalog: SearchItem[] = [
   {
-    label: 'Today', description: 'Your timetable for the day — take each register from its lesson', path: '/today',
-    roles: ['admin', 'teacher', 'student'], keywords: ['agenda', 'schedule today', 'my day', 'registers', 'timetable', 'take attendance'],
-  },
-  {
-    label: 'My Schedule', description: 'Your week from the Central MIS calendar', path: '/schedule',
-    roles: ['admin', 'teacher', 'student'], keywords: ['timetable', 'week', 'calendar', 'lessons'],
+    label: 'Attendance Calendar', description: 'Month / week / day — open any lesson to take its register', path: '/attendance',
+    roles: ['admin', 'teacher', 'student'],
+    keywords: ['agenda', 'timetable', 'schedule', 'calendar', 'my day', 'week', 'registers', 'take attendance', 'lessons'],
   },
   {
     label: 'Dashboard', description: 'Overview and quick stats', path: '/dashboard',

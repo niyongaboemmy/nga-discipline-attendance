@@ -32,15 +32,18 @@ export interface DayResponse {
   progress: { done: number; total: number };
 }
 
+/** The fields every calendar view can rely on for a session, whether it came
+ *  from the full day payload or the lighter week payload. */
+export type CalendarSession = Pick<
+  DaySession,
+  'kind' | 'classId' | 'className' | 'subjectId' | 'subjectName' | 'color' | 'startTime' | 'endTime' | 'room' | 'status' | 'ownStatus' | 'deepLink'
+> &
+  Partial<Pick<DaySession, 'slotId' | 'subjectCode' | 'stats' | 'lastMarkedAt' | 'markedByMe'>>;
+
 export interface WeekDay {
   date: string;
   dayOfWeek: number;
-  sessions: Array<
-    Pick<
-      DaySession,
-      'kind' | 'classId' | 'className' | 'subjectId' | 'subjectName' | 'color' | 'startTime' | 'endTime' | 'room' | 'status' | 'ownStatus' | 'deepLink'
-    >
-  >;
+  sessions: CalendarSession[];
 }
 
 export interface WeekResponse {
@@ -64,3 +67,21 @@ export const getScheduleWeek = (weekStart?: string) =>
 
 export const getScheduleUpcoming = () =>
   apiGet<UpcomingResponse>('/api/attendance/schedule/upcoming').then((r) => r.data!);
+
+export interface MonthDay {
+  date: string;
+  dayOfWeek: number;
+  lessonCount: number;
+  colors: string[];
+  progress: { done: number; total: number };
+  ownStatuses: AttStatus[];
+}
+export interface MonthResponse {
+  month: string;
+  first: string;
+  last: string;
+  timetableAvailable: boolean;
+  days: MonthDay[];
+}
+export const getScheduleMonth = (month?: string) =>
+  apiGet<MonthResponse>(`/api/attendance/schedule/month${month ? `?month=${month}` : ''}`).then((r) => r.data!);

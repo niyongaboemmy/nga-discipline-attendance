@@ -86,7 +86,7 @@ const TodayStrip: React.FC = () => {
   const pct = Math.round((done / total) * 100);
   const allDone = done === total;
   return (
-    <Link to="/today" className="card card-body mb-6 flex items-center gap-4" style={{ textDecoration: 'none' }}>
+    <Link to="/attendance?view=day" className="card card-body mb-6 flex items-center gap-4" style={{ textDecoration: 'none' }}>
       <span className="section-icon"><CalendarClock size={18} /></span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="flex items-center gap-2">
