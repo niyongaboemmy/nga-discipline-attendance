@@ -10,6 +10,10 @@ import {
   SANCTIONS,
   RECORD_STATUSES,
   DisciplineType,
+  DEMERIT_POINTS,
+  MERIT_POINTS,
+  DEMERIT_CATEGORIES,
+  MERIT_CATEGORIES,
 } from '../utils/conduct.js';
 import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod, resolveAcademicPeriodForDate } from '../utils/academicPeriod.js';
@@ -95,6 +99,24 @@ async function triggerConductCheck(studentId: string, studentName: string, acade
     console.error('Error in triggerConductCheck:', err);
   }
 }
+
+/**
+ * Remediation D9 — the client hard-coded copies of these vocabularies with a
+ * "mirrors the server" comment. Serve them so the log form can't drift.
+ */
+router.get('/config', (_req: any, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      demeritCategories: DEMERIT_CATEGORIES,
+      meritCategories: MERIT_CATEGORIES,
+      demeritTiers: DEMERIT_POINTS,
+      meritTiers: MERIT_POINTS,
+      sanctions: SANCTIONS,
+      recordStatuses: RECORD_STATUSES,
+    },
+  });
+});
 
 // Log a discipline record — demerit or merit (Teacher/Admin only)
 router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Response) => {

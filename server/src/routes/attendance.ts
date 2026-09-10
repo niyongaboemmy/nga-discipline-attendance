@@ -515,21 +515,70 @@ router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN'), async (req: any, r
   const { academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
-    // Homeroom-only: a student's "overall attendance" (A.1.1) is the homeroom
-    // signal. Without this, a subject-session row (A.1.2) for the same day
-    // would double-count against the same rate calculation client-side.
-    const records = academicTermId != null
-      ? await db.all(
-          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC",
-          studentId, academicTermId
-        )
-      : await db.all(
-          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' ORDER BY session_date DESC",
-          studentId
-        );
+    // Remediation A16: return homeroom AND subject rows (tagged), plus a
+    // day-by-day merge and a summary. The headline rate stays the homeroom
+    // signal (A.1.1) — matching every report and the warning check (A6) — but
+    // the student can finally see their per-subject attendance too.
+    const termClause = academicTermId != null
+      ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
+    const termParams = academicTermId != null ? [academicTermId] : [];
+
+    const all = await db.all(
+      `SELECT id, class_id, class_name, session_date, period, session_type, subject_id, status, notes, updated_at
+         FROM attendance_records
+        WHERE student_id = ?${termClause}
+        ORDER BY session_date DESC, period ASC`,
+      studentId, ...termParams
+    );
+    const subjectNames = new Map<number, string>(
+      (await db.all('SELECT id, name FROM subjects')).map((s: any) => [s.id, s.name])
+    );
+
+    const homeroom = all.filter((r: any) => r.session_type === 'homeroom');
+    const subjects = all
+      .filter((r: any) => r.session_type === 'subject')
+      .map((r: any) => ({ ...r, subject_name: subjectNames.get(r.subject_id) ?? `Subject #${r.subject_id}` }));
+
+    const excuses = await db.all(
+      `SELECT id, class_id, class_name, session_date, status FROM excuse_requests
+        WHERE student_id = ?${termClause}`,
+      studentId, ...termParams
+    );
+    const excuseByDay = new Map<string, string>();
+    for (const e of excuses) {
+      const key = `${e.session_date}`;
+      // approved wins over pending wins over rejected for the day badge
+      const rank = (s: string) => (s === 'approved' ? 3 : s === 'pending' ? 2 : 1);
+      if (!excuseByDay.has(key) || rank(e.status) > rank(excuseByDay.get(key)!)) excuseByDay.set(key, e.status);
+    }
+
+    // Day-by-day merge (A16).
+    const dayMap = new Map<string, any>();
+    for (const r of [...homeroom, ...subjects]) {
+      if (!dayMap.has(r.session_date)) {
+        dayMap.set(r.session_date, { date: r.session_date, homeroom: null, subjects: [], excuseStatus: excuseByDay.get(r.session_date) ?? null });
+      }
+      const day = dayMap.get(r.session_date);
+      if (r.session_type === 'homeroom') day.homeroom = { status: r.status, notes: r.notes, period: r.period };
+      else day.subjects.push({ subjectId: r.subject_id, subjectName: (r as any).subject_name, status: r.status, notes: r.notes, period: r.period });
+    }
+    const days = [...dayMap.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
+
+    const total = homeroom.length;
+    const attended = homeroom.filter((r: any) => ['present', 'late', 'excused'].includes(r.status)).length;
+    const summary = {
+      total,
+      present: homeroom.filter((r: any) => r.status === 'present').length,
+      late: homeroom.filter((r: any) => r.status === 'late').length,
+      excused: homeroom.filter((r: any) => r.status === 'excused').length,
+      absent: homeroom.filter((r: any) => r.status === 'absent').length,
+      rate: total > 0 ? Math.round((attended / total) * 100) : 100,
+      threshold: ATTENDANCE_WARN_THRESHOLD,
+    };
+
     return res.json({
       success: true,
-      data: records,
+      data: { summary, days, homeroom, subjects },
     });
   } catch (error) {
     console.error('Error fetching own attendance:', error);
@@ -608,7 +657,8 @@ router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, r
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const studentName = authReq.user!.name;
-  const { className, sessionDate, reason, description } = req.body;
+  const { className, classId = null, period = null, sessionDate, reason, description } = req.body;
+  const supersedesId = req.body.supersedesId ? Number(req.body.supersedesId) : null;
 
   if (!className || !sessionDate || !reason) {
     return res.status(400).json({
@@ -619,41 +669,56 @@ router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, r
   if (!DATE_RE.test(String(sessionDate))) {
     return res.status(400).json({ success: false, message: 'Invalid sessionDate. Expected YYYY-MM-DD.' });
   }
+  if (isFutureSchoolDate(String(sessionDate))) {
+    return res.status(400).json({ success: false, message: 'You can only request an excuse for a past or current date.' });
+  }
   if (String(reason).length > 100 || String(className).length > 100 || String(description || '').length > 2000) {
     return res.status(400).json({ success: false, message: 'Input too long: reason/className max 100 chars, description max 2000.' });
   }
+  if (period != null && !(PERIODS as readonly string[]).includes(String(period))) {
+    return res.status(400).json({ success: false, message: `Invalid period. Expected one of: ${PERIODS.join(', ')}.` });
+  }
 
   const db = getDb();
-  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
+  // Remediation X3: an excuse belongs to the term its date falls in.
+  const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
+    db, sessionDate, resolveAcademicPeriod(authReq)
+  );
   try {
-    // One pending request per class/date. Nothing prevented a student from
-    // submitting the same excuse repeatedly, which floods the reviewer's
-    // queue with duplicates of the same absence. A *decided* request can
-    // still be resubmitted — a rejection is often "send better evidence",
-    // and blocking that would leave the student no route back.
-    const duplicate = await db.get(
-      `SELECT id FROM excuse_requests
-       WHERE student_id = ? AND class_name = ? AND session_date = ? AND status = 'pending'`,
-      studentId, className, sessionDate
+    // Remediation A9: one request per student/class/date regardless of status.
+    // The previous guard only blocked a *pending* duplicate and matched on the
+    // free-text class name, so a re-typed name or a re-submit after a decision
+    // slipped straight through and flooded the reviewer's queue. A genuine
+    // appeal is still possible — the student passes `supersedesId` pointing at
+    // the decided request they're following up on.
+    const dupWhere = classId
+      ? `student_id = ? AND class_id = ? AND session_date = ?`
+      : `student_id = ? AND lower(class_name) = lower(?) AND session_date = ?`;
+    const existing = await db.get(
+      `SELECT * FROM excuse_requests WHERE ${dupWhere} ORDER BY created_at DESC LIMIT 1`,
+      studentId, classId ?? className, sessionDate
     );
-    if (duplicate) {
-      return res.status(409).json({
-        success: false,
-        message: 'You already have a pending request for this class on that date. Wait for it to be reviewed.',
-      });
+    if (existing) {
+      const appealingThis = supersedesId === existing.id && existing.status === 'rejected';
+      if (!appealingThis) {
+        return res.status(409).json({
+          success: false,
+          code: 'EXCUSE_EXISTS',
+          message: existing.status === 'pending'
+            ? 'You already have a request for this class on that date — wait for it to be reviewed.'
+            : `This absence already has a ${existing.status} excuse request. Open it to appeal if you have new evidence.`,
+          data: { existingId: existing.id, existingStatus: existing.status },
+        });
+      }
     }
 
     const result = await db.run(
-      `INSERT INTO excuse_requests (student_id, student_name, class_name, session_date, reason, description, status, academic_year_id, academic_term_id)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      studentId,
-      studentName,
-      className,
-      sessionDate,
-      reason,
-      description || '',
-      academicYearId ?? null,
-      academicTermId ?? null
+      `INSERT INTO excuse_requests
+         (student_id, student_name, class_id, class_name, period, session_date, reason, description, status, academic_year_id, academic_term_id, supersedes_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      studentId, studentName, classId, className, period, sessionDate,
+      reason, description || '', academicYearId ?? null, academicTermId ?? null,
+      supersedesId
     );
 
     const inserted = await db.get('SELECT * FROM excuse_requests WHERE id = ?', result.lastID);
@@ -671,6 +736,35 @@ router.post('/excuse', authorizePermission('EXCUSES_SUBMIT'), async (req: any, r
     });
   }
 });
+
+/**
+ * Remediation A8 — reconcile an excuse decision with the absence it covers.
+ * Approving flips the student's `absent` homeroom rows for that day (scoped to
+ * the excuse's period when it has one) to `excused`; moving an approved excuse
+ * back to rejected restores them. Returns how many rows changed for the audit.
+ */
+async function reconcileExcuseWithAttendance(
+  db: any,
+  excuse: { student_id: string; session_date: string; class_id: string | null; class_name: string; period: string | null },
+  direction: 'approve' | 'revert'
+): Promise<number> {
+  const from = direction === 'approve' ? 'absent' : 'excused';
+  const to = direction === 'approve' ? 'excused' : 'absent';
+  const classClause = excuse.class_id ? 'AND class_id = ?' : 'AND lower(class_name) = lower(?)';
+  const classVal = excuse.class_id ?? excuse.class_name;
+  const periodClause = excuse.period ? 'AND period = ?' : '';
+  const params: any[] = [to, from, excuse.student_id, excuse.session_date, classVal];
+  if (excuse.period) params.push(excuse.period);
+
+  const result = await db.run(
+    `UPDATE attendance_records
+        SET status = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE status = ? AND session_type = 'homeroom'
+        AND student_id = ? AND session_date = ? ${classClause} ${periodClause}`,
+    ...params
+  );
+  return result.changes ?? 0;
+}
 
 
 // List excuse requests for review (Teacher/Admin only)
@@ -695,18 +789,83 @@ router.get('/excuses', authorizePermission('EXCUSES_REVIEW'), async (req: any, r
 
   try {
     const excuses = await db.all(query, ...params);
-    return res.json({ success: true, data: excuses });
+
+    // Remediation A10: the reviewer needs context — is the student actually
+    // marked absent that day, and how many excuses have they filed before?
+    const enriched = await Promise.all(excuses.map(async (ex: any) => {
+      const classClause = ex.class_id ? 'AND class_id = ?' : 'AND lower(class_name) = lower(?)';
+      const classVal = ex.class_id ?? ex.class_name;
+      const att = await db.get(
+        `SELECT status FROM attendance_records
+          WHERE student_id = ? AND session_date = ? AND session_type = 'homeroom' ${classClause}
+          ORDER BY (status = 'absent') DESC LIMIT 1`,
+        ex.student_id, ex.session_date, classVal
+      );
+      const priorCount = await db.get(
+        `SELECT COUNT(*) AS n FROM excuse_requests WHERE student_id = ? AND id != ?`,
+        ex.student_id, ex.id
+      );
+      return {
+        ...ex,
+        attendanceStatus: att?.status ?? null,
+        isMarkedAbsent: att?.status === 'absent',
+        priorExcuseCount: priorCount?.n ?? 0,
+      };
+    }));
+
+    return res.json({ success: true, data: enriched });
   } catch (error) {
     console.error('Error fetching excuse requests:', error);
     return res.status(500).json({ success: false, message: 'Error fetching excuse requests.' });
   }
 });
 
+async function applyExcuseDecision(
+  db: any,
+  actor: { id: string; name: string },
+  existing: any,
+  status: 'approved' | 'rejected',
+  reviewerNote: string | null
+) {
+  await db.run(
+    `UPDATE excuse_requests
+        SET status = ?, reviewer_note = ?, reviewed_by = ?, reviewed_by_name = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`,
+    status, reviewerNote, actor.id, actor.name ?? null, existing.id
+  );
+
+  // Remediation A8: move the underlying absence.
+  let reconciled = 0;
+  if (status === 'approved' && existing.status !== 'approved') {
+    reconciled = await reconcileExcuseWithAttendance(db, existing, 'approve');
+  } else if (status === 'rejected' && existing.status === 'approved') {
+    reconciled = await reconcileExcuseWithAttendance(db, existing, 'revert');
+  }
+
+  await recordAudit(db, actor, 'excuse.review', 'excuse_request', existing.id,
+    { from: existing.status, to: status, attendanceRowsChanged: reconciled }, { required: true });
+
+  await db.run(
+    `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'system', ?, ?)`,
+    existing.student_id,
+    `Excuse ${status}`,
+    `Your excuse for ${existing.class_name} on ${existing.session_date} was ${status}${reviewerNote ? ` — "${reviewerNote}"` : ''}.`
+  );
+  await notifyUserExternal(
+    db,
+    existing.student_id,
+    `Excuse request ${status}`,
+    `Your excuse for ${existing.class_name} (${existing.session_date}) has been ${status} by ${actor.name}.`
+  );
+  return reconciled;
+}
+
 // Approve or reject an excuse request (Teacher/Admin only)
 router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const id = req.params.id;
   const { status } = req.body as { status?: string };
+  const reviewerNote = req.body.reviewerNote ? String(req.body.reviewerNote).slice(0, 500) : null;
 
   if (status !== 'approved' && status !== 'rejected') {
     return res.status(400).json({ success: false, message: "Invalid status. Expected 'approved' or 'rejected'." });
@@ -721,32 +880,69 @@ router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (r
       return res.status(404).json({ success: false, message: 'Excuse request not found.' });
     }
 
-    await db.run(
-      'UPDATE excuse_requests SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      status, id
-    );
+    await db.run('BEGIN TRANSACTION');
+    let reconciled = 0;
+    try {
+      reconciled = await applyExcuseDecision(db, actor, existing, status, reviewerNote);
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+
     const updated = await db.get('SELECT * FROM excuse_requests WHERE id = ?', id);
-
-    await recordAudit(db, actor, 'excuse.review', 'excuse_request', id, { from: existing.status, to: status });
-
-    // Notify the student in-app + on external channels.
-    await db.run(
-      `INSERT INTO notifications (user_id, type, title, message) VALUES (?, 'system', ?, ?)`,
-      existing.student_id,
-      `Excuse ${status}`,
-      `Your excuse for ${existing.class_name} on ${existing.session_date} was ${status}.`
-    );
-    await notifyUserExternal(
-      db,
-      existing.student_id,
-      `Excuse request ${status}`,
-      `Your excuse for ${existing.class_name} (${existing.session_date}) has been ${status} by ${actor.name}.`
-    );
-
-    return res.json({ success: true, data: updated, message: `Excuse ${status}.` });
+    return res.json({
+      success: true,
+      data: updated,
+      message: reconciled > 0
+        ? `Excuse ${status}; ${reconciled} attendance record${reconciled === 1 ? '' : 's'} updated to excused.`
+        : `Excuse ${status}.`,
+    });
   } catch (error: any) {
     console.error('Error reviewing excuse:', error);
     return res.status(500).json({ success: false, message: error.message || 'Error updating the excuse request.' });
+  }
+});
+
+// Bulk approve/reject pending excuse requests (Teacher/Admin only) — A10.
+router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const actor = authReq.user!;
+  const { ids, status } = req.body as { ids?: unknown; status?: string };
+  const reviewerNote = req.body.reviewerNote ? String(req.body.reviewerNote).slice(0, 500) : null;
+
+  if (status !== 'approved' && status !== 'rejected') {
+    return res.status(400).json({ success: false, message: "Invalid status. Expected 'approved' or 'rejected'." });
+  }
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200) {
+    return res.status(400).json({ success: false, message: 'Provide 1–200 excuse request ids.' });
+  }
+
+  const db = getDb();
+  let processed = 0;
+  let reconciled = 0;
+  try {
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const rawId of ids) {
+        const existing = await db.get('SELECT * FROM excuse_requests WHERE id = ?', rawId);
+        if (!existing || existing.status === status) continue;
+        reconciled += await applyExcuseDecision(db, actor, existing, status, reviewerNote);
+        processed += 1;
+      }
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
+    }
+    return res.json({
+      success: true,
+      data: { processed, attendanceRowsChanged: reconciled },
+      message: `${processed} request${processed === 1 ? '' : 's'} ${status}.`,
+    });
+  } catch (error: any) {
+    console.error('Error bulk-reviewing excuses:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Error updating excuse requests.' });
   }
 });
 
