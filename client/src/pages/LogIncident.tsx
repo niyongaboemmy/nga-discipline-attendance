@@ -5,6 +5,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { useToast } from '../context/ToastContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { Gavel, Award, AlertCircle, Save, Users } from 'lucide-react';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { disciplineApi, type DisciplineRule } from '../api/discipline';
 import { apiGet, apiPost, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
@@ -13,21 +14,17 @@ interface ClassData { id: string; name: string; department: string; }
 interface Student { id: string; name: string; email: string; }
 type RecordType = 'demerit' | 'merit';
 
-// Mirrors server/src/utils/conduct.ts. The server is authoritative for points;
-// these maps drive the live preview and the option lists only.
-const DEMERIT_POINTS: Record<string, number> = { minor: 2, moderate: 5, major: 10 };
-const MERIT_POINTS: Record<string, number> = { small: 3, notable: 5, outstanding: 10 };
-const DEMERIT_CATEGORIES = ['Misconduct', 'Tardiness', 'Uniform', 'Disruption', 'Academic Honesty', 'Property Damage', 'Bullying', 'Other'];
-const MERIT_CATEGORIES = ['Leadership', 'Helpfulness', 'Academic Excellence', 'Sportsmanship', 'Community Service', 'Improvement', 'Other'];
-const SANCTIONS: { value: string; label: string }[] = [
-  { value: 'none', label: 'None' },
-  { value: 'warning', label: 'Verbal warning' },
-  { value: 'parent_contact', label: 'Parent contact' },
-  { value: 'detention', label: 'Detention' },
-  { value: 'suspension', label: 'Suspension' },
-  { value: 'community_service', label: 'Community service' },
-  { value: 'counseling', label: 'Counseling' },
-];
+// Fallback vocabularies, used only until GET /api/discipline/config responds
+// (remediation D9 — the server is the source of truth for these lists and the
+// point tiers, so a server change can't leave the form showing stale options).
+const FALLBACK_DEMERIT_POINTS: Record<string, number> = { minor: 2, moderate: 5, major: 10 };
+const FALLBACK_MERIT_POINTS: Record<string, number> = { small: 3, notable: 5, outstanding: 10 };
+const FALLBACK_DEMERIT_CATEGORIES = ['Misconduct', 'Tardiness', 'Uniform', 'Disruption', 'Academic Honesty', 'Property Damage', 'Bullying', 'Other'];
+const FALLBACK_MERIT_CATEGORIES = ['Leadership', 'Helpfulness', 'Academic Excellence', 'Sportsmanship', 'Community Service', 'Improvement', 'Other'];
+const SANCTION_LABELS: Record<string, string> = {
+  none: 'None', warning: 'Verbal warning', parent_contact: 'Parent contact', detention: 'Detention',
+  suspension: 'Suspension', community_service: 'Community service', counseling: 'Counseling',
+};
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -43,6 +40,7 @@ export const LogIncident: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [bulk, setBulk] = useState(false);
   const [bulkIds, setBulkIds] = useState<string[]>([]);
+  const [duplicatePrompt, setDuplicatePrompt] = useState<React.FormEvent | null>(null);
 
   // B.1: prefer the governable rules catalog over the hardcoded legacy
   // category/severity lists below. The legacy lists remain as a fallback for
@@ -56,11 +54,17 @@ export const LogIncident: React.FC = () => {
   // first-time user per the UX audit.
   const [useCustomCategory, setUseCustomCategory] = useState(false);
 
+  const [config, setConfig] = useState<{
+    demeritCategories: string[]; meritCategories: string[];
+    demeritTiers: Record<string, number>; meritTiers: Record<string, number>;
+    sanctions: string[];
+  } | null>(null);
+
   const [type, setType] = useState<RecordType>('demerit');
   const [form, setForm] = useState({
     classId: '',
     studentId: '',
-    category: DEMERIT_CATEGORIES[0],
+    category: FALLBACK_DEMERIT_CATEGORIES[0],
     severity: 'minor',
     title: '',
     description: '',
@@ -72,21 +76,29 @@ export const LogIncident: React.FC = () => {
   useEffect(() => {
     (async () => {
       try {
-        const res = await disciplineApi.listRules({ active: true });
-        setRules(res.data || []);
-      } catch (err) { console.error('Error fetching discipline rules:', err); }
+        const [rulesRes, cfgRes] = await Promise.all([
+          disciplineApi.listRules({ active: true }),
+          disciplineApi.config().catch(() => null),
+        ]);
+        setRules(rulesRes.data || []);
+        if (cfgRes?.data) setConfig(cfgRes.data as any);
+      } catch (err) { console.error('Error fetching discipline setup:', err); }
     })();
   }, []);
+
+  const demeritCategories = config?.demeritCategories ?? FALLBACK_DEMERIT_CATEGORIES;
+  const meritCategories = config?.meritCategories ?? FALLBACK_MERIT_CATEGORIES;
+  const demeritTiers = config?.demeritTiers ?? FALLBACK_DEMERIT_POINTS;
+  const meritTiers = config?.meritTiers ?? FALLBACK_MERIT_POINTS;
+  const sanctionKeys = config?.sanctions ?? Object.keys(SANCTION_LABELS);
 
   const rulesForType = rules.filter((r) => r.type === type);
   const hasCatalog = rulesForType.length > 0;
   const selectedRule = rulesForType.find((r) => r.id === selectedRuleId) || null;
-  // Manual fields show when there's no catalog to pick from, or the staff
-  // member explicitly asked for a custom category.
   const showManualFields = !hasCatalog || useCustomCategory;
 
-  const categories = type === 'demerit' ? DEMERIT_CATEGORIES : MERIT_CATEGORIES;
-  const tiers = type === 'demerit' ? DEMERIT_POINTS : MERIT_POINTS;
+  const categories = type === 'demerit' ? demeritCategories : meritCategories;
+  const tiers = type === 'demerit' ? demeritTiers : meritTiers;
   const previewPoints = selectedRule ? selectedRule.default_points : (tiers[form.severity] ?? 0);
 
   // When type flips, reset category/severity to that type's vocabulary and
@@ -94,11 +106,12 @@ export const LogIncident: React.FC = () => {
   useEffect(() => {
     setForm((f) => ({
       ...f,
-      category: (type === 'demerit' ? DEMERIT_CATEGORIES : MERIT_CATEGORIES)[0],
+      category: (type === 'demerit' ? demeritCategories : meritCategories)[0],
       severity: type === 'demerit' ? 'minor' : 'small',
     }));
     setSelectedRuleId('');
     setUseCustomCategory(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
   const pickRule = (ruleId: number | '') => {
@@ -141,7 +154,7 @@ export const LogIncident: React.FC = () => {
   const allSelected = students.length > 0 && bulkIds.length === students.length;
   const toggleAll = () => setBulkIds(allSelected ? [] : students.map((s) => s.id));
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent, force = false) => {
     e.preventDefault();
     setMessage(null);
     const klass = classes.find((c) => c.id === form.classId);
@@ -162,6 +175,7 @@ export const LogIncident: React.FC = () => {
       location: form.location.trim() || null,
       sanction: type === 'demerit' ? form.sanction : 'none',
       ruleId: selectedRule ? selectedRule.id : null,
+      force,
     };
 
     setSaving(true);
@@ -181,6 +195,12 @@ export const LogIncident: React.FC = () => {
       toast.success(`${type === 'merit' ? 'Merit' : 'Demerit'} logged`, `For ${label}`);
       setTimeout(() => navigate('/discipline/records'), 800);
     } catch (err) {
+      // Remediation D1: a 409 means "you already logged this" — offer to force.
+      if (err instanceof ApiError && err.status === 409) {
+        setDuplicatePrompt(e);
+        setSaving(false);
+        return;
+      }
       setMessage({ type: 'error', text: err instanceof ApiError ? err.message : 'Network error. Could not reach the server.' });
     } finally { setSaving(false); }
   };
@@ -363,7 +383,7 @@ export const LogIncident: React.FC = () => {
                   <SearchableSelect
                     value={form.sanction}
                     onChange={(v) => update({ sanction: v })}
-                    options={SANCTIONS}
+                    options={sanctionKeys.map((s) => ({ value: s, label: SANCTION_LABELS[s] ?? s.replace('_', ' ') }))}
                     aria-label="Sanction"
                   />
                 </div>
@@ -397,6 +417,19 @@ export const LogIncident: React.FC = () => {
           </div>
         </section>
       </div>
+      <ConfirmDialog
+        open={!!duplicatePrompt}
+        title="Log this again?"
+        message="You've already logged this incident for this student on this date. Logging it again will add a second record and stack the points."
+        confirmLabel="Log anyway"
+        danger
+        onCancel={() => setDuplicatePrompt(null)}
+        onConfirm={() => {
+          const ev = duplicatePrompt;
+          setDuplicatePrompt(null);
+          if (ev) submit(ev, true);
+        }}
+      />
     </DashboardLayout>
   );
 };

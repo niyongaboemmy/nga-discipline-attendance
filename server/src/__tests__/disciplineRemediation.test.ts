@@ -126,6 +126,36 @@ describe('Discipline remediation — dedupe, edit, delete', () => {
     expect(audit).toBeTruthy();
   });
 
+  it('D9: GET /api/discipline/config serves the vocabularies', async () => {
+    const res = await request(app).get('/api/discipline/config').set(authHeader(teacherToken));
+    expect(res.status).toBe(200);
+    expect(res.body.data.demeritCategories).toContain('Tardiness');
+    expect(res.body.data.demeritTiers.major).toBe(10);
+    expect(res.body.data.sanctions).toContain('detention');
+  });
+
+  it('D4: dismissing demerits clears the follow-up flag on the next check', async () => {
+    // 16 points of demerits (> 15 threshold) -> a conduct follow-up notification.
+    for (let i = 0; i < 2; i++) {
+      await request(app).post('/api/discipline').set(authHeader(teacherToken)).send({
+        studentId: 'stu-9', studentName: 'Nia N', type: 'demerit', category: 'Misconduct',
+        severity: 'major', title: `Incident ${i}`, incidentDate: '2026-05-0' + (i + 1),
+      });
+    }
+    const flagged = await db.get(`SELECT * FROM notifications WHERE user_id = 'all' AND title LIKE 'Conduct follow-up%'`);
+    expect(flagged).toBeTruthy();
+
+    // Dismiss both -> balance recovers. Clear the notification so the next
+    // check has a clean slate, then flip a record's status.
+    await db.run(`DELETE FROM notifications`);
+    const recs = await db.all(`SELECT id FROM discipline_records WHERE student_id = 'stu-9'`);
+    for (const r of recs) {
+      await request(app).put(`/api/discipline/${r.id}/status`).set(authHeader(adminToken)).send({ status: 'dismissed' });
+    }
+    const after = await db.get(`SELECT * FROM notifications WHERE user_id = 'all' AND title LIKE 'Conduct follow-up%'`);
+    expect(after).toBeFalsy();
+  });
+
   it('D2: GET /:id returns the record plus its audit history', async () => {
     const created = await request(app).post('/api/discipline').set(authHeader(teacherToken)).send(incident);
     const id = created.body.data.id;
