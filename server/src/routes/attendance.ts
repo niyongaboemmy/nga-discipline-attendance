@@ -556,11 +556,18 @@ router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN'), async (req: any, r
     const dayMap = new Map<string, any>();
     for (const r of [...homeroom, ...subjects]) {
       if (!dayMap.has(r.session_date)) {
-        dayMap.set(r.session_date, { date: r.session_date, homeroom: null, subjects: [], excuseStatus: excuseByDay.get(r.session_date) ?? null });
+        dayMap.set(r.session_date, {
+          date: r.session_date, classId: r.class_id, className: r.class_name,
+          homeroom: null, subjects: [], excuseStatus: excuseByDay.get(r.session_date) ?? null,
+        });
       }
       const day = dayMap.get(r.session_date);
-      if (r.session_type === 'homeroom') day.homeroom = { status: r.status, notes: r.notes, period: r.period };
-      else day.subjects.push({ subjectId: r.subject_id, subjectName: (r as any).subject_name, status: r.status, notes: r.notes, period: r.period });
+      if (r.session_type === 'homeroom') {
+        day.homeroom = { status: r.status, notes: r.notes, period: r.period };
+        day.classId = r.class_id; day.className = r.class_name;
+      } else {
+        day.subjects.push({ subjectId: r.subject_id, subjectName: (r as any).subject_name, status: r.status, notes: r.notes, period: r.period });
+      }
     }
     const days = [...dayMap.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
 

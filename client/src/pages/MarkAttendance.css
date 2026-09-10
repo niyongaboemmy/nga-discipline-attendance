@@ -77,6 +77,18 @@
 .mark-row.is-exception { background: color-mix(in srgb, var(--warning) 6%, transparent); }
 .mark-note-placeholder { display: block; }
 
+/* A row edited since the register was last saved — shown while updating an
+   existing register so the teacher sees exactly what they're about to change. */
+.mark-row.is-changed { box-shadow: inset 3px 0 0 var(--primary); }
+.mark-changed-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+  vertical-align: middle;
+}
+
 @media (max-width: 720px) {
   /* Four ~30px targets per row is below the reliable tap size, so on a
      phone the note collapses and the status buttons take the full width. */
