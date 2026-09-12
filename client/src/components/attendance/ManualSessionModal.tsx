@@ -72,6 +72,9 @@ export const ManualSessionModal: React.FC<{
       status: 'missing',
       ownStatus: null,
       deepLink: `/attendance/mark?${qs.toString()}`,
+      teacherId: null,
+      teacherName: null,
+      isMine: true,
     };
     onPick({ session, date: dateStr });
   };
