@@ -1,5 +1,6 @@
 import { Database } from 'sqlite';
 import { AuthenticatedRequest } from '../middleware/auth.js';
+import { resolveCurrentAcademicPeriod } from './misAcademics.js';
 
 export interface AcademicPeriod {
   academicYearId?: number;
@@ -31,6 +32,36 @@ export function resolveAcademicPeriod(req: AuthenticatedRequest): AcademicPeriod
   return {
     academicYearId: Number.isFinite(academicYearId) ? academicYearId : undefined,
     academicTermId: Number.isFinite(academicTermId) ? academicTermId : undefined,
+  };
+}
+
+/**
+ * Remediation X9 — the JWT's `academicTermId` is a snapshot taken at login
+ * (or the last `/academics/switch`); it does not move when the school's term
+ * rolls over. A teacher who hasn't re-authenticated since then keeps getting
+ * scoped to the *old* term on every calendar/timetable request, so their
+ * "current" lessons silently include a past term's subject assignments
+ * (`CalendarSlot` rows are never auto-deactivated on rollover — see the MIS's
+ * `calendarController.ts`).
+ *
+ * For anything that renders "your timetable right now" — the schedule/day,
+ * /week, /month and /upcoming routes — resolve the term live from the MIS
+ * instead of trusting the session snapshot, unless the caller explicitly
+ * asked for a specific historical period via query params.
+ */
+export async function resolveLiveAcademicPeriod(req: AuthenticatedRequest): Promise<AcademicPeriod> {
+  const queryYear = req.query.academic_year_id;
+  const queryTerm = req.query.academic_term_id;
+  const hasQueryOverride = (queryYear != null && queryYear !== '') || (queryTerm != null && queryTerm !== '');
+
+  const sessionPeriod = resolveAcademicPeriod(req);
+  const misToken = req.user?.misToken;
+  if (hasQueryOverride || !misToken) return sessionPeriod;
+
+  const live = await resolveCurrentAcademicPeriod(misToken);
+  return {
+    academicYearId: live.academicYearId ?? sessionPeriod.academicYearId,
+    academicTermId: live.academicTermId ?? sessionPeriod.academicTermId,
   };
 }
 

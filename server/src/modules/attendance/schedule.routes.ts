@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { getDb } from '../../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
-import { resolveAcademicPeriod } from '../../utils/academicPeriod.js';
+import { resolveLiveAcademicPeriod } from '../../utils/academicPeriod.js';
 import { misGetOrNullObject, misGetListOrNull } from '../../services/misClient.js';
 import {
   schoolDateString,
@@ -281,7 +281,7 @@ router.get('/schedule/day', authorizePermission(...ATT_PERMS), async (req: any, 
   if (!DATE_RE.test(date)) {
     return res.status(400).json({ success: false, message: 'date must be YYYY-MM-DD.' });
   }
-  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
@@ -334,7 +334,7 @@ router.get('/schedule/week', authorizePermission(...ATT_PERMS), async (req: any,
   }
   const weekStart = weekStartFor(anchor);
   const weekEnd = addDays(weekStart, 6);
-  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
@@ -392,7 +392,7 @@ router.get('/schedule/month', authorizePermission(...ATT_PERMS), async (req: any
   const first = `${month}-01`;
   const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const last = `${month}-${String(daysInMonth).padStart(2, '0')}`;
-  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
@@ -445,7 +445,7 @@ router.get('/schedule/upcoming', authorizePermission(...ATT_PERMS), async (req: 
   const authReq = req as AuthenticatedRequest;
   const date = schoolDateString();
   const nowMin = schoolMinutesOfDay();
-  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
