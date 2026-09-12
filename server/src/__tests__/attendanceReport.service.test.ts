@@ -136,19 +136,24 @@ describe('Subject-first dashboard (listAvailableSubjects / listSubjectClasses)',
          ('cls-y1a', 'Year 1A', 5, 'Applied Mathematics II', 't2', 'Grace Mukamana', 10, 2, '09:00')`
     );
 
-    const rows: Array<[string, string, string, string, string, number, string]> = [
-      ['s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-02', 5, 'present'],
-      ['s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-04', 5, 'absent'],
-      ['s2', 'Ben T.', 'cls-y2c', 'Year 2C', '2026-03-02', 5, 'present'],
-      ['s3', 'Cissy M.', 'cls-y1a', 'Year 1A', '2026-03-02', 5, 'absent'],
-      ['s3', 'Cissy M.', 'cls-y1a', 'Year 1A', '2026-03-04', 5, 'absent'],
+    // marked_by matches each row's actual class-subject teacher (t1 for
+    // cls-y2c, t2 for cls-y1a) — attendanceReport.service.ts's
+    // classesForSubject() falls back to attendance_records.marked_by for
+    // teacher-scoping when class_subject_assignments hasn't caught up yet,
+    // so getting this wrong here would silently mask that scoping.
+    const rows: Array<[string, string, string, string, string, number, string, string]> = [
+      ['s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-02', 5, 'present', 't1'],
+      ['s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-04', 5, 'absent', 't1'],
+      ['s2', 'Ben T.', 'cls-y2c', 'Year 2C', '2026-03-02', 5, 'present', 't1'],
+      ['s3', 'Cissy M.', 'cls-y1a', 'Year 1A', '2026-03-02', 5, 'absent', 't2'],
+      ['s3', 'Cissy M.', 'cls-y1a', 'Year 1A', '2026-03-04', 5, 'absent', 't2'],
     ];
-    for (const [studentId, studentName, classId, className, date, subjectId, status] of rows) {
+    for (const [studentId, studentName, classId, className, date, subjectId, status, markedBy] of rows) {
       await db.run(
         `INSERT INTO attendance_records
            (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
-         VALUES (?, ?, ?, ?, ?, 'Morning', 'subject', ?, ?, 't1', 10)`,
-        studentId, studentName, classId, className, date, subjectId, status
+         VALUES (?, ?, ?, ?, ?, 'Morning', 'subject', ?, ?, ?, 10)`,
+        studentId, studentName, classId, className, date, subjectId, status, markedBy
       );
     }
   });
@@ -190,5 +195,39 @@ describe('Subject-first dashboard (listAvailableSubjects / listSubjectClasses)',
     const subjects = await listAvailableSubjects(db, { role: 'admin', userId: 'x', academicTermId: 10 });
     const math = subjects.find((s) => s.subjectId === 5)!;
     expect(math.atRiskCount).toBeGreaterThanOrEqual(1);
+  });
+
+  // Reported bug: a teacher whose "By Class" report and the MIS's own
+  // dashboard both showed a subject saw an empty "By Subject" dashboard.
+  // Root cause: class_subject_assignments only refreshes on a manual
+  // POST /academics/sync, so right after a term rollover it can lag the
+  // real assignment for a while — and the subject dashboard, unlike
+  // listReportableClasses, had no fallback to attendance_records.
+  it('still surfaces a subject that has real attendance records but no synced roster-cache row for this term', async () => {
+    await db.run(`INSERT INTO subjects (id, name, code) VALUES (9, 'Advanced Database', 'DB9')`);
+    // Deliberately no class_subject_assignments row for subject 9 at all —
+    // simulates a stale/never-synced roster cache.
+    await db.run(
+      `INSERT INTO attendance_records
+         (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
+       VALUES ('s4', 'Dax O.', 'cls-y2c', 'Year 2C', '2026-03-05', 'Morning', 'subject', 9, 'present', 't1', 10)`
+    );
+
+    const subjects = await listAvailableSubjects(db, { role: 'teacher', userId: 't1', academicTermId: 10 });
+    const found = subjects.find((s) => s.subjectId === 9);
+    expect(found).toBeTruthy();
+    expect(found!.subjectName).toBe('Advanced Database');
+    expect(found!.classCount).toBe(1);
+    expect(found!.studentsTracked).toBe(1);
+
+    const classes = await listSubjectClasses(db, 9, { role: 'teacher', userId: 't1', academicTermId: 10 });
+    expect(classes).toHaveLength(1);
+    expect(classes[0].classId).toBe('cls-y2c');
+    // No roster-cache row exists, so there's genuinely no teacher name to show.
+    expect(classes[0].teacherName).toBeNull();
+
+    // A different teacher who never marked it must not see it.
+    const otherTeacherSubjects = await listAvailableSubjects(db, { role: 'teacher', userId: 't-someone-else', academicTermId: 10 });
+    expect(otherTeacherSubjects.find((s) => s.subjectId === 9)).toBeUndefined();
   });
 });
