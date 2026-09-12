@@ -92,6 +92,44 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
   const subjectIds = new Set<number>();
   let assignmentCount = 0;
 
+  // `/calendar/slots` reports the teacher as `CalendarSlot.user_id`, which is
+  // set once when a slot is created and never rewritten when a teacher is
+  // reassigned off that class/subject (the MIS's `updateTeacherSubjectAssignment`
+  // only touches `TeacherSubjectAssignment`, not old calendar rows) — so this
+  // cache can otherwise keep a stale (teacher, subject, class) triple alive
+  // indefinitely, which then feeds the teacher delivery-rate report
+  // (routes/attendance/subjectAttendance.routes.ts) with a subject the teacher
+  // no longer teaches. `/academics/teacher-assignments` is the same
+  // TeacherSubjectAssignment table the MIS's own "Assigned Subjects" dashboard
+  // tile reads, so cross-check against it and drop anything not in it.
+  // Best-effort: if the lookup fails (older MIS, permissions), fall back to
+  // trusting the timetable as before rather than aborting the whole sync.
+  let currentAssignmentKeys: Set<string> | null = null;
+  try {
+    const currentYear = await db.get<{ id: number }>(
+      `SELECT id FROM academic_years WHERE is_current = 1 LIMIT 1`
+    );
+    if (currentYear) {
+      const assignments = await fetchMisList('/academics/teacher-assignments', misToken, {
+        academic_year_id: String(currentYear.id),
+      });
+      currentAssignmentKeys = new Set(
+        assignments
+          .map((a) => {
+            const teacherId = pick(a, 'user_id', 'teacher_id');
+            const subjectId = pick(a, 'subject_id');
+            const classId = pick(a, 'class_group_id', 'class_id');
+            return teacherId != null && subjectId != null && classId != null
+              ? `${teacherId}:${subjectId}:${classId}`
+              : null;
+          })
+          .filter((k): k is string => k != null)
+      );
+    }
+  } catch (err) {
+    console.error('Roster sync: could not load teacher-subject assignments for cross-check:', (err as Error).message);
+  }
+
   // Seed the subject cache from /academics/subjects first. That endpoint is
   // readable by any authenticated MIS user, whereas the timetable below
   // (/calendar/slots) needs calendar-admin permissions and 403s for
@@ -146,6 +184,29 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
       const teacherId = pick(entry, 'user_id', 'teacher_id', 'teacherId', 'staff_id');
       if (subjectId == null || teacherId == null) continue;
 
+      const academicTermId = pick(entry, 'academic_term_id', 'academicTermId');
+      const dayOfWeek = pick(entry, 'day_of_week', 'dayOfWeek');
+      // getCalendarSlots has no single "period" field, just start/end times.
+      const period = pick(entry, 'start_time', 'period', 'slot');
+
+      // Skip (and evict any previously-cached row for) a (teacher, subject,
+      // class) triple the MIS's own assignment table no longer recognises —
+      // see the comment above currentAssignmentKeys. Without the delete, a
+      // row synced under an old teacher before this check existed would
+      // otherwise sit in the cache forever, since the upsert key below
+      // doesn't include teacher_id.
+      if (currentAssignmentKeys && !currentAssignmentKeys.has(`${teacherId}:${subjectId}:${classId}`)) {
+        await db.run(
+          `DELETE FROM class_subject_assignments
+            WHERE class_id = ? AND subject_id = ? AND academic_term_id IS ? AND day_of_week IS ? AND period IS ?`,
+          String(classId), Number(subjectId),
+          academicTermId != null ? Number(academicTermId) : null,
+          dayOfWeek != null ? Number(dayOfWeek) : null,
+          period
+        );
+        continue;
+      }
+
       const subjectName = pick(entry, 'subject_name', 'subjectName') ?? `Subject ${subjectId}`;
       if (!subjectIds.has(Number(subjectId))) {
         await db.run(
@@ -156,10 +217,6 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
         subjectIds.add(Number(subjectId));
       }
 
-      const academicTermId = pick(entry, 'academic_term_id', 'academicTermId');
-      const dayOfWeek = pick(entry, 'day_of_week', 'dayOfWeek');
-      // getCalendarSlots has no single "period" field, just start/end times.
-      const period = pick(entry, 'start_time', 'period', 'slot');
       // instructor_name/instructor_lastname are UserProfile's first/last
       // name split across two columns, not one combined teacher_name field.
       const combinedInstructorName =

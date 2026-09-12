@@ -774,3 +774,78 @@
   animation: cal-shimmer 1.4s ease infinite;
 }
 @keyframes cal-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+
+/* ======================================================================
+   Event hover card — a rich preview for a compact week-grid lesson block.
+   Portaled to <body>; positioned via inline top/left from the trigger's rect.
+   ====================================================================== */
+.event-hovercard {
+  position: fixed;
+  z-index: var(--z-popover);
+  width: 280px;
+  padding: 14px 16px 12px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--shadow-popover);
+  opacity: 0;
+  transform: scale(0.96) translateY(2px);
+  transition: opacity 0.14s var(--ease-out), transform 0.14s var(--ease-out);
+  pointer-events: none;
+}
+.event-hovercard.is-visible { opacity: 1; transform: scale(1) translateY(0); pointer-events: auto; }
+.event-hovercard.is-overdue { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+
+.ehc-head { display: flex; align-items: flex-start; gap: 9px; }
+.ehc-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 4px;
+  background: var(--spine, var(--subject-fallback));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--spine, var(--subject-fallback)) 20%, transparent);
+}
+.ehc-title-wrap { flex: 1; min-width: 0; }
+.ehc-title { font-family: var(--font-display); font-size: 14.5px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+.ehc-day { font-size: 11px; color: var(--text-tertiary); margin-top: 1px; }
+.ehc-status {
+  flex: none;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: var(--radius-badge);
+  font-size: 10.5px; font-weight: 700; white-space: nowrap;
+}
+.ehc-status.is-recorded { background: var(--success-light); color: var(--success); }
+.ehc-status.is-overdue { background: var(--danger-light); color: var(--danger); }
+.ehc-status.is-now { background: var(--primary-light); color: var(--primary); }
+.ehc-status.is-upcoming { background: var(--bg-subtle); color: var(--text-tertiary); }
+
+.ehc-meta {
+  display: flex; flex-wrap: wrap; gap: 5px 12px;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-secondary);
+}
+.ehc-meta span { display: inline-flex; align-items: center; gap: 5px; }
+.ehc-owner.is-me { color: var(--primary); font-weight: 600; }
+
+.ehc-stats { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+
+.ehc-warning {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 10px; padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-light); color: var(--danger);
+  font-size: 11.5px; font-weight: 600;
+}
+
+.ehc-actions { margin-top: 12px; }
+.ehc-btn {
+  width: 100%;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; border-radius: var(--radius-btn);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  font-size: 12.5px; font-weight: 700; color: var(--text-secondary);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.ehc-btn:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.ehc-btn.is-primary { background: var(--primary); border-color: var(--primary); color: var(--primary-contrast); }
+.ehc-btn.is-primary:hover { filter: brightness(1.05); }
