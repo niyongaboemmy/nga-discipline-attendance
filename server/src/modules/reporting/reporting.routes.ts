@@ -6,6 +6,9 @@ import { resolveAcademicPeriod } from '../../utils/academicPeriod.js';
 import {
   getAttendanceSummary, getDisciplineSummary, getCombinedReport, compareTerms, getAnnualReport,
 } from './reporting.service.js';
+import {
+  listReportableClasses, listClassSections, getClassSectionReport,
+} from './attendanceReport.service.js';
 
 /** C: termly / annual / combined / comparison reporting. Mounted at /api/reporting. */
 const router = Router();
@@ -68,6 +71,52 @@ router.get('/compare', async (req: any, res: Response) => {
   } catch (error) {
     console.error('Error comparing terms:', error);
     return res.status(500).json({ success: false, message: 'Error comparing terms.' });
+  }
+});
+
+// Class -> subject attendance register (see attendanceReport.service.ts).
+router.get('/attendance/classes', async (req: any, res: Response) => {
+  const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
+  try {
+    const data = await listReportableClasses(db, academicTermId);
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing reportable classes:', error);
+    return res.status(500).json({ success: false, message: 'Error listing classes.' });
+  }
+});
+
+router.get('/attendance/classes/:classId/sections', async (req: any, res: Response) => {
+  const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
+  try {
+    const data = await listClassSections(db, req.params.classId, academicTermId);
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing class sections:', error);
+    return res.status(500).json({ success: false, message: 'Error listing class sections.' });
+  }
+});
+
+router.get('/attendance/class/:classId', async (req: any, res: Response) => {
+  const db = getDb();
+  const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
+  const sessionType = req.query.session_type === 'subject' ? 'subject' : 'homeroom';
+  const subjectId = req.query.subject_id != null ? Number(req.query.subject_id) : undefined;
+  if (sessionType === 'subject' && (subjectId == null || !Number.isFinite(subjectId))) {
+    return res.status(400).json({ success: false, message: 'subject_id is required when session_type=subject.' });
+  }
+  const fromDate = typeof req.query.from === 'string' && req.query.from ? req.query.from : undefined;
+  const toDate = typeof req.query.to === 'string' && req.query.to ? req.query.to : undefined;
+  try {
+    const data = await getClassSectionReport(db, {
+      classId: req.params.classId, academicTermId, sessionType, subjectId, fromDate, toDate,
+    });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error generating class section report:', error);
+    return res.status(500).json({ success: false, message: 'Error generating class section report.' });
   }
 });
 

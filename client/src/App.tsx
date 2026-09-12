@@ -30,6 +30,7 @@ import { MyConduct } from './pages/MyConduct';
 import { ExcuseReview } from './pages/ExcuseReview';
 import { AuditLog } from './pages/AuditLog';
 import { StudentReport } from './pages/StudentReport';
+import { AttendanceReport } from './pages/AttendanceReport';
 
 export const App: React.FC = () => {
   return (
@@ -129,6 +130,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher']}>
                 <AttendanceRecords />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/attendance/report"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <AttendanceReport />
               </ProtectedRoute>
             }
           />
