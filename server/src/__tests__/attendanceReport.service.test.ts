@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { Database } from 'sqlite';
 import { setupTestDb } from './testUtils.js';
 import {
@@ -229,5 +229,88 @@ describe('Subject-first dashboard (listAvailableSubjects / listSubjectClasses)',
     // A different teacher who never marked it must not see it.
     const otherTeacherSubjects = await listAvailableSubjects(db, { role: 'teacher', userId: 't-someone-else', academicTermId: 10 });
     expect(otherTeacherSubjects.find((s) => s.subjectId === 9)).toBeUndefined();
+  });
+});
+
+describe('Subject dashboard with a live MIS link (misToken present)', () => {
+  let db: Database;
+
+  function mockMisTeacherSubjects(response: unknown[]) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/academics/teachers/t1/subjects')) {
+        return new Response(JSON.stringify({ data: response }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }));
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+    await db.run(`INSERT INTO subjects (id, name, code) VALUES (5, 'Applied Mathematics II', 'MATH2'), (9, 'Advanced Database', 'DB9')`);
+
+    // A STALE local roster cache + a misleading marked_by row — exactly what
+    // was reported: the teacher had never taught "Advanced Database", but it
+    // was wrongly assigned to them in the local cache (or they'd once
+    // recorded a session for it, e.g. covering for someone), so it leaked
+    // into the old marked_by/teacher_id-based dashboard.
+    await db.run(
+      `INSERT INTO class_subject_assignments
+         (class_id, class_name, subject_id, subject_name, teacher_id, teacher_name, academic_term_id, day_of_week, period)
+       VALUES ('cls-y2c', 'Year 2C', 9, 'Advanced Database', 't1', 'Jean Bosco Uwitonze', 10, 1, '08:00')`
+    );
+    await db.run(
+      `INSERT INTO attendance_records
+         (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
+       VALUES ('s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-02', 'Morning', 'subject', 9, 'present', 't1', 10)`
+    );
+  });
+
+  it('trusts the live MIS assignment over the stale local cache and marked_by history', async () => {
+    // The MIS says this teacher currently only teaches subject 5, in cls-y2c
+    // — nothing about subject 9, contradicting both the cache and the
+    // attendance record seeded above.
+    mockMisTeacherSubjects([
+      { subject_id: 5, subject_name: 'Applied Mathematics II', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', academic_year_id: 1, academic_year_is_current: 1 },
+    ]);
+
+    const subjects = await listAvailableSubjects(db, {
+      role: 'teacher', userId: 't1', academicTermId: 10, academicYearId: 1, misToken: 'mis-tkn',
+    });
+    expect(subjects.map((s) => s.subjectId)).toEqual([5]);
+    expect(subjects.find((s) => s.subjectId === 9)).toBeUndefined();
+
+    const classes = await listSubjectClasses(db, 5, {
+      role: 'teacher', userId: 't1', academicTermId: 10, academicYearId: 1, misToken: 'mis-tkn',
+    });
+    expect(classes).toHaveLength(1);
+    expect(classes[0].classId).toBe('cls-y2c');
+
+    // Asking about the subject the MIS no longer credits them with returns nothing.
+    const staleClasses = await listSubjectClasses(db, 9, {
+      role: 'teacher', userId: 't1', academicTermId: 10, academicYearId: 1, misToken: 'mis-tkn',
+    });
+    expect(staleClasses).toEqual([]);
+  });
+
+  it('filters the MIS response to the requested academic year', async () => {
+    mockMisTeacherSubjects([
+      { subject_id: 5, subject_name: 'Applied Mathematics II', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', academic_year_id: 1, academic_year_is_current: 0 },
+      { subject_id: 9, subject_name: 'Advanced Database', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', academic_year_id: 2, academic_year_is_current: 1 },
+    ]);
+
+    const forYear1 = await listAvailableSubjects(db, {
+      role: 'teacher', userId: 't1', academicTermId: 10, academicYearId: 1, misToken: 'mis-tkn',
+    });
+    expect(forYear1.map((s) => s.subjectId)).toEqual([5]);
+
+    const forYear2 = await listAvailableSubjects(db, {
+      role: 'teacher', userId: 't1', academicTermId: 10, academicYearId: 2, misToken: 'mis-tkn',
+    });
+    expect(forYear2.map((s) => s.subjectId)).toEqual([9]);
   });
 });

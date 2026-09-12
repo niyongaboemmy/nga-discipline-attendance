@@ -127,9 +127,12 @@ router.get('/attendance/class/:classId', async (req: any, res: Response) => {
 router.get('/attendance/subjects', async (req: any, res: Response) => {
   const db = getDb();
   const authReq = req as AuthenticatedRequest;
-  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
   try {
-    const data = await listAvailableSubjects(db, { role: authReq.user!.role, userId: authReq.user!.id, academicTermId });
+    const data = await listAvailableSubjects(db, {
+      role: authReq.user!.role, userId: authReq.user!.id, academicTermId,
+      misToken: authReq.user!.misToken, academicYearId,
+    });
     return res.json({ success: true, data });
   } catch (error) {
     console.error('Error listing available subjects:', error);
@@ -140,13 +143,16 @@ router.get('/attendance/subjects', async (req: any, res: Response) => {
 router.get('/attendance/subjects/:subjectId/classes', async (req: any, res: Response) => {
   const db = getDb();
   const authReq = req as AuthenticatedRequest;
-  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
   const subjectId = Number(req.params.subjectId);
   if (!Number.isFinite(subjectId)) {
     return res.status(400).json({ success: false, message: 'subjectId must be a number.' });
   }
   try {
-    const data = await listSubjectClasses(db, subjectId, { role: authReq.user!.role, userId: authReq.user!.id, academicTermId });
+    const data = await listSubjectClasses(db, subjectId, {
+      role: authReq.user!.role, userId: authReq.user!.id, academicTermId,
+      misToken: authReq.user!.misToken, academicYearId,
+    });
     return res.json({ success: true, data });
   } catch (error) {
     console.error('Error listing classes for subject:', error);
