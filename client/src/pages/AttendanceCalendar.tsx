@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
@@ -10,6 +10,7 @@ import { ErrorState } from '../components/common/ErrorState';
 import { StatusChip } from '../components/attendance/StatusChip';
 import { RegisterDrawer, type DrawerTarget } from '../components/attendance/RegisterDrawer';
 import { ManualSessionModal } from '../components/attendance/ManualSessionModal';
+import { EventHoverCard, type HoverTarget } from '../components/attendance/EventHoverCard';
 import { usePermissions } from '../hooks/usePermissions';
 import {
   getScheduleMonth, getScheduleWeek, getScheduleDay,
@@ -184,12 +185,40 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
   const canMark = can('ATTENDANCE_MARK');
   const today = isoDate();
 
+  // Hover preview — a short intent delay so a mouse just passing over the
+  // grid doesn't pop cards open, and a matching delay on hide so moving from
+  // the trigger onto the card itself (to click its action) doesn't close it.
+  const [hover, setHover] = useState<HoverTarget | null>(null);
+  const showTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scheduleShow = (session: CalendarSession, date: string, rect: DOMRect) => {
+    clearTimeout(hideTimer.current);
+    clearTimeout(showTimer.current);
+    showTimer.current = setTimeout(() => setHover({ session, date, rect }), 150);
+  };
+  const scheduleHide = () => {
+    clearTimeout(showTimer.current);
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setHover(null), 150);
+  };
+  const cancelHide = () => clearTimeout(hideTimer.current);
+  useEffect(() => () => { clearTimeout(showTimer.current); clearTimeout(hideTimer.current); }, []);
+  // The card is positioned from a one-off getBoundingClientRect snapshot, not
+  // tracked live — close it on scroll rather than let it drift from its trigger.
+  useEffect(() => {
+    if (!hover) return;
+    const close = () => setHover(null);
+    window.addEventListener('scroll', close, true);
+    return () => window.removeEventListener('scroll', close, true);
+  }, [hover]);
+
   // Always show the working week (Mon–Fri), plus any weekend day that has
   // lessons and always today — an empty weekday stays as an empty column
   // rather than collapsing the grid and looking like a skipped day.
   const days = data.days.filter(
     (d) => (d.dayOfWeek >= 1 && d.dayOfWeek <= 5) || d.date === today || d.sessions.some((s) => s.kind === 'subject')
   );
+  const sessionsForHoverDate = (date: string) => days.find((d) => d.date === date)?.sessions ?? [];
   const cols = days.length || 1;
 
   const allSubjects = days.flatMap((d) => d.sessions.filter((s) => s.kind === 'subject'));
@@ -241,7 +270,14 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                 const st = hr.status === 'recorded' ? 'is-recorded' : past ? 'is-missing-past' : '';
                 return (
                   <div key={d.date} className="cal-hr-cell">
-                    <button className={`cal-hr-pill ${st}`} onClick={() => onOpen(buildTarget(d.sessions, hr, d.date))}>
+                    <button
+                      className={`cal-hr-pill ${st}`}
+                      onClick={() => onOpen(buildTarget(d.sessions, hr, d.date))}
+                      onMouseEnter={(e) => scheduleShow(hr, d.date, e.currentTarget.getBoundingClientRect())}
+                      onMouseLeave={scheduleHide}
+                      onFocus={(e) => scheduleShow(hr, d.date, e.currentTarget.getBoundingClientRect())}
+                      onBlur={scheduleHide}
+                    >
                       {hr.status === 'recorded'
                         ? <StatusChip kind="recorded" label="Done" />
                         : st === 'is-missing-past'
@@ -285,7 +321,11 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                           ...(s.color ? { ['--spine' as string]: s.color } : {}),
                         }}
                         onClick={() => (canMark ? onOpen(buildTarget(d.sessions, s, d.date)) : navigate(s.deepLink))}
-                        title={`${clock(s.startTime)}–${clock(s.endTime)} · ${s.subjectName} · ${s.className}${s.room ? ` · ${s.room}` : ''}${overdue ? ' · Register overdue' : ''}${!s.isMine && s.teacherName ? ` · Taught by ${s.teacherName}` : ''}`}
+                        onMouseEnter={(e) => scheduleShow(s, d.date, e.currentTarget.getBoundingClientRect())}
+                        onMouseLeave={scheduleHide}
+                        onFocus={(e) => scheduleShow(s, d.date, e.currentTarget.getBoundingClientRect())}
+                        onBlur={scheduleHide}
+                        aria-label={`${s.subjectName ?? 'Lesson'} · ${clock(s.startTime)}–${clock(s.endTime)} · ${s.className}`}
                       >
                         <span className={`cal-badge ${cls}${isNow ? ' is-now' : ''}`}>
                           {s.status === 'recorded'
@@ -313,6 +353,18 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
           </div>
         </div>
       </div>
+      {hover && (
+        <EventHoverCard
+          target={hover}
+          overdue={isOverdue(hover.session, hover.date, today)}
+          isNow={hover.date === today && nowMin() >= toMin(hover.session.startTime) && nowMin() < toMin(hover.session.endTime || hover.session.startTime)}
+          canMark={canMark}
+          onOpen={() => { setHover(null); onOpen(buildTarget(sessionsForHoverDate(hover.date), hover.session, hover.date)); }}
+          onNavigate={() => { setHover(null); navigate(hover.session.deepLink); }}
+          onMouseEnter={cancelHide}
+          onMouseLeave={scheduleHide}
+        />
+      )}
     </div>
   );
 };
