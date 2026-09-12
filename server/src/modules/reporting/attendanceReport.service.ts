@@ -66,6 +66,121 @@ export async function listClassSections(db: Database, classId: string, academicT
   return [{ kind: 'homeroom' }, ...subjects];
 }
 
+/** Rolls a set of raw `(student_id, status)` rows into a class/subject-level
+ *  summary — the shared math behind every "how is this group doing" card.
+ *  Also used by getClassSectionReport's own per-student pass. */
+function aggregateStudentRates(rows: Array<{ student_id: string; status: string }>) {
+  const byStudent = new Map<string, { present: number; late: number; excused: number; total: number }>();
+  for (const r of rows) {
+    let s = byStudent.get(r.student_id);
+    if (!s) { s = { present: 0, late: 0, excused: 0, total: 0 }; byStudent.set(r.student_id, s); }
+    s.total += 1;
+    if (r.status === 'present') s.present += 1;
+    else if (r.status === 'late') s.late += 1;
+    else if (r.status === 'excused') s.excused += 1;
+  }
+  const rates = [...byStudent.values()].map((s) => attendanceRate(s.present + s.late + s.excused, s.total));
+  const averageRate = rates.length ? Math.round(rates.reduce((a, b) => a + b, 0) / rates.length) : 100;
+  const atRiskCount = rates.filter((r) => r < 80).length;
+  return { studentsTracked: byStudent.size, averageRate, atRiskCount };
+}
+
+export interface SubjectClassScope {
+  classId: string;
+  className: string;
+  teacherName: string | null;
+}
+
+/** Which classes teach `subjectId` this term — every class for an admin
+ *  (or anyone without a narrower view), only the classes *this* teacher was
+ *  assigned it in otherwise. Mirrors "if you have subjects assigned, use
+ *  them; if admin, see everything." */
+async function classesForSubject(
+  db: Database, subjectId: number, role: string | undefined, userId: string | undefined, academicTermId?: number
+): Promise<SubjectClassScope[]> {
+  const { clause, params } = periodFilter(academicTermId);
+  let scope = ' WHERE subject_id = ?';
+  const scopeParams: any[] = [subjectId];
+  if (role !== 'admin' && userId) { scope += ' AND teacher_id = ?'; scopeParams.push(userId); }
+  scope += clause;
+  return db.all(
+    `SELECT DISTINCT class_id as classId, class_name as className, teacher_name as teacherName
+       FROM class_subject_assignments${scope}`,
+    ...scopeParams, ...params
+  );
+}
+
+export interface SubjectOverview {
+  subjectId: number;
+  subjectName: string;
+  classCount: number;
+  studentsTracked: number;
+  averageRate: number;
+  atRiskCount: number;
+}
+
+export interface SubjectScopeParams {
+  role?: string;
+  userId?: string;
+  academicTermId?: number;
+}
+
+/** The "Subjects" dashboard: every subject this user should see (their own
+ *  assignments, or the whole school for an admin), each with a quick
+ *  attendance-health summary rolled up across every class teaching it. */
+export async function listAvailableSubjects(db: Database, opts: SubjectScopeParams): Promise<SubjectOverview[]> {
+  const { clause, params } = periodFilter(opts.academicTermId);
+  let scope = ' WHERE 1=1';
+  const scopeParams: any[] = [];
+  if (opts.role !== 'admin' && opts.userId) { scope += ' AND teacher_id = ?'; scopeParams.push(opts.userId); }
+  scope += clause;
+  const subjectRows = await db.all(
+    `SELECT DISTINCT subject_id as subjectId, subject_name as subjectName FROM class_subject_assignments${scope}`,
+    ...scopeParams, ...params
+  );
+
+  const overviews: SubjectOverview[] = [];
+  for (const s of subjectRows) {
+    if (s.subjectId == null) continue;
+    const classes = await classesForSubject(db, s.subjectId, opts.role, opts.userId, opts.academicTermId);
+    if (classes.length === 0) continue;
+    const placeholders = classes.map(() => '?').join(',');
+    const { clause: tClause, params: tParams } = periodFilter(opts.academicTermId);
+    const rows = await db.all(
+      `SELECT student_id, status FROM attendance_records
+        WHERE subject_id = ? AND class_id IN (${placeholders})${tClause}`,
+      s.subjectId, ...classes.map((c) => c.classId), ...tParams
+    );
+    const agg = aggregateStudentRates(rows);
+    overviews.push({ subjectId: s.subjectId, subjectName: s.subjectName || `Subject ${s.subjectId}`, classCount: classes.length, ...agg });
+  }
+  return overviews.sort((a, b) => a.subjectName.localeCompare(b.subjectName));
+}
+
+export interface SubjectClassOverview extends SubjectClassScope {
+  studentsTracked: number;
+  averageRate: number;
+}
+
+/** Drill-down from a subject: every class teaching it (scoped the same way
+ *  as listAvailableSubjects), each with its own quick summary — lets the UI
+ *  jump straight to the register when there's only one, or offer a pick
+ *  list when a subject spans several classes/teachers. */
+export async function listSubjectClasses(db: Database, subjectId: number, opts: SubjectScopeParams): Promise<SubjectClassOverview[]> {
+  const classes = await classesForSubject(db, subjectId, opts.role, opts.userId, opts.academicTermId);
+  const { clause, params } = periodFilter(opts.academicTermId);
+  const results: SubjectClassOverview[] = [];
+  for (const c of classes) {
+    const rows = await db.all(
+      `SELECT student_id, status FROM attendance_records WHERE subject_id = ? AND class_id = ?${clause}`,
+      subjectId, c.classId, ...params
+    );
+    const agg = aggregateStudentRates(rows);
+    results.push({ ...c, studentsTracked: agg.studentsTracked, averageRate: agg.averageRate });
+  }
+  return results.sort((a, b) => a.className.localeCompare(b.className));
+}
+
 /** Comment tiers mirroring the reference sheet's boundaries: 100% → Excellent,
  *  92.9%/85.7% → Good, 78.6% → Fair, 71.4% → Poor. */
 export function attendanceComment(rate: number): 'Excellent' | 'Good' | 'Fair' | 'Poor' {
