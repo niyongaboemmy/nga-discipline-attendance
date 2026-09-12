@@ -98,6 +98,55 @@
 .cal-legend .swatch.is-future   { background: var(--border-strong); }
 .cal-legend .swatch.is-now      { background: var(--primary); }
 
+/* ---- "Your subjects" filter strip ---------------------------------- */
+.cal-subjects { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
+.subject-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  font-size: 11.5px; font-weight: 600;
+  color: var(--text-secondary);
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+.subject-chip:hover { border-color: var(--border-strong); color: var(--text-primary); transform: translateY(-1px); }
+.subject-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--subject-fallback)); flex: none; }
+.subject-chip.is-active {
+  background: color-mix(in srgb, var(--c, var(--primary)) 16%, var(--bg-card));
+  border-color: var(--c, var(--primary));
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+.subject-chip-clear { color: var(--text-tertiary); border-style: dashed; }
+.subject-chip-clear:hover { color: var(--danger); border-color: var(--danger); }
+
+/* ---- Overdue-registers banner --------------------------------------- */
+.cal-alert {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: var(--radius-card);
+  background: var(--warning-light);
+  color: var(--warning);
+  font-size: 12.5px; font-weight: 600;
+  animation: cal-alert-in var(--transition-normal) var(--ease-out);
+}
+.cal-alert strong { font-size: 13.5px; }
+.cal-alert-btn {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 12px;
+  border-radius: var(--radius-btn);
+  border: 1px solid var(--warning);
+  background: var(--warning);
+  color: #fff;
+  font-size: 12px; font-weight: 700;
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+.cal-alert-btn:hover { filter: brightness(1.06); transform: translateY(-1px); }
+@keyframes cal-alert-in { from { opacity: 0; transform: translateY(-4px); } }
+
 /* ======================================================================
    Month view
    ====================================================================== */
@@ -303,28 +352,46 @@
 .cal-event.is-narrow .ev-title { -webkit-line-clamp: 1; }
 .cal-event.is-narrow .ev-sub { font-size: 9.5px; }
 .cal-event.is-missing-past {
-  border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
+  border-color: var(--warning);
+  border-left-width: 3px;
   background: var(--warning-light);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 35%, transparent);
 }
-.cal-event::after {
-  content: '';
-  position: absolute;
-  top: 6px; right: 6px;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px var(--bg-card);
-}
-.cal-event.is-recorded::after { background: var(--success); }
-.cal-event.is-missing-past::after { background: var(--warning); animation: cal-pulse 1.8s ease-in-out infinite; }
-.cal-event.is-future::after { background: var(--border-strong); }
 .cal-event.is-now { box-shadow: 0 0 0 2px var(--primary), var(--shadow-md); }
-.cal-event.is-now::after { background: var(--primary); box-shadow: 0 0 0 2px var(--bg-card), 0 0 8px 1px var(--primary-glow); }
-
-@keyframes cal-pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.35); opacity: 0.65; }
+.cal-event.is-dimmed { opacity: 0.32; filter: saturate(0.7); }
+.cal-event.is-dimmed:hover { opacity: 0.6; }
+.cal-event.is-focused {
+  box-shadow: 0 0 0 2px var(--spine, var(--primary)), var(--shadow-md);
+  z-index: 5;
 }
-@media (prefers-reduced-motion: reduce) { .cal-event.is-missing-past::after { animation: none; } }
+.ev-warning {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 9px; font-weight: 700; color: var(--warning);
+  margin-top: 1px;
+}
+.cal-event.is-narrow .ev-warning { display: none; }
+
+/* Status badge — icon carries the meaning, colour reinforces it. */
+.cal-badge {
+  position: absolute;
+  top: 5px; right: 5px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 0 2px var(--bg-card);
+  color: #fff;
+  background: var(--border-strong);
+}
+.cal-badge.is-recorded { background: var(--success); }
+.cal-badge.is-missing-past { background: var(--warning); animation: cal-badge-ping 1.8s ease-in-out infinite; }
+.cal-badge.is-now { background: var(--primary); box-shadow: 0 0 0 2px var(--bg-card), 0 0 8px 1px var(--primary-glow); }
+.cal-badge.is-future { background: var(--bg-hover); color: var(--text-tertiary); box-shadow: none; border: 1px solid var(--border); }
+
+@keyframes cal-badge-ping {
+  0%, 100% { box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 0 color-mix(in srgb, var(--warning) 55%, transparent); }
+  70% { box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 6px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .cal-badge.is-missing-past { animation: none; } }
 
 .cal-nowline {
   position: absolute;
@@ -386,6 +453,7 @@
 .agenda-progress-text { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 7px; }
 .agenda-progress-text strong { color: var(--text-primary); font-weight: 700; }
 .agenda-card {
+  position: relative;
   display: grid;
   grid-template-columns: 64px 4px 1fr auto;
   align-items: stretch;
@@ -394,12 +462,33 @@
   background: var(--bg-card);
   overflow: hidden;
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
 }
 .agenda-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .agenda-card.is-past-missing { border-color: var(--warning); background: var(--warning-light); }
 .agenda-card.is-future { opacity: 0.66; }
 .agenda-card.is-now { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), var(--shadow-md); }
+.agenda-card.is-dimmed { opacity: 0.35; }
+.agenda-card.is-dimmed:hover { opacity: 0.6; }
+.agenda-card.is-focused { border-color: var(--spine, var(--primary)); box-shadow: 0 0 0 1px var(--spine, var(--primary)), var(--shadow-md); }
+.agenda-overdue { color: var(--warning) !important; font-weight: 700; }
+
+.agenda-badge {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  background: var(--border-strong);
+  box-shadow: 0 0 0 2px var(--bg-card);
+  z-index: 1;
+}
+.agenda-badge.is-recorded { background: var(--success); }
+.agenda-badge.is-missing-past { background: var(--warning); animation: cal-badge-ping 1.8s ease-in-out infinite; }
+.agenda-badge.is-now { background: var(--primary); box-shadow: 0 0 0 2px var(--bg-card), 0 0 8px 1px var(--primary-glow); }
+.agenda-badge.is-future { background: var(--bg-hover); color: var(--text-tertiary); box-shadow: none; border: 1px solid var(--border); }
+@media (prefers-reduced-motion: reduce) { .agenda-badge.is-missing-past { animation: none; } }
 .agenda-time {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 12px 6px; font-variant-numeric: tabular-nums;

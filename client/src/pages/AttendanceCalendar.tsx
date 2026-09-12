@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
   Sun, BookOpen, MapPin, Clock, PenLine, RotateCcw, Plus, ArrowRight, CheckCircle2,
+  AlertTriangle, X,
 } from 'lucide-react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
@@ -45,6 +46,31 @@ function buildTarget(daySessions: CalendarSession[], session: CalendarSession, d
     date,
     next: nxt ? { session: nxt, date, label: `${nxt.subjectName ?? 'Lesson'} · ${nxt.className}` } : null,
   };
+}
+
+/** A session is "overdue" once its window has passed with nothing recorded —
+ *  this is the one state that deserves an unmissable warning, as distinct
+ *  from a lesson that just hasn't happened yet. */
+function isOverdue(s: CalendarSession, date: string, today: string): boolean {
+  if (s.status !== 'missing') return false;
+  if (date < today) return true;
+  if (date > today) return false;
+  const end = toMin(s.endTime || s.startTime) || toMin(s.startTime) + 40;
+  return nowMin() > end;
+}
+
+/** Distinct subjects (id, name, colour) the signed-in user teaches, drawn
+ *  from whatever session list is currently loaded — powers the "your
+ *  subjects" chip strip and the highlight/dim interaction on the grid. */
+function collectSubjects(sessions: CalendarSession[]) {
+  const map = new Map<number, { id: number; name: string; color: string }>();
+  for (const s of sessions) {
+    if (s.kind !== 'subject' || s.subjectId == null) continue;
+    if (!map.has(s.subjectId)) {
+      map.set(s.subjectId, { id: s.subjectId, name: s.subjectName || 'Subject', color: s.color || 'var(--subject-fallback)' });
+    }
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** done / total registers for one day, counting the subject lessons plus the
@@ -147,7 +173,9 @@ function packLanes<T extends { startTime: string; endTime: string }>(events: T[]
   });
 }
 
-const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void }> = ({ data, onOpen }) => {
+const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void; focusSubject: number | null }> = ({
+  data, onOpen, focusSubject,
+}) => {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canMark = can('ATTENDANCE_MARK');
@@ -211,7 +239,11 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                 return (
                   <div key={d.date} className="cal-hr-cell">
                     <button className={`cal-hr-pill ${st}`} onClick={() => onOpen(buildTarget(d.sessions, hr, d.date))}>
-                      {hr.status === 'recorded' ? <StatusChip kind="recorded" label="Done" /> : <><PenLine size={12} /> <span>Check</span></>}
+                      {hr.status === 'recorded'
+                        ? <StatusChip kind="recorded" label="Done" />
+                        : st === 'is-missing-past'
+                          ? <><AlertTriangle size={12} /> <span>Overdue</span></>
+                          : <><PenLine size={12} /> <span>Check</span></>}
                     </button>
                   </div>
                 );
@@ -234,13 +266,15 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                   {laid.map(({ ev: s, s: sMin, e: eMin, lane, lanes }, i) => {
                     const top = ((sMin - gridTop) / 60) * HOUR_H;
                     const h = Math.max(30, ((eMin - sMin) / 60) * HOUR_H);
-                    const past = d.date < today || (d.date === today && nowMin() > eMin);
+                    const overdue = isOverdue(s, d.date, today);
                     const isNow = d.date === today && nowMin() >= sMin && nowMin() < eMin;
-                    const cls = s.status === 'recorded' ? 'is-recorded' : past ? 'is-missing-past' : 'is-future';
+                    const cls = s.status === 'recorded' ? 'is-recorded' : overdue ? 'is-missing-past' : 'is-future';
+                    const isDim = focusSubject != null && s.subjectId !== focusSubject;
+                    const isFocus = focusSubject != null && s.subjectId === focusSubject;
                     return (
                       <button
                         key={i}
-                        className={`cal-event ${cls}${isNow ? ' is-now' : ''}${lanes > 1 ? ' is-narrow' : ''}`}
+                        className={`cal-event ${cls}${isNow ? ' is-now' : ''}${lanes > 1 ? ' is-narrow' : ''}${isDim ? ' is-dimmed' : ''}${isFocus ? ' is-focused' : ''}`}
                         style={{
                           top, height: h,
                           left: `calc(${(lane / lanes) * 100}% + 2px)`,
@@ -248,11 +282,21 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                           ...(s.color ? { ['--spine' as string]: s.color } : {}),
                         }}
                         onClick={() => (canMark ? onOpen(buildTarget(d.sessions, s, d.date)) : navigate(s.deepLink))}
-                        title={`${clock(s.startTime)}–${clock(s.endTime)} · ${s.subjectName} · ${s.className}${s.room ? ` · ${s.room}` : ''}`}
+                        title={`${clock(s.startTime)}–${clock(s.endTime)} · ${s.subjectName} · ${s.className}${s.room ? ` · ${s.room}` : ''}${overdue ? ' · Register overdue' : ''}`}
                       >
+                        <span className={`cal-badge ${cls}${isNow ? ' is-now' : ''}`}>
+                          {s.status === 'recorded'
+                            ? <CheckCircle2 size={10} />
+                            : overdue
+                              ? <AlertTriangle size={10} />
+                              : isNow
+                                ? <Clock size={10} />
+                                : null}
+                        </span>
                         <div className="ev-time">{clock(s.startTime)}–{clock(s.endTime)}</div>
                         <div className="ev-title">{s.subjectName}</div>
                         <div className="ev-sub">{s.className}{s.room ? ` · ${s.room}` : ''}</div>
+                        {overdue && <div className="ev-warning"><AlertTriangle size={10} /> Register overdue</div>}
                       </button>
                     );
                   })}
@@ -270,8 +314,8 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
 /* -------------------------------------------------------------------------- */
 /* Day (agenda)                                                              */
 /* -------------------------------------------------------------------------- */
-const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: DrawerTarget) => void }> = ({
-  data, canMark, onOpen,
+const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: DrawerTarget) => void; focusSubject: number | null }> = ({
+  data, canMark, onOpen, focusSubject,
 }) => {
   const navigate = useNavigate();
   const isToday = data.date === isoDate();
@@ -307,10 +351,23 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
     const end = s.endTime ? toMin(s.endTime) : start + 40;
     const isNow = isToday && now >= start && now < end;
     const isFuture = isToday && now < start;
-    const isPastMissing = isToday && now >= end && s.status === 'missing';
-    const cls = ['agenda-card', isNow && 'is-now', isFuture && 'is-future', isPastMissing && 'is-past-missing'].filter(Boolean).join(' ');
+    const isPastMissing = isOverdue(s, data.date, isoDate());
+    const isDim = focusSubject != null && s.kind === 'subject' && s.subjectId !== focusSubject;
+    const isFocus = focusSubject != null && s.kind === 'subject' && s.subjectId === focusSubject;
+    const cls = ['agenda-card', isNow && 'is-now', isFuture && 'is-future', isPastMissing && 'is-past-missing', isDim && 'is-dimmed', isFocus && 'is-focused']
+      .filter(Boolean).join(' ');
+    const badgeCls = s.status === 'recorded' ? 'is-recorded' : isPastMissing ? 'is-missing-past' : isNow ? 'is-now' : 'is-future';
     return (
       <div className={cls} style={s.color ? ({ ['--spine' as string]: s.color }) : undefined}>
+        <span className={`agenda-badge ${badgeCls}`}>
+          {s.status === 'recorded'
+            ? <CheckCircle2 size={11} />
+            : isPastMissing
+              ? <AlertTriangle size={11} />
+              : isNow
+                ? <Clock size={11} />
+                : null}
+        </span>
         <div className="agenda-time">
           <span className="t-start">{clock(s.startTime)}</span>
           {s.endTime && <span className="t-end">{clock(s.endTime)}</span>}
@@ -326,6 +383,7 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
             {s.kind === 'subject' && <span>{s.className}</span>}
             {s.room && <span><MapPin size={11} /> {s.room}</span>}
             {isNow && <span style={{ color: 'var(--primary)', fontWeight: 600 }}><Clock size={11} /> In progress</span>}
+            {isPastMissing && <span className="agenda-overdue"><AlertTriangle size={11} /> Register overdue</span>}
           </div>
           {s.status === 'recorded' && s.stats && (
             <div className="agenda-recorded-line">
@@ -402,6 +460,7 @@ export const AttendanceCalendar: React.FC = () => {
   const [cursor, setCursor] = useState(params.get('date') || isoDate());
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [focusSubject, setFocusSubject] = useState<number | null>(null);
 
   const [month, setMonth] = useState<MonthResponse | null>(null);
   const [week, setWeek] = useState<WeekResponse | null>(null);
@@ -439,6 +498,34 @@ export const AttendanceCalendar: React.FC = () => {
     if (week) return week.days.find((d) => d.date === date)?.sessions ?? [];
     return [];
   }, [day, week]);
+
+  // "Your subjects" strip + overdue-register banner only make sense once we
+  // have per-session data (week/day) — month view is too coarse.
+  const visibleSessions: CalendarSession[] = useMemo(() => {
+    if (view === 'day') return day?.sessions ?? [];
+    if (view === 'week') return week?.days.flatMap((d) => d.sessions) ?? [];
+    return [];
+  }, [view, day, week]);
+  const subjects = useMemo(() => collectSubjects(visibleSessions), [visibleSessions]);
+  // Drop a stale filter (e.g. left over from a subject not taught on the day
+  // just navigated to) without a setState-in-effect render cascade.
+  const activeFocusSubject = focusSubject != null && subjects.some((sub) => sub.id === focusSubject) ? focusSubject : null;
+
+  const overdue = useMemo(() => {
+    const today = isoDate();
+    if (view === 'day' && day) {
+      return day.sessions
+        .filter((s) => isOverdue(s, day.date, today))
+        .sort((a, b) => toMin(a.startTime) - toMin(b.startTime))
+        .map((s) => ({ session: s, date: day.date }));
+    }
+    if (view === 'week' && week) {
+      return week.days
+        .flatMap((d) => d.sessions.filter((s) => isOverdue(s, d.date, today)).map((s) => ({ session: s, date: d.date })))
+        .sort((a, b) => (a.date + a.session.startTime).localeCompare(b.date + b.session.startTime));
+    }
+    return [];
+  }, [view, day, week]);
 
   const step = (dir: -1 | 1) => {
     if (view === 'month') setCursor(addMonths(cursor, dir));
@@ -506,10 +593,46 @@ export const AttendanceCalendar: React.FC = () => {
 
         <div className="cal-legend">
           <span><span className="swatch is-recorded" /> Register taken</span>
-          <span><span className="swatch is-missing" /> Not recorded</span>
+          <span><span className="swatch is-missing" /> Overdue — needs attention</span>
           <span><span className="swatch is-future" /> Upcoming</span>
           <span><span className="swatch is-now" /> Now</span>
         </div>
+
+        {subjects.length > 0 && (
+          <div className="cal-subjects" role="group" aria-label="Filter by your subjects">
+            {subjects.map((sub) => (
+              <button
+                key={sub.id}
+                className={`subject-chip${focusSubject === sub.id ? ' is-active' : ''}`}
+                style={{ ['--c' as string]: sub.color }}
+                onClick={() => setFocusSubject((cur) => (cur === sub.id ? null : sub.id))}
+                aria-pressed={focusSubject === sub.id}
+              >
+                <span className="dot" /> {sub.name}
+              </button>
+            ))}
+            {focusSubject != null && (
+              <button className="subject-chip subject-chip-clear" onClick={() => setFocusSubject(null)}>
+                <X size={12} /> Clear
+              </button>
+            )}
+          </div>
+        )}
+
+        {overdue.length > 0 && (
+          <div className="cal-alert">
+            <AlertTriangle size={16} />
+            <span><strong>{overdue.length}</strong> register{overdue.length === 1 ? '' : 's'} overdue — attendance wasn't taken in time</span>
+            {canMark && (
+              <button
+                className="cal-alert-btn"
+                onClick={() => setDrawer(buildTarget(sessionsForDate(overdue[0].date), overdue[0].session, overdue[0].date))}
+              >
+                Take next <ArrowRight size={13} />
+              </button>
+            )}
+          </div>
+        )}
 
         {loading ? (
           <div className="cal-skel" style={{ height: view === 'day' ? 320 : 520 }} />
@@ -518,9 +641,9 @@ export const AttendanceCalendar: React.FC = () => {
         ) : view === 'month' && month ? (
           <MonthView data={month} cursor={cursor} onPickDay={(d) => { setCursor(d); setView('day'); }} />
         ) : view === 'week' && week ? (
-          <WeekView data={week} onOpen={setDrawer} />
+          <WeekView data={week} onOpen={setDrawer} focusSubject={activeFocusSubject} />
         ) : view === 'day' && day ? (
-          <DayView data={day} canMark={canMark} onOpen={setDrawer} />
+          <DayView data={day} canMark={canMark} onOpen={setDrawer} focusSubject={activeFocusSubject} />
         ) : null}
       </div>
 
