@@ -24,6 +24,8 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'ATTENDANCE_MARK', category: PERMISSION_CATEGORIES.ATTENDANCE, description: 'Mark student attendance for a class session.' },
   { key: 'ATTENDANCE_VIEW_ALL', category: PERMISSION_CATEGORIES.ATTENDANCE, description: "View any student's attendance history." },
   { key: 'ATTENDANCE_VIEW_OWN', category: PERMISSION_CATEGORIES.ATTENDANCE, description: 'View your own attendance history.' },
+  { key: 'ATTENDANCE_CALENDAR_VIEW_OWN', category: PERMISSION_CATEGORIES.ATTENDANCE, description: 'View your own attendance marked on a read-only calendar.' },
+  { key: 'ATTENDANCE_DASHBOARD_VIEW_OWN', category: PERMISSION_CATEGORIES.ATTENDANCE, description: 'View your own attendance dashboard (summary, trend, subject breakdown).' },
 
   { key: 'EXCUSES_SUBMIT', category: PERMISSION_CATEGORIES.EXCUSES, description: 'Submit an excuse/leave request.' },
   { key: 'EXCUSES_VIEW_OWN', category: PERMISSION_CATEGORIES.EXCUSES, description: 'View your own excuse requests.' },
@@ -69,6 +71,8 @@ export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
 export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', string[]> = {
   Student: [
     'ATTENDANCE_VIEW_OWN',
+    'ATTENDANCE_CALENDAR_VIEW_OWN',
+    'ATTENDANCE_DASHBOARD_VIEW_OWN',
     'EXCUSES_SUBMIT',
     'EXCUSES_VIEW_OWN',
     'DISCIPLINE_VIEW_OWN',
@@ -95,6 +99,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', s
   ],
   Admin: [
     'ATTENDANCE_MARK', 'ATTENDANCE_VIEW_ALL', 'ATTENDANCE_VIEW_OWN',
+    'ATTENDANCE_CALENDAR_VIEW_OWN', 'ATTENDANCE_DASHBOARD_VIEW_OWN',
     'EXCUSES_SUBMIT', 'EXCUSES_VIEW_OWN', 'EXCUSES_REVIEW',
     'DISCIPLINE_LOG', 'DISCIPLINE_VIEW_ALL', 'DISCIPLINE_VIEW_OWN', 'DISCIPLINE_REVIEW',
     'DISCIPLINE_EDIT', 'DISCIPLINE_DELETE', 'DISCIPLINE_ADJUST', 'DISCIPLINE_RULES_MANAGE',

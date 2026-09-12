@@ -272,7 +272,7 @@ function buildDaySessions(
   return [...homeroom, ...subjects];
 }
 
-const ATT_PERMS = ['ATTENDANCE_MARK', 'ATTENDANCE_VIEW_ALL', 'ATTENDANCE_VIEW_OWN'];
+const ATT_PERMS = ['ATTENDANCE_MARK', 'ATTENDANCE_VIEW_ALL', 'ATTENDANCE_VIEW_OWN', 'ATTENDANCE_CALENDAR_VIEW_OWN'];
 
 // GET /api/attendance/schedule/day?date=YYYY-MM-DD
 router.get('/schedule/day', authorizePermission(...ATT_PERMS), async (req: any, res: Response) => {

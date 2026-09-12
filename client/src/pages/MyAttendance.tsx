@@ -198,31 +198,53 @@ export const MyAttendance: React.FC = () => {
         </div></div>
       ) : (
         <>
-          {/* Summary */}
-          <div className="card card-pad mb-4">
-            <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
-              <div className="flex items-end gap-2">
-                <span style={{ fontSize: '36px', fontWeight: 700, letterSpacing: '-0.03em', lineHeight: 1, color: isLow ? 'var(--danger)' : 'var(--success)' }}>
-                  {summary.rate}%
-                </span>
-                <span className="text-secondary text-sm mb-1">daily attendance</span>
+          {/* Summary — headline rate + a stat-card per status, matching the
+              visual language used across the app's other dashboards. */}
+          <div className="grid grid-3 mb-4">
+            <div className="stat-card" style={{ ['--accent-color' as string]: isLow ? 'var(--danger)' : 'var(--success)' }}>
+              <div className="flex items-center justify-between">
+                <span className="stat-label">Attendance Rate</span>
+                <span className="stat-icon"><TrendingUp size={18} /></span>
               </div>
-              <span className={`badge ${isLow ? 'badge-danger' : 'badge-success'}`}>
-                {isLow ? `Below the ${summary.threshold}% minimum` : 'Good standing'}
+              <div className="stat-value" style={{ color: isLow ? 'var(--danger)' : 'var(--success)' }}>{summary.rate}%</div>
+              <span className={`badge ${isLow ? 'badge-danger' : 'badge-success'}`} style={{ marginTop: '6px' }}>
+                {isLow ? `Below ${summary.threshold}%` : 'Good standing'}
               </span>
             </div>
+            <div className="stat-card" style={{ ['--accent-color' as string]: 'var(--primary)' }}>
+              <div className="flex items-center justify-between">
+                <span className="stat-label">Days Tracked</span>
+                <span className="stat-icon"><CalendarDays size={18} /></span>
+              </div>
+              <div className="stat-value">{summary.total}</div>
+            </div>
+            <div className="stat-card" style={{ ['--accent-color' as string]: 'var(--info)' }}>
+              <div className="flex items-center justify-between">
+                <span className="stat-label">Excused Absences</span>
+                <span className="stat-icon"><ShieldCheck size={18} /></span>
+              </div>
+              <div className="stat-value">{summary.excused}</div>
+            </div>
+          </div>
+
+          <div className="card card-pad mb-4">
             {segs.length > 0 && (
               <div className="flex mb-1" style={{ height: '10px', gap: '2px', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
-                {segs.map((s, i) => <div key={i} style={{ flex: s.n, background: s.c }} />)}
+                {segs.map((s, i) => <div key={i} style={{ flex: s.n, background: s.c }} title={`${s.n}`} />)}
               </div>
             )}
             <p className="text-xs text-secondary mb-4">
               Present, late and excused all count towards your rate — only an unexcused absence counts against it.
             </p>
             <div className="grid grid-stats" style={{ gap: '12px' }}>
-              {([['Present', summary.present, 'text-success'], ['Late', summary.late, 'text-warning'], ['Excused', summary.excused, 'text-info'], ['Absent', summary.absent, 'text-danger']] as const).map(([l, v, cls]) => (
+              {([
+                ['Present', summary.present, 'text-success', <CheckCircle2 key="i" size={14} />],
+                ['Late', summary.late, 'text-warning', <Clock key="i" size={14} />],
+                ['Excused', summary.excused, 'text-info', <ShieldCheck key="i" size={14} />],
+                ['Absent', summary.absent, 'text-danger', <XCircle key="i" size={14} />],
+              ] as const).map(([l, v, cls, icon]) => (
                 <div key={l}>
-                  <div className={`text-2xl font-bold ${cls}`}>{v}</div>
+                  <div className={`text-2xl font-bold ${cls} flex items-center gap-2`}>{icon}{v}</div>
                   <div className="text-xs text-secondary">{l}</div>
                 </div>
               ))}
@@ -245,7 +267,7 @@ export const MyAttendance: React.FC = () => {
               ) : (
                 <div className="att-trend">
                   {weeks.map((w) => (
-                    <div key={w.label} className="att-trend-col">
+                    <div key={w.label} className="att-trend-col" title={`Week of ${w.label}: ${w.rate}% attendance`}>
                       <span className="att-trend-val">{w.rate}%</span>
                       <div className="att-trend-track">
                         <div

@@ -1,0 +1,94 @@
+/* ==========================================================================
+   Student Attendance Calendar — read-only, calm (no alarm/action styling).
+   ========================================================================== */
+
+.sc-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  font-size: 11.5px; color: var(--text-secondary);
+  padding: 2px 4px;
+}
+.sc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---- Status badge (tick / cross / clock / shield / dashed) ---- */
+.sc-status {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: var(--radius-badge);
+  font-size: 11.5px; font-weight: 700; white-space: nowrap; flex: none;
+}
+.sc-status.is-md { padding: 5px 12px; font-size: 12.5px; }
+.sc-status.is-present { background: var(--success-light); color: var(--success); }
+.sc-status.is-absent  { background: var(--danger-light);  color: var(--danger); }
+.sc-status.is-late    { background: var(--warning-light); color: var(--warning); }
+.sc-status.is-excused { background: var(--info-light);    color: var(--info); }
+.sc-status.is-pending { background: var(--bg-subtle);      color: var(--text-tertiary); }
+
+/* ---- Month ---- */
+.sc-month { border: 1px solid var(--border); border-radius: var(--radius-card); overflow: hidden; background: var(--bg-card); box-shadow: var(--shadow-card); }
+.sc-month-dows { display: grid; grid-template-columns: repeat(7, 1fr); background: var(--bg-subtle); border-bottom: 1px solid var(--border); }
+.sc-month-dows span { padding: 8px 10px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); text-align: right; }
+.sc-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(64px, 1fr); }
+.sc-daycell {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  padding: 8px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: var(--bg-card); transition: background var(--transition-fast);
+}
+.sc-daycell:nth-child(7n) { border-right: none; }
+.sc-daycell:hover { background: var(--bg-hover); }
+.sc-daycell.is-outside { background: var(--bg-subtle); color: var(--text-tertiary); }
+.sc-daynum { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.sc-daycell.is-today .sc-daynum {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--primary); color: var(--primary-contrast);
+}
+.sc-daydot { width: 8px; height: 8px; border-radius: 50%; margin-top: auto; }
+.sc-daydot.is-present { background: var(--success); }
+.sc-daydot.is-absent  { background: var(--danger); }
+.sc-daydot.is-late    { background: var(--warning); }
+
+/* ---- Week (simple per-day list, not a time grid) ---- */
+.sc-week { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.sc-week-day {
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  background: var(--bg-card); box-shadow: var(--shadow-sm);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.sc-week-day.is-today { border-color: var(--primary); }
+.sc-week-day-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+.sc-week-day.is-today .sc-week-day-head { background: color-mix(in srgb, var(--primary) 8%, var(--bg-subtle)); }
+.sc-week-dow { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
+.sc-week-date { font-size: 14px; font-weight: 700; }
+.sc-week-sessions { display: flex; flex-direction: column; gap: 8px; padding: 10px; flex: 1; }
+.sc-week-empty { font-size: 11.5px; color: var(--text-tertiary); text-align: center; padding: 12px 0; }
+
+/* ---- Session row (shared by week + day) ---- */
+.sc-session {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 6%, var(--bg-card));
+  padding: 8px 10px;
+  transition: background var(--transition-fast);
+}
+.sc-session:hover { background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 12%, var(--bg-card)); }
+.sc-session-spine { width: 3px; align-self: stretch; border-radius: var(--radius-full); background: var(--spine, var(--subject-fallback)); flex: none; }
+.sc-session-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sc-session-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.sc-homeroom-icon { color: var(--warning); }
+.sc-session-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--text-secondary); }
+.sc-session-meta span { display: inline-flex; align-items: center; gap: 4px; }
+.sc-session.is-compact { padding: 7px 9px; }
+.sc-session.is-compact .sc-session-title { font-size: 12.5px; }
+
+/* ---- Day (agenda) ---- */
+.sc-day { display: flex; flex-direction: column; gap: 8px; }
+.sc-group-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-tertiary); margin: 6px 2px 2px; }
+.sc-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 64px 24px; text-align: center;
+  border: 1px dashed var(--border-strong); border-radius: var(--radius-card);
+  color: var(--text-secondary);
+}

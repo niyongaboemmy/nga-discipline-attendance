@@ -500,7 +500,7 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
 });
 
 // Student's own attendance (Student only)
-router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN'), async (req: any, res: Response) => {
+router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN', 'ATTENDANCE_DASHBOARD_VIEW_OWN'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const studentId = authReq.user!.id;
   const db = getDb();

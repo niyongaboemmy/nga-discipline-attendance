@@ -36,8 +36,10 @@
   width: 100%;
   min-height: 3px;
   border-radius: 5px 5px 0 0;
-  transition: height 0.3s ease;
+  transition: height 0.3s ease, filter 0.15s ease;
 }
+.att-trend-col:hover .att-trend-bar { filter: brightness(1.15); }
+.att-trend-col:hover .att-trend-val { color: var(--text-primary); }
 .att-trend-label {
   font-size: 10px;
   color: var(--text-tertiary, var(--text-secondary));
@@ -45,6 +47,8 @@
 }
 
 /* By-day cards */
+.att-day { transition: border-color var(--transition-fast, 0.15s ease), box-shadow var(--transition-fast, 0.15s ease); }
+.att-day:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); }
 .att-day-head {
   display: flex;
   align-items: center;
