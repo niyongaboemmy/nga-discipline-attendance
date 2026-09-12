@@ -8,6 +8,7 @@ import {
 } from './reporting.service.js';
 import {
   listReportableClasses, listClassSections, getClassSectionReport,
+  listAvailableSubjects, listSubjectClasses,
 } from './attendanceReport.service.js';
 
 /** C: termly / annual / combined / comparison reporting. Mounted at /api/reporting. */
@@ -117,6 +118,39 @@ router.get('/attendance/class/:classId', async (req: any, res: Response) => {
   } catch (error) {
     console.error('Error generating class section report:', error);
     return res.status(500).json({ success: false, message: 'Error generating class section report.' });
+  }
+});
+
+// Subject-first view: a dashboard of subjects (a teacher's own assignments,
+// or every subject for an admin), drilling down into the classes teaching
+// each one. See attendanceReport.service.ts.
+router.get('/attendance/subjects', async (req: any, res: Response) => {
+  const db = getDb();
+  const authReq = req as AuthenticatedRequest;
+  const { academicTermId } = resolveAcademicPeriod(authReq);
+  try {
+    const data = await listAvailableSubjects(db, { role: authReq.user!.role, userId: authReq.user!.id, academicTermId });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing available subjects:', error);
+    return res.status(500).json({ success: false, message: 'Error listing subjects.' });
+  }
+});
+
+router.get('/attendance/subjects/:subjectId/classes', async (req: any, res: Response) => {
+  const db = getDb();
+  const authReq = req as AuthenticatedRequest;
+  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const subjectId = Number(req.params.subjectId);
+  if (!Number.isFinite(subjectId)) {
+    return res.status(400).json({ success: false, message: 'subjectId must be a number.' });
+  }
+  try {
+    const data = await listSubjectClasses(db, subjectId, { role: authReq.user!.role, userId: authReq.user!.id, academicTermId });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing classes for subject:', error);
+    return res.status(500).json({ success: false, message: 'Error listing classes for subject.' });
   }
 });
 

@@ -8,11 +8,13 @@ import { useAcademicPeriod } from '../context/AcademicPeriodContext';
 import { ApiError } from '../api/client';
 import {
   attendanceReportApi, type ReportableClass, type ClassSection, type ClassSectionReport,
+  type SubjectOverview, type SubjectClassOverview,
 } from '../api/attendanceReport';
 import { isoDate } from '../utils/time';
 import {
   Printer, Download, Users, TrendingUp, AlertTriangle, Search, ArrowUpDown,
-  CheckCircle2, ThumbsUp, AlertCircle, XCircle, Sun, BookOpen,
+  CheckCircle2, ThumbsUp, AlertCircle, XCircle, Sun, BookOpen, LayoutGrid,
+  ChevronRight, GraduationCap, ClipboardList,
 } from 'lucide-react';
 
 /** Excellent/Good/Fair/Poor -> the same semantic tokens used everywhere else
@@ -24,6 +26,16 @@ const COMMENT_META: Record<ClassSectionReport['students'][number]['comment'], { 
   Poor: { color: 'var(--danger)', icon: <XCircle size={12} /> },
 };
 const COMMENT_BADGE: Record<string, string> = { Excellent: 'badge-success', Good: 'badge-info', Fair: 'badge-warning', Poor: 'badge-danger' };
+
+/** Mirrors attendanceReport.service.ts's attendanceComment() tiers, for
+ *  coloring the subject/class overview cards (which carry only an
+ *  averageRate, not a per-row comment field). */
+function rateColor(rate: number): string {
+  if (rate >= 95) return COMMENT_META.Excellent.color;
+  if (rate >= 85) return COMMENT_META.Good.color;
+  if (rate >= 75) return COMMENT_META.Fair.color;
+  return COMMENT_META.Poor.color;
+}
 
 const addDays = (d: string, n: number) => { const x = new Date(`${d}T00:00:00`); x.setDate(x.getDate() + n); return isoDate(x); };
 const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -67,10 +79,24 @@ export const AttendanceReport: React.FC = () => {
   const { selectedYearId, selectedTermId, termsByYear, years } = useAcademicPeriod();
   const yearName = years.find((y) => y.academic_year_id === selectedYearId)?.name;
 
+  const [mode, setMode] = useState<'class' | 'subject'>('class');
+
   const [classes, setClasses] = useState<ReportableClass[]>([]);
   const [classId, setClassId] = useState('');
   const [sections, setSections] = useState<ClassSection[]>([]);
   const [sectionKey, setSectionKey] = useState<string>('homeroom');
+  // Set right before setClassId() when a subject-mode click already knows
+  // which section it wants — otherwise the sections-load effect below would
+  // reset every newly-picked class back to 'homeroom'.
+  const [pendingSectionKey, setPendingSectionKey] = useState<string | null>(null);
+
+  // "By Subject" — a dashboard of subjects (a teacher's own, or every subject
+  // for an admin), drilling into the class(es) teaching each one.
+  const [subjects, setSubjects] = useState<SubjectOverview[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null);
+  const [subjectClasses, setSubjectClasses] = useState<SubjectClassOverview[]>([]);
+  const [loadingSubjectClasses, setLoadingSubjectClasses] = useState(false);
 
   const term = selectedYearId != null ? termsByYear[selectedYearId]?.find((t) => t.academic_term_id === selectedTermId) : undefined;
   const [fromDate, setFromDate] = useState(() => addDays(isoDate(), -13));
@@ -84,21 +110,81 @@ export const AttendanceReport: React.FC = () => {
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<1 | -1>(1);
 
-  useEffect(() => {
-    setLoadingClasses(true);
+  const loadClasses = React.useCallback(() => {
+    setLoadingClasses(true); setError(null);
     attendanceReportApi.classes()
       .then((r) => setClasses(r.data ?? []))
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load classes.'))
       .finally(() => setLoadingClasses(false));
   }, []);
 
+  useEffect(() => { loadClasses(); }, [loadClasses]);
+
   useEffect(() => {
     if (!classId) { setSections([]); return; }
-    setSectionKey('homeroom');
+    const want = pendingSectionKey;
+    setPendingSectionKey(null);
     attendanceReportApi.sections(classId)
-      .then((r) => setSections(r.data ?? [{ kind: 'homeroom' }]))
+      .then((r) => {
+        const secs = r.data ?? [{ kind: 'homeroom' as const }];
+        setSections(secs);
+        const wantExists = want != null && secs.some((s) => (s.kind === 'homeroom' ? 'homeroom' : String(s.subjectId)) === want);
+        setSectionKey(wantExists ? want! : 'homeroom');
+      })
       .catch(() => setSections([{ kind: 'homeroom' }]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
+
+  const loadSubjects = React.useCallback(() => {
+    setLoadingSubjects(true); setError(null);
+    attendanceReportApi.subjects()
+      .then((r) => setSubjects(r.data ?? []))
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load subjects.'))
+      .finally(() => setLoadingSubjects(false));
+  }, []);
+
+  useEffect(() => {
+    if (mode === 'subject') loadSubjects();
+  }, [mode, loadSubjects]);
+
+  const openSubject = (subjectId: number) => {
+    setSelectedSubjectId(subjectId);
+    setClassId('');
+    setSubjectClasses([]);
+    setLoadingSubjectClasses(true); setError(null);
+    attendanceReportApi.subjectClasses(subjectId)
+      .then((r) => {
+        const list = r.data ?? [];
+        setSubjectClasses(list);
+        // Only one class teaches this subject (the common case for a
+        // teacher's own subject) — skip the extra click and open it directly.
+        if (list.length === 1) {
+          setPendingSectionKey(String(subjectId));
+          setClassId(list[0].classId);
+        }
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load classes for this subject.'))
+      .finally(() => setLoadingSubjectClasses(false));
+  };
+
+  const openSubjectClass = (targetClassId: string) => {
+    if (selectedSubjectId != null) setPendingSectionKey(String(selectedSubjectId));
+    setClassId(targetClassId);
+  };
+
+  const resetToSubjects = () => {
+    setSelectedSubjectId(null); setClassId(''); setSubjectClasses([]); setReport(null);
+  };
+
+  const backToSubjectClasses = () => { setClassId(''); setReport(null); };
+
+  const switchMode = (next: 'class' | 'subject') => {
+    if (next === mode) return;
+    setMode(next);
+    setClassId(''); setSections([]); setSectionKey('homeroom');
+    setSelectedSubjectId(null); setSubjectClasses([]);
+    setReport(null); setError(null);
+  };
 
   const selectedSection = sections.find((s) => (s.kind === 'homeroom' ? 'homeroom' : String(s.subjectId)) === sectionKey);
 
@@ -118,6 +204,22 @@ export const AttendanceReport: React.FC = () => {
   }, [classId, sectionKey, fromDate, toDate, sections.length]);
 
   useEffect(() => { loadReport(); }, [loadReport]);
+
+  /** One retry button, wired to whatever step actually failed — the class
+   *  list, the subjects dashboard, a subject's class list, or the report
+   *  itself, depending on where the user is when the fetch errors. */
+  const retry = () => {
+    setError(null);
+    if (mode === 'subject') {
+      if (selectedSubjectId == null) loadSubjects();
+      else if (!classId) openSubject(selectedSubjectId);
+      else loadReport();
+    } else if (!classId) {
+      loadClasses();
+    } else {
+      loadReport();
+    }
+  };
 
   const useFullTerm = () => {
     if (term?.start_date) setFromDate(term.start_date.slice(0, 10));
@@ -183,61 +285,162 @@ export const AttendanceReport: React.FC = () => {
         </div>
       </div>
 
-      <div className="card card-pad no-print ar-filterbar">
-        <div className="ar-filter-row">
-          <div className="ar-filter-field">
-            <label className="ar-filter-label">Class</label>
-            <SearchableSelect
-              options={classOptions}
-              value={classId}
-              onChange={setClassId}
-              placeholder={loadingClasses ? 'Loading classes…' : 'Select a class…'}
-              disabled={loadingClasses}
-              aria-label="Class"
-            />
-          </div>
-          <div className="ar-filter-field">
-            <label className="ar-filter-label">From</label>
-            <input type="date" className="input" value={fromDate} onChange={(e) => setFromDate(e.target.value)} max={toDate} />
-          </div>
-          <div className="ar-filter-field">
-            <label className="ar-filter-label">To</label>
-            <input type="date" className="input" value={toDate} onChange={(e) => setToDate(e.target.value)} min={fromDate} max={isoDate()} />
-          </div>
-          {term?.start_date && (
-            <button className="btn btn-ghost btn-sm" onClick={useFullTerm} style={{ marginTop: '20px' }}>Full term</button>
-          )}
-        </div>
-
-        {sections.length > 0 && (
-          <div className="ar-subjects">
-            {sections.map((sec) => {
-              const key = sec.kind === 'homeroom' ? 'homeroom' : String(sec.subjectId);
-              return (
-                <button
-                  key={key}
-                  className={`subject-chip${sectionKey === key ? ' is-active' : ''}`}
-                  onClick={() => setSectionKey(key)}
-                  aria-pressed={sectionKey === key}
-                >
-                  {sec.kind === 'homeroom' ? <Sun size={12} /> : <BookOpen size={12} />}
-                  {sec.kind === 'homeroom' ? 'Homeroom' : sec.subjectName}
-                </button>
-              );
-            })}
-          </div>
-        )}
+      <div className="ar-mode-tabs no-print" role="tablist" aria-label="Report mode">
+        <button role="tab" aria-selected={mode === 'class'} className={`ar-mode-tab${mode === 'class' ? ' is-active' : ''}`} onClick={() => switchMode('class')}>
+          <LayoutGrid size={14} /> By Class
+        </button>
+        <button role="tab" aria-selected={mode === 'subject'} className={`ar-mode-tab${mode === 'subject' ? ' is-active' : ''}`} onClick={() => switchMode('subject')}>
+          <BookOpen size={14} /> By Subject
+        </button>
       </div>
 
-      {loadingReport ? (
-        <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
-      ) : error ? (
-        <ErrorState message={error} onRetry={loadReport} />
-      ) : !report ? (
-        <div className="empty-state no-print" style={{ marginTop: '16px' }}>
-          {classId ? 'No attendance recorded for this class/section in the selected range.' : 'Pick a class to build its attendance report.'}
+      {mode === 'class' ? (
+        <div className="card card-pad no-print ar-filterbar">
+          <div className="ar-filter-row">
+            <div className="ar-filter-field">
+              <label className="ar-filter-label">Class</label>
+              <SearchableSelect
+                options={classOptions}
+                value={classId}
+                onChange={setClassId}
+                placeholder={loadingClasses ? 'Loading classes…' : 'Select a class…'}
+                disabled={loadingClasses}
+                aria-label="Class"
+              />
+            </div>
+            <div className="ar-filter-field">
+              <label className="ar-filter-label">From</label>
+              <input type="date" className="input" value={fromDate} onChange={(e) => setFromDate(e.target.value)} max={toDate} />
+            </div>
+            <div className="ar-filter-field">
+              <label className="ar-filter-label">To</label>
+              <input type="date" className="input" value={toDate} onChange={(e) => setToDate(e.target.value)} min={fromDate} max={isoDate()} />
+            </div>
+            {term?.start_date && (
+              <button className="btn btn-ghost btn-sm" onClick={useFullTerm} style={{ marginTop: '20px' }}>Full term</button>
+            )}
+          </div>
+
+          {sections.length > 0 && (
+            <div className="ar-subjects">
+              {sections.map((sec) => {
+                const key = sec.kind === 'homeroom' ? 'homeroom' : String(sec.subjectId);
+                return (
+                  <button
+                    key={key}
+                    className={`subject-chip${sectionKey === key ? ' is-active' : ''}`}
+                    onClick={() => setSectionKey(key)}
+                    aria-pressed={sectionKey === key}
+                  >
+                    {sec.kind === 'homeroom' ? <Sun size={12} /> : <BookOpen size={12} />}
+                    {sec.kind === 'homeroom' ? 'Homeroom' : sec.subjectName}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : (
+        <div className="no-print">
+          <div className="ar-breadcrumb">
+            <button className={`ar-crumb${selectedSubjectId == null ? ' is-current' : ''}`} onClick={resetToSubjects}>
+              <BookOpen size={13} /> Subjects
+            </button>
+            {selectedSubjectId != null && (
+              <>
+                <ChevronRight size={13} className="ar-crumb-sep" />
+                <button className={`ar-crumb${!classId ? ' is-current' : ''}`} onClick={backToSubjectClasses}>
+                  {subjects.find((s) => s.subjectId === selectedSubjectId)?.subjectName}
+                </button>
+              </>
+            )}
+            {classId && (
+              <>
+                <ChevronRight size={13} className="ar-crumb-sep" />
+                <span className="ar-crumb is-current">
+                  <GraduationCap size={13} /> {subjectClasses.find((c) => c.classId === classId)?.className || classes.find((c) => c.classId === classId)?.className}
+                </span>
+              </>
+            )}
+          </div>
+
+          {error && !classId && <ErrorState message={error} onRetry={retry} />}
+
+          {selectedSubjectId == null ? (
+            loadingSubjects ? (
+              <div style={{ padding: '32px 0' }}><LoadingSpinner /></div>
+            ) : subjects.length === 0 ? (
+              <div className="empty-state">No subjects to report on this term.</div>
+            ) : (
+              <div className="subject-card-grid">
+                {subjects.map((s) => (
+                  <button key={s.subjectId} className="card card-pad card-interactive subject-overview-card" onClick={() => openSubject(s.subjectId)}>
+                    <div className="subject-card-head">
+                      <span className="subject-card-icon"><BookOpen size={16} /></span>
+                      <span className="subject-card-name">{s.subjectName}</span>
+                    </div>
+                    <div className="subject-card-rate" style={{ color: rateColor(s.averageRate) }}>{s.averageRate}%</div>
+                    <div className="subject-card-meta">
+                      <span><GraduationCap size={12} /> {s.classCount} class{s.classCount === 1 ? '' : 'es'}</span>
+                      <span><Users size={12} /> {s.studentsTracked} students</span>
+                    </div>
+                    {s.atRiskCount > 0 && (
+                      <div className="subject-card-risk"><AlertTriangle size={12} /> {s.atRiskCount} at risk</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )
+          ) : !classId ? (
+            loadingSubjectClasses ? (
+              <div style={{ padding: '32px 0' }}><LoadingSpinner /></div>
+            ) : subjectClasses.length === 0 ? (
+              <div className="empty-state">No classes are teaching this subject this term.</div>
+            ) : (
+              <div className="subject-card-grid">
+                {subjectClasses.map((c) => (
+                  <button key={c.classId} className="card card-pad card-interactive subject-overview-card" onClick={() => openSubjectClass(c.classId)}>
+                    <div className="subject-card-head">
+                      <span className="subject-card-icon"><GraduationCap size={16} /></span>
+                      <span className="subject-card-name">{c.className}</span>
+                    </div>
+                    <div className="subject-card-rate" style={{ color: rateColor(c.averageRate) }}>{c.averageRate}%</div>
+                    <div className="subject-card-meta">
+                      <span><Users size={12} /> {c.studentsTracked} students</span>
+                      {c.teacherName && <span><ClipboardList size={12} /> {c.teacherName}</span>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )
+          ) : (
+            <div className="card card-pad ar-filterbar" style={{ marginTop: '12px' }}>
+              <div className="ar-filter-row">
+                <div className="ar-filter-field">
+                  <label className="ar-filter-label">From</label>
+                  <input type="date" className="input" value={fromDate} onChange={(e) => setFromDate(e.target.value)} max={toDate} />
+                </div>
+                <div className="ar-filter-field">
+                  <label className="ar-filter-label">To</label>
+                  <input type="date" className="input" value={toDate} onChange={(e) => setToDate(e.target.value)} min={fromDate} max={isoDate()} />
+                </div>
+                {term?.start_date && (
+                  <button className="btn btn-ghost btn-sm" onClick={useFullTerm} style={{ marginTop: '20px' }}>Full term</button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {classId && (
+        loadingReport ? (
+          <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+        ) : error ? (
+          <ErrorState message={error} onRetry={retry} />
+        ) : !report ? (
+          <div className="empty-state no-print" style={{ marginTop: '16px' }}>No attendance recorded for this class/section in the selected range.</div>
+        ) : (
         <>
           <div className="grid grid-3 mb-6 no-print">
             <div className="stat-card" style={{ ['--accent-color' as string]: 'var(--primary)' }}>
@@ -345,6 +548,11 @@ export const AttendanceReport: React.FC = () => {
             </div>
           </div>
         </>
+        )
+      )}
+
+      {mode === 'class' && !classId && (
+        <div className="empty-state no-print" style={{ marginTop: '16px' }}>Pick a class to build its attendance report.</div>
       )}
     </DashboardLayout>
   );

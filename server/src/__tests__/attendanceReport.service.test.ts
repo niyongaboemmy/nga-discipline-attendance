@@ -3,6 +3,7 @@ import { Database } from 'sqlite';
 import { setupTestDb } from './testUtils.js';
 import {
   listReportableClasses, listClassSections, getClassSectionReport, attendanceComment,
+  listAvailableSubjects, listSubjectClasses,
 } from '../modules/reporting/attendanceReport.service.js';
 
 describe('attendanceComment', () => {
@@ -115,5 +116,79 @@ describe('Class -> subject attendance report', () => {
       fromDate: '2026-03-03', toDate: '2026-03-04',
     });
     expect(report.dateColumns).toEqual(['2026-03-04']);
+  });
+});
+
+describe('Subject-first dashboard (listAvailableSubjects / listSubjectClasses)', () => {
+  let db: Database;
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+
+    await db.run(`INSERT INTO subjects (id, name, code) VALUES (5, 'Applied Mathematics II', 'MATH2')`);
+    // Same subject, two different classes, two different teachers — this is
+    // exactly the "if admin, show all; if teacher, only your own" scoping case.
+    await db.run(
+      `INSERT INTO class_subject_assignments
+         (class_id, class_name, subject_id, subject_name, teacher_id, teacher_name, academic_term_id, day_of_week, period)
+       VALUES
+         ('cls-y2c', 'Year 2C', 5, 'Applied Mathematics II', 't1', 'Jean Bosco Uwitonze', 10, 1, '08:00'),
+         ('cls-y1a', 'Year 1A', 5, 'Applied Mathematics II', 't2', 'Grace Mukamana', 10, 2, '09:00')`
+    );
+
+    const rows: Array<[string, string, string, string, string, number, string]> = [
+      ['s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-02', 5, 'present'],
+      ['s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-04', 5, 'absent'],
+      ['s2', 'Ben T.', 'cls-y2c', 'Year 2C', '2026-03-02', 5, 'present'],
+      ['s3', 'Cissy M.', 'cls-y1a', 'Year 1A', '2026-03-02', 5, 'absent'],
+      ['s3', 'Cissy M.', 'cls-y1a', 'Year 1A', '2026-03-04', 5, 'absent'],
+    ];
+    for (const [studentId, studentName, classId, className, date, subjectId, status] of rows) {
+      await db.run(
+        `INSERT INTO attendance_records
+           (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
+         VALUES (?, ?, ?, ?, ?, 'Morning', 'subject', ?, ?, 't1', 10)`,
+        studentId, studentName, classId, className, date, subjectId, status
+      );
+    }
+  });
+
+  it('an admin sees every subject/class regardless of who teaches it', async () => {
+    const subjects = await listAvailableSubjects(db, { role: 'admin', userId: 'someone-else', academicTermId: 10 });
+    const math = subjects.find((s) => s.subjectId === 5)!;
+    expect(math).toBeTruthy();
+    expect(math.classCount).toBe(2);
+    expect(math.studentsTracked).toBe(3);
+
+    const classes = await listSubjectClasses(db, 5, { role: 'admin', userId: 'someone-else', academicTermId: 10 });
+    expect(classes.map((c) => c.classId).sort()).toEqual(['cls-y1a', 'cls-y2c']);
+  });
+
+  it('a teacher only sees the classes they were actually assigned this subject in', async () => {
+    const subjects = await listAvailableSubjects(db, { role: 'teacher', userId: 't1', academicTermId: 10 });
+    const math = subjects.find((s) => s.subjectId === 5)!;
+    expect(math.classCount).toBe(1);
+    expect(math.studentsTracked).toBe(2); // Amina + Ben, not Cissy
+
+    const classes = await listSubjectClasses(db, 5, { role: 'teacher', userId: 't1', academicTermId: 10 });
+    expect(classes).toHaveLength(1);
+    expect(classes[0].classId).toBe('cls-y2c');
+    expect(classes[0].teacherName).toBe('Jean Bosco Uwitonze');
+  });
+
+  it('a teacher with no assignments at all sees an empty subject list', async () => {
+    const subjects = await listAvailableSubjects(db, { role: 'teacher', userId: 't-nobody', academicTermId: 10 });
+    expect(subjects).toEqual([]);
+  });
+
+  it('computes per-class average rate and at-risk count correctly', async () => {
+    const classes = await listSubjectClasses(db, 5, { role: 'admin', userId: 'x', academicTermId: 10 });
+    const y1a = classes.find((c) => c.classId === 'cls-y1a')!;
+    // Cissy: 0 present of 2 -> 0% -> below the 80% at-risk bar.
+    expect(y1a.averageRate).toBe(0);
+
+    const subjects = await listAvailableSubjects(db, { role: 'admin', userId: 'x', academicTermId: 10 });
+    const math = subjects.find((s) => s.subjectId === 5)!;
+    expect(math.atRiskCount).toBeGreaterThanOrEqual(1);
   });
 });

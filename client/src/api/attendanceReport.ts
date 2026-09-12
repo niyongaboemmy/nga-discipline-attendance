@@ -44,6 +44,23 @@ export interface ClassSectionReportQuery {
   to?: string;
 }
 
+export interface SubjectOverview {
+  subjectId: number;
+  subjectName: string;
+  classCount: number;
+  studentsTracked: number;
+  averageRate: number;
+  atRiskCount: number;
+}
+
+export interface SubjectClassOverview {
+  classId: string;
+  className: string;
+  teacherName: string | null;
+  studentsTracked: number;
+  averageRate: number;
+}
+
 export const attendanceReportApi = {
   classes: () => apiGet<ReportableClass[]>('/api/reporting/attendance/classes'),
 
@@ -57,4 +74,9 @@ export const attendanceReportApi = {
     if (q.to) qs.set('to', q.to);
     return apiGet<ClassSectionReport>(`/api/reporting/attendance/class/${encodeURIComponent(classId)}?${qs.toString()}`);
   },
+
+  subjects: () => apiGet<SubjectOverview[]>('/api/reporting/attendance/subjects'),
+
+  subjectClasses: (subjectId: number) =>
+    apiGet<SubjectClassOverview[]>(`/api/reporting/attendance/subjects/${subjectId}/classes`),
 };
