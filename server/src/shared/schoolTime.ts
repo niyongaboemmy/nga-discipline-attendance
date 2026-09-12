@@ -55,6 +55,15 @@ export function timeToMinutes(hhmm: string | null | undefined): number {
   return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
 }
 
+/** Coarse day-part for a `HH:MM` slot time — mirrors the `period` enum used
+ *  by attendance records (see routes/attendance.ts `PERIODS`). */
+export function periodForTime(hhmm: string | null | undefined): 'Morning' | 'Afternoon' | 'Evening' {
+  const minutes = timeToMinutes(hhmm);
+  if (minutes < 12 * 60) return 'Morning';
+  if (minutes < 17 * 60) return 'Afternoon';
+  return 'Evening';
+}
+
 /** Monday-based start of the week (YYYY-MM-DD) containing `dateStr`. */
 export function weekStartFor(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);

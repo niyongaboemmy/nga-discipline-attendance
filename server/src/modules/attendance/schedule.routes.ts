@@ -9,6 +9,7 @@ import {
   schoolMinutesOfDay,
   dayOfWeekFor,
   timeToMinutes,
+  periodForTime,
   weekStartFor,
   addDays,
 } from '../../shared/schoolTime.js';
@@ -171,7 +172,7 @@ const deepLink = (
   subjectId: number | null
 ) => {
   const qs = new URLSearchParams({ classId, date, sessionType: kind });
-  qs.set('period', kind === 'homeroom' ? HOMEROOM_PERIOD : startTime);
+  qs.set('period', kind === 'homeroom' ? HOMEROOM_PERIOD : periodForTime(startTime));
   if (kind === 'subject' && subjectId != null) qs.set('subjectId', String(subjectId));
   return `/attendance/mark?${qs.toString()}`;
 };
