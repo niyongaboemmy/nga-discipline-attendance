@@ -16,7 +16,6 @@ import { RolesPermissions } from './pages/RolesPermissions';
 import { Pending } from './pages/Pending';
 import { MarkAttendance } from './pages/MarkAttendance';
 import { AttendanceRecords } from './pages/AttendanceRecords';
-import { MyAttendance } from './pages/MyAttendance';
 import { StaffAttendance } from './pages/StaffAttendance';
 import { Reports } from './pages/Reports';
 import { Directory } from './pages/Directory';
@@ -30,7 +29,7 @@ import { MyConduct } from './pages/MyConduct';
 import { ExcuseReview } from './pages/ExcuseReview';
 import { AuditLog } from './pages/AuditLog';
 import { StudentReport } from './pages/StudentReport';
-import { AttendanceReport } from './pages/AttendanceReport';
+import { AttendanceReportGate } from './pages/AttendanceReportGate';
 
 export const App: React.FC = () => {
   return (
@@ -136,16 +135,8 @@ export const App: React.FC = () => {
           <Route
             path="/attendance/report"
             element={
-              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
-                <AttendanceReport />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/attendance/me"
-            element={
-              <ProtectedRoute allowedRoles={['student']}>
-                <MyAttendance />
+              <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+                <AttendanceReportGate />
               </ProtectedRoute>
             }
           />

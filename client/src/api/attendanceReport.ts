@@ -79,4 +79,17 @@ export const attendanceReportApi = {
 
   subjectClasses: (subjectId: number) =>
     apiGet<SubjectClassOverview[]>(`/api/reporting/attendance/subjects/${subjectId}/classes`),
+
+  /** A student's own report — class auto-detected server-side, and the
+   *  response is scoped to their own row only. No classId param exists
+   *  because there is nothing to pick. */
+  mySections: () => apiGet<ClassSection[]>('/api/reporting/attendance/me/sections'),
+
+  myReport: (q: ClassSectionReportQuery) => {
+    const qs = new URLSearchParams({ session_type: q.sessionType });
+    if (q.subjectId != null) qs.set('subject_id', String(q.subjectId));
+    if (q.from) qs.set('from', q.from);
+    if (q.to) qs.set('to', q.to);
+    return apiGet<ClassSectionReport>(`/api/reporting/attendance/me/report?${qs.toString()}`);
+  },
 };

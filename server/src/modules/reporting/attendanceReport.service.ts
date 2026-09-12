@@ -67,6 +67,50 @@ export async function listClassSections(db: Database, classId: string, academicT
   return [{ kind: 'homeroom' }, ...subjects];
 }
 
+/** A student's own class group, auto-detected from their own attendance
+ *  history (the most recent session recorded for them) — the same signal
+ *  `MyAttendance.tsx`'s schedule tab already relies on (`days[0]?.classId`).
+ *  No class picker for a student: they belong to exactly one class, so
+ *  there is nothing to choose. Returns null only for a brand-new student
+ *  with no attendance recorded yet at all. */
+export async function resolveOwnClassId(db: Database, studentId: string): Promise<string | null> {
+  const row = await db.get(
+    `SELECT class_id as classId FROM attendance_records WHERE student_id = ? ORDER BY session_date DESC LIMIT 1`,
+    studentId
+  );
+  return row?.classId ?? null;
+}
+
+/** Sections (homeroom + subjects) for a student's own auto-detected class —
+ *  same shape as listClassSections, but unions in attendance_records scoped
+ *  to this student too (not just the roster cache), so a subject they've
+ *  actually been marked for never goes missing just because the sync cache
+ *  hasn't caught up (same reasoning as attendanceReport.service.ts's other
+ *  cache-can-lag-reality fallbacks). */
+export async function listOwnSections(db: Database, studentId: string, academicTermId?: number): Promise<ClassSection[]> {
+  const classId = await resolveOwnClassId(db, studentId);
+  if (!classId) return [{ kind: 'homeroom' }];
+
+  const { clause, params } = periodFilter(academicTermId);
+  const rows = await db.all(
+    `SELECT subject_id as subjectId, subject_name as subjectName, teacher_name as teacherName
+       FROM class_subject_assignments WHERE class_id = ?${clause}
+     UNION
+     SELECT ar.subject_id as subjectId, s.name as subjectName, NULL as teacherName
+       FROM attendance_records ar LEFT JOIN subjects s ON s.id = ar.subject_id
+      WHERE ar.class_id = ? AND ar.student_id = ? AND ar.session_type = 'subject' AND ar.subject_id IS NOT NULL${clause}`,
+    classId, ...params, classId, studentId, ...params
+  );
+  const seen = new Set<number>();
+  const subjects: ClassSection[] = [];
+  for (const r of rows) {
+    if (r.subjectId == null || seen.has(r.subjectId)) continue;
+    seen.add(r.subjectId);
+    subjects.push({ kind: 'subject', subjectId: r.subjectId, subjectName: r.subjectName || `Subject ${r.subjectId}`, teacherName: r.teacherName ?? null });
+  }
+  return [{ kind: 'homeroom' }, ...subjects];
+}
+
 /** Rolls a set of raw `(student_id, status)` rows into a class/subject-level
  *  summary — the shared math behind every "how is this group doing" card.
  *  Also used by getClassSectionReport's own per-student pass. */
@@ -403,4 +447,28 @@ export async function getClassSectionReport(db: Database, p: ClassSectionReportP
     students,
     classAverageRate,
   };
+}
+
+/**
+ * A student's own attendance register — same query as getClassSectionReport
+ * (auto-scoped to their own class, never a class they pick), with the result
+ * narrowed to their own row before it ever leaves the server. This is a
+ * privacy boundary, not just a UI filter: a student must never receive a
+ * classmate's attendance record over the wire, even transiently.
+ */
+export async function getOwnSectionReport(
+  db: Database, studentId: string, p: Omit<ClassSectionReportParams, 'classId'>
+): Promise<ClassSectionReport> {
+  const classId = await resolveOwnClassId(db, studentId);
+  if (!classId) {
+    return {
+      classId: '', className: 'Your class', sessionType: p.sessionType,
+      subjectId: p.sessionType === 'subject' ? p.subjectId ?? null : null,
+      subjectName: null, teacherName: null, academicTermId: p.academicTermId ?? null,
+      dateColumns: [], students: [], classAverageRate: 100,
+    };
+  }
+  const full = await getClassSectionReport(db, { ...p, classId });
+  const own = full.students.find((s) => s.studentId === studentId) ?? null;
+  return { ...full, students: own ? [own] : [], classAverageRate: own ? own.rate : 100 };
 }

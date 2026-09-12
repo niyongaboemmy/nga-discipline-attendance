@@ -103,4 +103,22 @@ describe('Unified reporting module (C: termly / combined)', () => {
     expect(risky).toBeTruthy();
     expect(risky.rate).toBe(20);
   });
+
+  // A student holds ATTENDANCE_REPORT_VIEW_OWN but not REPORTS_VIEW — the
+  // /attendance/me/* routes must accept that on their own (registered before
+  // the router-wide REPORTS_VIEW gate), while every other route in this
+  // router stays off-limits to them.
+  it("lets a student reach their own report but nothing else in this router", async () => {
+    const sections = await request(app).get('/api/reporting/attendance/me/sections').set(authHeader(studentToken));
+    expect(sections.status).toBe(200);
+
+    const report = await request(app).get('/api/reporting/attendance/me/report').set(authHeader(studentToken));
+    expect(report.status).toBe(200);
+    expect(report.body.data.sessionType).toBe('homeroom');
+    // student-2 has attendance seeded under class-9 earlier in this file.
+    expect(report.body.data.students.every((s: any) => s.studentId === 'student-2')).toBe(true);
+
+    expect((await request(app).get('/api/reporting/attendance/classes').set(authHeader(studentToken))).status).toBe(403);
+    expect((await request(app).get('/api/reporting/termly').set(authHeader(studentToken))).status).toBe(403);
+  });
 });

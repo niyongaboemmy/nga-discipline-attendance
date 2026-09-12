@@ -8,12 +8,53 @@ import {
 } from './reporting.service.js';
 import {
   listReportableClasses, listClassSections, getClassSectionReport,
-  listAvailableSubjects, listSubjectClasses,
+  listAvailableSubjects, listSubjectClasses, listOwnSections, getOwnSectionReport,
 } from './attendanceReport.service.js';
 
 /** C: termly / annual / combined / comparison reporting. Mounted at /api/reporting. */
 const router = Router();
 router.use(authMiddleware);
+
+// A student's own attendance report — auto-detected class, no picker, and
+// scoped server-side to their own row only (see getOwnSectionReport). These
+// two routes are registered with their own explicit permission check BEFORE
+// the blanket REPORTS_VIEW gate below, so a student (who holds
+// ATTENDANCE_REPORT_VIEW_OWN but not REPORTS_VIEW) can reach exactly these
+// two and nothing else on this router — no class list, no subject dashboard,
+// no school-wide reports.
+router.get('/attendance/me/sections', authorizePermission('ATTENDANCE_REPORT_VIEW_OWN', 'REPORTS_VIEW'), async (req: any, res: Response) => {
+  const db = getDb();
+  const authReq = req as AuthenticatedRequest;
+  const { academicTermId } = resolveAcademicPeriod(authReq);
+  try {
+    const data = await listOwnSections(db, authReq.user!.id, academicTermId);
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error listing own sections:', error);
+    return res.status(500).json({ success: false, message: 'Error listing your sections.' });
+  }
+});
+
+router.get('/attendance/me/report', authorizePermission('ATTENDANCE_REPORT_VIEW_OWN', 'REPORTS_VIEW'), async (req: any, res: Response) => {
+  const db = getDb();
+  const authReq = req as AuthenticatedRequest;
+  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const sessionType = req.query.session_type === 'subject' ? 'subject' : 'homeroom';
+  const subjectId = req.query.subject_id != null ? Number(req.query.subject_id) : undefined;
+  if (sessionType === 'subject' && (subjectId == null || !Number.isFinite(subjectId))) {
+    return res.status(400).json({ success: false, message: 'subject_id is required when session_type=subject.' });
+  }
+  const fromDate = typeof req.query.from === 'string' && req.query.from ? req.query.from : undefined;
+  const toDate = typeof req.query.to === 'string' && req.query.to ? req.query.to : undefined;
+  try {
+    const data = await getOwnSectionReport(db, authReq.user!.id, { academicTermId, sessionType, subjectId, fromDate, toDate });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error generating own attendance report:', error);
+    return res.status(500).json({ success: false, message: 'Error generating your attendance report.' });
+  }
+});
+
 router.use(authorizePermission('REPORTS_VIEW'));
 
 router.get('/termly', async (req: any, res: Response) => {
