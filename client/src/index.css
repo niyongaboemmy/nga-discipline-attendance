@@ -4,6 +4,7 @@
 @import './styles/animations.css';
 @import './styles/overlays.css';
 @import './styles/schedule.css';
+@import './styles/attendanceReport.css';
 
 /* ==========================================================================
    Global typography — Inter (UI) + JetBrains Mono (code)

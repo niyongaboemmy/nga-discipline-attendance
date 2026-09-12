@@ -5,6 +5,7 @@ import {
   Clock,
   FileText,
   BarChart3,
+  Table2,
   Users,
   ShieldCheck,
   Gavel,
@@ -48,6 +49,7 @@ export const navItems: NavItem[] = [
   // Calendar (open a lesson) or its "Record a session" action; the standalone
   // /attendance/mark page stays reachable from there for the full-screen view.
   { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
+  { label: 'Attendance Report', path: '/attendance/report', icon: Table2, roles: ['admin', 'teacher'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
 
   // Attendance (student)
