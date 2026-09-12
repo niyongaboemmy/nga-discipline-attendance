@@ -39,8 +39,8 @@ function mockMis(slots: unknown[]) {
 
 describe('buildDaySessions (pure)', () => {
   const slots = [
-    { slotId: 1, subjectId: 5, subjectName: 'Math', subjectCode: null, color: null, classId: 'cg-1', className: '9A', dayOfWeek: 1, startTime: '08:00', endTime: '08:45', room: '' },
-    { slotId: 2, subjectId: 7, subjectName: 'English', subjectCode: null, color: null, classId: 'cg-1', className: '9A', dayOfWeek: 1, startTime: '09:00', endTime: '09:45', room: '' },
+    { slotId: 1, subjectId: 5, subjectName: 'Math', subjectCode: null, color: null, classId: 'cg-1', className: '9A', dayOfWeek: 1, startTime: '08:00', endTime: '08:45', room: '', teacherId: null, teacherName: null },
+    { slotId: 2, subjectId: 7, subjectName: 'English', subjectCode: null, color: null, classId: 'cg-1', className: '9A', dayOfWeek: 1, startTime: '09:00', endTime: '09:45', room: '', teacherId: null, teacherName: null },
   ];
 
   it('prepends exactly one homeroom entry per class, before the subject slots', () => {

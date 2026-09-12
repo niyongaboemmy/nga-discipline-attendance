@@ -94,12 +94,16 @@
 .cal-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .cal-legend .swatch { width: 10px; height: 10px; border-radius: 3px; }
 .cal-legend .swatch.is-recorded { background: var(--success); }
-.cal-legend .swatch.is-missing  { background: var(--warning); }
+.cal-legend .swatch.is-missing  { background: var(--danger); }
 .cal-legend .swatch.is-future   { background: var(--border-strong); }
 .cal-legend .swatch.is-now      { background: var(--primary); }
 
 /* ---- "Your subjects" filter strip ---------------------------------- */
-.cal-subjects { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; }
+.cal-subjects { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 4px; }
+.cal-subjects-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-tertiary); margin-right: 2px;
+}
 .subject-chip {
   display: inline-flex; align-items: center; gap: 6px;
   height: 26px; padding: 0 10px 0 8px;
@@ -125,10 +129,10 @@
 .cal-alert {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
   padding: 10px 14px;
-  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
   border-radius: var(--radius-card);
-  background: var(--warning-light);
-  color: var(--warning);
+  background: var(--danger-light);
+  color: var(--danger);
   font-size: 12.5px; font-weight: 600;
   animation: cal-alert-in var(--transition-normal) var(--ease-out);
 }
@@ -138,8 +142,8 @@
   display: inline-flex; align-items: center; gap: 5px;
   height: 28px; padding: 0 12px;
   border-radius: var(--radius-btn);
-  border: 1px solid var(--warning);
-  background: var(--warning);
+  border: 1px solid var(--danger);
+  background: var(--danger);
   color: #fff;
   font-size: 12px; font-weight: 700;
   transition: filter var(--transition-fast), transform var(--transition-fast);
@@ -329,34 +333,62 @@
 
 .cal-event {
   position: absolute;
-  border-radius: var(--radius-sm);
-  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  padding: 6px 9px;
   overflow: hidden;
   text-align: left;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  border: 1px solid color-mix(in srgb, var(--spine, var(--subject-fallback)) 40%, var(--border));
-  border-left: 3px solid var(--spine, var(--subject-fallback));
-  background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 10%, var(--bg-card));
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 12%, var(--bg-card));
   color: var(--text-primary);
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast), background var(--transition-fast);
 }
-.cal-event:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); z-index: 6; filter: brightness(1.03); }
+.cal-event:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); z-index: 6; background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 20%, var(--bg-card)); }
 .cal-event .ev-time { font-size: 9.5px; font-family: var(--font-mono); color: var(--text-secondary); letter-spacing: -0.02em; }
-.cal-event .ev-title { font-size: 12px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.cal-event .ev-title {
+  font-size: 12px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  padding-left: 10px; position: relative;
+}
+.cal-event .ev-title::before {
+  content: ''; position: absolute; left: 0; top: 4px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--spine, var(--subject-fallback));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--spine, var(--subject-fallback)) 25%, transparent);
+}
 .cal-event .ev-sub { font-size: 10px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: auto; }
+.cal-event.is-narrow .ev-title { padding-left: 8px; }
+.cal-event.is-narrow .ev-title::before { width: 6px; height: 6px; top: 3px; }
+
+/* A lesson taught by someone else (shown for context on a shared/admin
+ *  calendar) reads as visually "borrowed" — dashed, slightly muted — so the
+ *  viewer's own workload never gets lost among it. */
+.cal-event.is-other {
+  border-style: dashed;
+  filter: saturate(0.55);
+}
+.cal-event.is-other:hover { filter: saturate(0.85); }
+.ev-owner {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 9px; font-weight: 600; color: var(--text-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cal-event.is-narrow .ev-owner { display: none; }
 .cal-event.is-narrow { padding: 4px 6px; }
 .cal-event.is-narrow .ev-time { display: none; }
 .cal-event.is-narrow .ev-title { -webkit-line-clamp: 1; }
 .cal-event.is-narrow .ev-sub { font-size: 9.5px; }
 .cal-event.is-missing-past {
-  border-color: var(--warning);
-  border-left-width: 3px;
-  background: var(--warning-light);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 35%, transparent);
+  border-color: var(--danger);
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--danger) 9%, transparent) 0 6px, transparent 6px 12px),
+    var(--danger-light);
+  box-shadow: 0 0 0 1px var(--danger);
+  animation: cal-card-alert 2.4s ease-in-out infinite;
 }
+.cal-event.is-missing-past .ev-title::before { background: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 25%, transparent); }
 .cal-event.is-now { box-shadow: 0 0 0 2px var(--primary), var(--shadow-md); }
 .cal-event.is-dimmed { opacity: 0.32; filter: saturate(0.7); }
 .cal-event.is-dimmed:hover { opacity: 0.6; }
@@ -364,9 +396,14 @@
   box-shadow: 0 0 0 2px var(--spine, var(--primary)), var(--shadow-md);
   z-index: 5;
 }
+@keyframes cal-card-alert {
+  0%, 100% { box-shadow: 0 0 0 1px var(--danger); }
+  50% { box-shadow: 0 0 0 1px var(--danger), 0 0 0 4px color-mix(in srgb, var(--danger) 18%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .cal-event.is-missing-past { animation: none; } }
 .ev-warning {
   display: flex; align-items: center; gap: 3px;
-  font-size: 9px; font-weight: 700; color: var(--warning);
+  font-size: 9px; font-weight: 700; color: var(--danger);
   margin-top: 1px;
 }
 .cal-event.is-narrow .ev-warning { display: none; }
@@ -375,7 +412,7 @@
 .cal-badge {
   position: absolute;
   top: 5px; right: 5px;
-  width: 16px; height: 16px;
+  width: 17px; height: 17px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 0 0 2px var(--bg-card);
@@ -383,12 +420,12 @@
   background: var(--border-strong);
 }
 .cal-badge.is-recorded { background: var(--success); }
-.cal-badge.is-missing-past { background: var(--warning); animation: cal-badge-ping 1.8s ease-in-out infinite; }
+.cal-badge.is-missing-past { background: var(--danger); animation: cal-badge-ping 1.8s ease-in-out infinite; }
 .cal-badge.is-now { background: var(--primary); box-shadow: 0 0 0 2px var(--bg-card), 0 0 8px 1px var(--primary-glow); }
 .cal-badge.is-future { background: var(--bg-hover); color: var(--text-tertiary); box-shadow: none; border: 1px solid var(--border); }
 
 @keyframes cal-badge-ping {
-  0%, 100% { box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 0 color-mix(in srgb, var(--warning) 55%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 0 color-mix(in srgb, var(--danger) 55%, transparent); }
   70% { box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 6px transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .cal-badge.is-missing-past { animation: none; } }
@@ -432,7 +469,7 @@
   font-size: 11px; font-weight: 600;
 }
 .cal-hr-pill.is-recorded { border-color: color-mix(in srgb, var(--success) 40%, var(--border)); color: var(--success); }
-.cal-hr-pill.is-missing-past { border-color: var(--warning); color: var(--warning); }
+.cal-hr-pill.is-missing-past { border-color: var(--danger); color: var(--danger); background: var(--danger-light); }
 
 /* ======================================================================
    Day view (agenda)
@@ -465,13 +502,25 @@
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
 }
 .agenda-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
-.agenda-card.is-past-missing { border-color: var(--warning); background: var(--warning-light); }
+.agenda-card.is-past-missing {
+  border-color: var(--danger);
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--danger) 7%, transparent) 0 6px, transparent 6px 12px),
+    var(--danger-light);
+  box-shadow: 0 0 0 1px var(--danger);
+}
 .agenda-card.is-future { opacity: 0.66; }
 .agenda-card.is-now { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary), var(--shadow-md); }
 .agenda-card.is-dimmed { opacity: 0.35; }
 .agenda-card.is-dimmed:hover { opacity: 0.6; }
 .agenda-card.is-focused { border-color: var(--spine, var(--primary)); box-shadow: 0 0 0 1px var(--spine, var(--primary)), var(--shadow-md); }
-.agenda-overdue { color: var(--warning) !important; font-weight: 700; }
+.agenda-card.is-mine { box-shadow: inset 3px 0 0 var(--spine, var(--primary)); }
+.agenda-overdue { color: var(--danger) !important; font-weight: 700; }
+.agenda-owner {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--text-tertiary);
+}
+.agenda-owner.is-me { color: var(--primary); font-weight: 700; }
 
 .agenda-badge {
   position: absolute;
@@ -485,7 +534,7 @@
   z-index: 1;
 }
 .agenda-badge.is-recorded { background: var(--success); }
-.agenda-badge.is-missing-past { background: var(--warning); animation: cal-badge-ping 1.8s ease-in-out infinite; }
+.agenda-badge.is-missing-past { background: var(--danger); animation: cal-badge-ping 1.8s ease-in-out infinite; }
 .agenda-badge.is-now { background: var(--primary); box-shadow: 0 0 0 2px var(--bg-card), 0 0 8px 1px var(--primary-glow); }
 .agenda-badge.is-future { background: var(--bg-hover); color: var(--text-tertiary); box-shadow: none; border: 1px solid var(--border); }
 @media (prefers-reduced-motion: reduce) { .agenda-badge.is-missing-past { animation: none; } }

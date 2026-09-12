@@ -45,6 +45,8 @@ interface Slot {
   startTime: string;
   endTime: string;
   room: string;
+  teacherId: number | null;
+  teacherName: string | null;
 }
 
 const HOMEROOM_PERIOD = process.env.HOMEROOM_PERIOD || 'Morning';
@@ -98,6 +100,8 @@ async function fetchTimetable(
       startTime: String(s.start_time).slice(0, 5),
       endTime: s.end_time ? String(s.end_time).slice(0, 5) : '',
       room: s.location || '',
+      teacherId: s.user_id != null ? Number(s.user_id) : null,
+      teacherName: [s.instructor_name, s.instructor_lastname].filter(Boolean).join(' ') || null,
     }))
     .filter((s: Slot) => s.classId);
 
@@ -195,6 +199,9 @@ interface SessionItem {
   lastMarkedAt: string | null;
   markedByMe: boolean;
   deepLink: string;
+  teacherId: number | null;
+  teacherName: string | null;
+  isMine: boolean;
 }
 
 function buildDaySessions(
@@ -228,6 +235,9 @@ function buildDaySessions(
       lastMarkedAt: a.lastMarkedAt,
       markedByMe: a.markedBy === userId,
       deepLink: deepLink('homeroom', classId, date, meta.startTime, null),
+      teacherId: null,
+      teacherName: null,
+      isMine: true,
     };
   });
 
@@ -253,6 +263,9 @@ function buildDaySessions(
         lastMarkedAt: a.lastMarkedAt,
         markedByMe: a.markedBy === userId,
         deepLink: deepLink('subject', s.classId, date, s.startTime, s.subjectId),
+        teacherId: s.teacherId,
+        teacherName: s.teacherName,
+        isMine: s.teacherId == null || String(s.teacherId) === userId,
       };
     });
 
@@ -353,6 +366,9 @@ router.get('/schedule/week', authorizePermission(...ATT_PERMS), async (req: any,
         status: s.status,
         ownStatus: s.ownStatus,
         deepLink: s.deepLink,
+        teacherId: s.teacherId,
+        teacherName: s.teacherName,
+        isMine: s.isMine,
       }));
       return { date, dayOfWeek: dow, sessions };
     });

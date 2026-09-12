@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
   Sun, BookOpen, MapPin, Clock, PenLine, RotateCcw, Plus, ArrowRight, CheckCircle2,
-  AlertTriangle, X,
+  AlertTriangle, X, User,
 } from 'lucide-react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
@@ -59,13 +59,16 @@ function isOverdue(s: CalendarSession, date: string, today: string): boolean {
   return nowMin() > end;
 }
 
-/** Distinct subjects (id, name, colour) the signed-in user teaches, drawn
- *  from whatever session list is currently loaded — powers the "your
- *  subjects" chip strip and the highlight/dim interaction on the grid. */
+/** Distinct subjects (id, name, colour) *assigned to the signed-in user* —
+ *  drawn from whatever session list is currently loaded, filtered to lessons
+ *  they actually teach. On a calendar that also shows co-teachers' lessons
+ *  (an admin/coordinator view), this is what "your subjects" should mean —
+ *  not every subject visible on screen. Powers the chip strip and the
+ *  highlight/dim interaction on the grid. */
 function collectSubjects(sessions: CalendarSession[]) {
   const map = new Map<number, { id: number; name: string; color: string }>();
   for (const s of sessions) {
-    if (s.kind !== 'subject' || s.subjectId == null) continue;
+    if (s.kind !== 'subject' || s.subjectId == null || !s.isMine) continue;
     if (!map.has(s.subjectId)) {
       map.set(s.subjectId, { id: s.subjectId, name: s.subjectName || 'Subject', color: s.color || 'var(--subject-fallback)' });
     }
@@ -274,7 +277,7 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                     return (
                       <button
                         key={i}
-                        className={`cal-event ${cls}${isNow ? ' is-now' : ''}${lanes > 1 ? ' is-narrow' : ''}${isDim ? ' is-dimmed' : ''}${isFocus ? ' is-focused' : ''}`}
+                        className={`cal-event ${cls}${isNow ? ' is-now' : ''}${lanes > 1 ? ' is-narrow' : ''}${isDim ? ' is-dimmed' : ''}${isFocus ? ' is-focused' : ''}${s.isMine ? ' is-mine' : ' is-other'}`}
                         style={{
                           top, height: h,
                           left: `calc(${(lane / lanes) * 100}% + 2px)`,
@@ -282,7 +285,7 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                           ...(s.color ? { ['--spine' as string]: s.color } : {}),
                         }}
                         onClick={() => (canMark ? onOpen(buildTarget(d.sessions, s, d.date)) : navigate(s.deepLink))}
-                        title={`${clock(s.startTime)}–${clock(s.endTime)} · ${s.subjectName} · ${s.className}${s.room ? ` · ${s.room}` : ''}${overdue ? ' · Register overdue' : ''}`}
+                        title={`${clock(s.startTime)}–${clock(s.endTime)} · ${s.subjectName} · ${s.className}${s.room ? ` · ${s.room}` : ''}${overdue ? ' · Register overdue' : ''}${!s.isMine && s.teacherName ? ` · Taught by ${s.teacherName}` : ''}`}
                       >
                         <span className={`cal-badge ${cls}${isNow ? ' is-now' : ''}`}>
                           {s.status === 'recorded'
@@ -296,6 +299,9 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                         <div className="ev-time">{clock(s.startTime)}–{clock(s.endTime)}</div>
                         <div className="ev-title">{s.subjectName}</div>
                         <div className="ev-sub">{s.className}{s.room ? ` · ${s.room}` : ''}</div>
+                        {!s.isMine && s.teacherName && (
+                          <div className="ev-owner"><User size={9} /> {s.teacherName}</div>
+                        )}
                         {overdue && <div className="ev-warning"><AlertTriangle size={10} /> Register overdue</div>}
                       </button>
                     );
@@ -354,7 +360,7 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
     const isPastMissing = isOverdue(s, data.date, isoDate());
     const isDim = focusSubject != null && s.kind === 'subject' && s.subjectId !== focusSubject;
     const isFocus = focusSubject != null && s.kind === 'subject' && s.subjectId === focusSubject;
-    const cls = ['agenda-card', isNow && 'is-now', isFuture && 'is-future', isPastMissing && 'is-past-missing', isDim && 'is-dimmed', isFocus && 'is-focused']
+    const cls = ['agenda-card', isNow && 'is-now', isFuture && 'is-future', isPastMissing && 'is-past-missing', isDim && 'is-dimmed', isFocus && 'is-focused', s.isMine && 'is-mine']
       .filter(Boolean).join(' ');
     const badgeCls = s.status === 'recorded' ? 'is-recorded' : isPastMissing ? 'is-missing-past' : isNow ? 'is-now' : 'is-future';
     return (
@@ -382,6 +388,11 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
           <div className="agenda-meta">
             {s.kind === 'subject' && <span>{s.className}</span>}
             {s.room && <span><MapPin size={11} /> {s.room}</span>}
+            {s.kind === 'subject' && (
+              <span className={`agenda-owner${s.isMine ? ' is-me' : ''}`}>
+                <User size={11} /> {s.isMine ? 'You' : s.teacherName || 'Another teacher'}
+              </span>
+            )}
             {isNow && <span style={{ color: 'var(--primary)', fontWeight: 600 }}><Clock size={11} /> In progress</span>}
             {isPastMissing && <span className="agenda-overdue"><AlertTriangle size={11} /> Register overdue</span>}
           </div>
@@ -600,6 +611,7 @@ export const AttendanceCalendar: React.FC = () => {
 
         {subjects.length > 0 && (
           <div className="cal-subjects" role="group" aria-label="Filter by your subjects">
+            <span className="cal-subjects-label">Your subjects</span>
             {subjects.map((sub) => (
               <button
                 key={sub.id}

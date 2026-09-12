@@ -22,6 +22,9 @@ export interface DaySession {
   lastMarkedAt: string | null;
   markedByMe: boolean;
   deepLink: string;
+  teacherId: number | null;
+  teacherName: string | null;
+  isMine: boolean;
 }
 
 export interface DayResponse {
@@ -36,7 +39,7 @@ export interface DayResponse {
  *  from the full day payload or the lighter week payload. */
 export type CalendarSession = Pick<
   DaySession,
-  'kind' | 'classId' | 'className' | 'subjectId' | 'subjectName' | 'color' | 'startTime' | 'endTime' | 'room' | 'status' | 'ownStatus' | 'deepLink'
+  'kind' | 'classId' | 'className' | 'subjectId' | 'subjectName' | 'color' | 'startTime' | 'endTime' | 'room' | 'status' | 'ownStatus' | 'deepLink' | 'teacherId' | 'teacherName' | 'isMine'
 > &
   Partial<Pick<DaySession, 'slotId' | 'subjectCode' | 'stats' | 'lastMarkedAt' | 'markedByMe'>>;
 
