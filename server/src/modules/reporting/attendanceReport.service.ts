@@ -94,20 +94,53 @@ export interface SubjectClassScope {
 /** Which classes teach `subjectId` this term — every class for an admin
  *  (or anyone without a narrower view), only the classes *this* teacher was
  *  assigned it in otherwise. Mirrors "if you have subjects assigned, use
- *  them; if admin, see everything." */
+ *  them; if admin, see everything."
+ *
+ *  Reads both `class_subject_assignments` (the synced roster cache — richer,
+ *  carries a teacher name) AND `attendance_records` directly (scoped by
+ *  `marked_by`, the only teacher-identifying column it has), unioned and
+ *  deduped by class. The roster cache only refreshes on a manual/admin
+ *  `POST /academics/sync` — right after a term rollover it can lag the real
+ *  MIS assignment for a while, and `attendance_records` gets its
+ *  `academic_term_id` fresh at write time regardless, so a class a teacher
+ *  has *actually already taken a register for* this term must never go
+ *  missing here just because the cache hasn't caught up (the same
+ *  resilience `listReportableClasses` already has for the class-first view). */
 async function classesForSubject(
   db: Database, subjectId: number, role: string | undefined, userId: string | undefined, academicTermId?: number
 ): Promise<SubjectClassScope[]> {
-  const { clause, params } = periodFilter(academicTermId);
-  let scope = ' WHERE subject_id = ?';
-  const scopeParams: any[] = [subjectId];
-  if (role !== 'admin' && userId) { scope += ' AND teacher_id = ?'; scopeParams.push(userId); }
-  scope += clause;
-  return db.all(
-    `SELECT DISTINCT class_id as classId, class_name as className, teacher_name as teacherName
-       FROM class_subject_assignments${scope}`,
-    ...scopeParams, ...params
+  const { clause: csaClause, params: csaParams } = periodFilter(academicTermId);
+  let csaScope = ' WHERE subject_id = ?';
+  const csaScopeParams: any[] = [subjectId];
+  if (role !== 'admin' && userId) { csaScope += ' AND teacher_id = ?'; csaScopeParams.push(userId); }
+  csaScope += csaClause;
+
+  const { clause: arClause, params: arParams } = periodFilter(academicTermId);
+  let arScope = ' WHERE subject_id = ? AND session_type = \'subject\'';
+  const arScopeParams: any[] = [subjectId];
+  if (role !== 'admin' && userId) { arScope += ' AND marked_by = ?'; arScopeParams.push(userId); }
+  arScope += arClause;
+
+  const rows = await db.all(
+    `SELECT class_id as classId, class_name as className, teacher_name as teacherName
+       FROM class_subject_assignments${csaScope}
+     UNION
+     SELECT class_id as classId, class_name as className, NULL as teacherName
+       FROM attendance_records${arScope}`,
+    ...csaScopeParams, ...csaParams, ...arScopeParams, ...arParams
   );
+
+  const byId = new Map<string, SubjectClassScope>();
+  for (const r of rows) {
+    if (!r.classId) continue;
+    const existing = byId.get(r.classId);
+    if (!existing) {
+      byId.set(r.classId, { classId: r.classId, className: r.className || r.classId, teacherName: r.teacherName ?? null });
+    } else if (!existing.teacherName && r.teacherName) {
+      existing.teacherName = r.teacherName;
+    }
+  }
+  return [...byId.values()];
 }
 
 export interface SubjectOverview {
@@ -129,19 +162,40 @@ export interface SubjectScopeParams {
  *  assignments, or the whole school for an admin), each with a quick
  *  attendance-health summary rolled up across every class teaching it. */
 export async function listAvailableSubjects(db: Database, opts: SubjectScopeParams): Promise<SubjectOverview[]> {
-  const { clause, params } = periodFilter(opts.academicTermId);
-  let scope = ' WHERE 1=1';
-  const scopeParams: any[] = [];
-  if (opts.role !== 'admin' && opts.userId) { scope += ' AND teacher_id = ?'; scopeParams.push(opts.userId); }
-  scope += clause;
+  // Same roster-cache-can-lag-the-term reasoning as classesForSubject: union
+  // the synced assignments with subjects a matching attendance record has
+  // actually already been logged under this term, scoped by `marked_by`
+  // since attendance_records carries no teacher_id of its own.
+  const { clause: csaClause, params: csaParams } = periodFilter(opts.academicTermId);
+  let csaScope = ' WHERE 1=1';
+  const csaScopeParams: any[] = [];
+  if (opts.role !== 'admin' && opts.userId) { csaScope += ' AND teacher_id = ?'; csaScopeParams.push(opts.userId); }
+  csaScope += csaClause;
+
+  const { clause: arClause, params: arParams } = periodFilter(opts.academicTermId);
+  let arScope = ` WHERE ar.session_type = 'subject' AND ar.subject_id IS NOT NULL`;
+  const arScopeParams: any[] = [];
+  if (opts.role !== 'admin' && opts.userId) { arScope += ' AND ar.marked_by = ?'; arScopeParams.push(opts.userId); }
+  arScope += arClause;
+
   const subjectRows = await db.all(
-    `SELECT DISTINCT subject_id as subjectId, subject_name as subjectName FROM class_subject_assignments${scope}`,
-    ...scopeParams, ...params
+    `SELECT subject_id as subjectId, subject_name as subjectName FROM class_subject_assignments${csaScope}
+     UNION
+     SELECT ar.subject_id as subjectId, s.name as subjectName
+       FROM attendance_records ar LEFT JOIN subjects s ON s.id = ar.subject_id${arScope}`,
+    ...csaScopeParams, ...csaParams, ...arScopeParams, ...arParams
   );
+  const bySubjectId = new Map<number, string | null>();
+  for (const r of subjectRows) {
+    if (r.subjectId == null) continue;
+    if (!bySubjectId.has(r.subjectId) || (!bySubjectId.get(r.subjectId) && r.subjectName)) {
+      bySubjectId.set(r.subjectId, r.subjectName ?? null);
+    }
+  }
 
   const overviews: SubjectOverview[] = [];
-  for (const s of subjectRows) {
-    if (s.subjectId == null) continue;
+  for (const [subjectId, subjectName] of bySubjectId) {
+    const s = { subjectId, subjectName };
     const classes = await classesForSubject(db, s.subjectId, opts.role, opts.userId, opts.academicTermId);
     if (classes.length === 0) continue;
     const placeholders = classes.map(() => '?').join(',');
