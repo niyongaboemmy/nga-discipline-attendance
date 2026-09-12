@@ -92,7 +92,10 @@ const MonthView: React.FC<{ data: MonthResponse; cursor: string; onPickDay: (d: 
 /* -------------------------------------------------------------------------- */
 const WeekView: React.FC<{ data: WeekResponse }> = ({ data }) => {
   const today = isoDate();
-  const days = data.days.filter((d) => (d.dayOfWeek >= 1 && d.dayOfWeek <= 5) || d.date === today || d.sessions.length > 0);
+  // School week: Monday–Friday only. A weekend column with "No lessons" adds
+  // width and noise for no reason — a real Saturday/Sunday lesson is rare
+  // enough that it doesn't earn a permanent seventh/sixth column.
+  const days = data.days.filter((d) => d.dayOfWeek >= 1 && d.dayOfWeek <= 5);
 
   return (
     <div className="sc-week">
@@ -125,15 +128,16 @@ const WeekView: React.FC<{ data: WeekResponse }> = ({ data }) => {
 /* -------------------------------------------------------------------------- */
 const SessionRow: React.FC<{ s: CalendarSession; compact?: boolean }> = ({ s, compact }) => (
   <div className={`sc-session${compact ? ' is-compact' : ''}`} style={s.color ? ({ ['--spine' as string]: s.color }) : undefined}>
-    <div className="sc-session-spine" />
     <div className="sc-session-body">
       <div className="sc-session-title">
-        {s.kind === 'homeroom' ? <><Sun size={14} className="sc-homeroom-icon" /> Morning check</> : <><BookOpen size={14} style={{ color: s.color || 'var(--text-secondary)' }} /> {s.subjectName}</>}
+        {s.kind === 'homeroom'
+          ? <><Sun size={14} className="sc-homeroom-icon" /> <span>Morning check</span></>
+          : <><BookOpen size={14} style={{ color: s.color || 'var(--text-secondary)' }} /> <span>{s.subjectName}</span></>}
       </div>
       <div className="sc-session-meta">
         <span><Clock size={11} /> {clock(s.startTime)}{s.endTime ? `–${clock(s.endTime)}` : ''}</span>
         {s.room && <span><MapPin size={11} /> {s.room}</span>}
-        {s.kind === 'subject' && !s.isMine && s.teacherName && <span>{s.teacherName}</span>}
+        {s.kind === 'subject' && !s.isMine && s.teacherName && <span className="sc-session-teacher">{s.teacherName}</span>}
       </div>
     </div>
     <StatusBadge status={s.ownStatus} />

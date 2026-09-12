@@ -58,11 +58,12 @@ export const searchCatalog: SearchItem[] = [
     roles: ['admin', 'teacher'], keywords: ['clock in', 'clock out', 'teacher attendance'],
   },
 
-  // Attendance (student)
   {
-    label: 'My Attendance', description: 'Your attendance record, trends, and weekly schedule', path: '/attendance/me',
-    roles: ['student'], keywords: ['my records', 'personal attendance', 'timetable', 'schedule', 'classes today', 'periods', 'trends'],
+    label: 'Attendance Report', description: 'Attendance grouped by subject, with a printable register', path: '/attendance/report',
+    roles: ['admin', 'teacher', 'student'], keywords: ['my attendance', 'personal attendance', 'register', 'subject attendance', 'print', 'export'],
   },
+
+  // Attendance (student)
   {
     label: 'Leaves & Excuses', description: 'Request an excuse for an absence', path: '/excuses',
     roles: ['student'], keywords: ['excuse request', 'absence request', 'leave form', 'sick note'],

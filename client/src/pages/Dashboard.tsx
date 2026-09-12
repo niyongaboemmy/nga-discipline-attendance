@@ -253,7 +253,7 @@ const StudentDashboard: React.FC<{ records: StudentRecord[] }> = ({ records }) =
                 <div className="card-subtitle">Attendance per class this term</div>
               </div>
             </div>
-            <Link to="/attendance/me" className="btn btn-ghost btn-sm">View All <ChevronRight size={14} /></Link>
+            <Link to="/attendance/report" className="btn btn-ghost btn-sm">View All <ChevronRight size={14} /></Link>
           </div>
           <div className="card-body">
             {byClass.map((c) => (

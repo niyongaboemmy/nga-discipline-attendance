@@ -49,11 +49,12 @@ export const navItems: NavItem[] = [
   // Calendar (open a lesson) or its "Record a session" action; the standalone
   // /attendance/mark page stays reachable from there for the full-screen view.
   { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
-  { label: 'Attendance Report', path: '/attendance/report', icon: Table2, roles: ['admin', 'teacher'], section: 'Attendance' },
+  { label: 'Attendance Report', path: '/attendance/report', icon: Table2, roles: ['admin', 'teacher', 'student'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
 
-  // Attendance (student)
-  { label: 'My Attendance', path: '/attendance/me', icon: History, roles: ['student'], section: 'Attendance' },
+  // Attendance (student) — deliberately just the calendar (tick/cross, no
+  // record/history browsing) and the report above; no separate "My
+  // Attendance" history page.
   { label: 'Leaves & Excuses', path: '/excuses', icon: FileText, roles: ['student'], section: 'Attendance' },
 
   // Discipline (staff)
@@ -64,7 +65,7 @@ export const navItems: NavItem[] = [
   // Discipline (student)
   { label: 'My Conduct', path: '/discipline/me', icon: Award, roles: ['student'], section: 'Discipline' },
 
-  // Insights — Analytics removed: its content now lives in My Attendance / My Conduct.
+  // Insights — Analytics removed: its content now lives in Attendance Report / My Conduct.
   { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['admin', 'teacher'], section: 'Insights' },
   { label: 'Directory', path: '/directory', icon: Users, roles: ['admin', 'teacher'], section: 'Insights' },
 

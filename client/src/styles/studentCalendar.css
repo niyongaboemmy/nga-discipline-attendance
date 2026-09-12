@@ -46,42 +46,66 @@
 .sc-daydot.is-absent  { background: var(--danger); }
 .sc-daydot.is-late    { background: var(--warning); }
 
-/* ---- Week (simple per-day list, not a time grid) ---- */
-.sc-week { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+/* ---- Week (simple per-day list, not a time grid) ----
+   Exactly 5 equal columns (Mon–Fri; weekends are filtered out in the
+   component) so every column lines up cleanly — auto-fit's "fill the row,
+   wrap the remainder" behaviour is what produced the uneven, cramped columns
+   this replaces. Narrower viewports step down the column count instead of
+   squeezing five into too little space. */
+.sc-week { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
 .sc-week-day {
   border: 1px solid var(--border); border-radius: var(--radius-card);
   background: var(--bg-card); box-shadow: var(--shadow-sm);
   display: flex; flex-direction: column; overflow: hidden;
+  min-width: 0;
 }
-.sc-week-day.is-today { border-color: var(--primary); }
+.sc-week-day.is-today { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
 .sc-week-day-head {
-  display: flex; align-items: baseline; gap: 8px;
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   padding: 10px 12px; border-bottom: 1px solid var(--border);
   background: var(--bg-subtle);
 }
 .sc-week-day.is-today .sc-week-day-head { background: color-mix(in srgb, var(--primary) 8%, var(--bg-subtle)); }
 .sc-week-dow { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); }
-.sc-week-date { font-size: 14px; font-weight: 700; }
+.sc-week-date { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sc-week-day.is-today .sc-week-date { color: var(--primary); }
 .sc-week-sessions { display: flex; flex-direction: column; gap: 8px; padding: 10px; flex: 1; }
 .sc-week-empty { font-size: 11.5px; color: var(--text-tertiary); text-align: center; padding: 12px 0; }
 
-/* ---- Session row (shared by week + day) ---- */
+@media (max-width: 1100px) { .sc-week { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 720px) { .sc-week { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .sc-week { grid-template-columns: 1fr; } }
+
+/* ---- Session row (shared by week + day) — a colored dot carries subject
+   identity instead of a left border/spine. ---- */
 .sc-session {
   display: flex; align-items: center; gap: 10px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 6%, var(--bg-card));
-  padding: 8px 10px;
-  transition: background var(--transition-fast);
+  background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 7%, var(--bg-card));
+  padding: 9px 11px;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
-.sc-session:hover { background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 12%, var(--bg-card)); }
-.sc-session-spine { width: 3px; align-self: stretch; border-radius: var(--radius-full); background: var(--spine, var(--subject-fallback)); flex: none; }
-.sc-session-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.sc-session-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.sc-session:hover { background: color-mix(in srgb, var(--spine, var(--subject-fallback)) 13%, var(--bg-card)); border-color: color-mix(in srgb, var(--spine, var(--subject-fallback)) 35%, var(--border)); }
+.sc-session-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sc-session-title {
+  font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sc-session-title svg { flex: none; }
+.sc-session-title span { overflow: hidden; text-overflow: ellipsis; }
 .sc-homeroom-icon { color: var(--warning); }
-.sc-session-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--text-secondary); }
-.sc-session-meta span { display: inline-flex; align-items: center; gap: 4px; }
-.sc-session.is-compact { padding: 7px 9px; }
+.sc-session-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--text-secondary); min-width: 0; }
+.sc-session-meta span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.sc-session-teacher { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+/* Compact (week view) — stack title / meta / status so alignment never
+   depends on how much horizontal room a column happens to have. */
+.sc-session.is-compact {
+  flex-direction: column; align-items: stretch; gap: 6px;
+  padding: 8px 10px;
+}
 .sc-session.is-compact .sc-session-title { font-size: 12.5px; }
+.sc-session.is-compact .sc-status { align-self: flex-start; }
 
 /* ---- Day (agenda) ---- */
 .sc-day { display: flex; flex-direction: column; gap: 8px; }

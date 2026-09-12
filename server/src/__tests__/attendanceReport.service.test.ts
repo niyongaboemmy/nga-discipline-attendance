@@ -3,7 +3,7 @@ import { Database } from 'sqlite';
 import { setupTestDb } from './testUtils.js';
 import {
   listReportableClasses, listClassSections, getClassSectionReport, attendanceComment,
-  listAvailableSubjects, listSubjectClasses,
+  listAvailableSubjects, listSubjectClasses, listOwnSections, getOwnSectionReport, resolveOwnClassId,
 } from '../modules/reporting/attendanceReport.service.js';
 
 describe('attendanceComment', () => {
@@ -312,5 +312,68 @@ describe('Subject dashboard with a live MIS link (misToken present)', () => {
       role: 'teacher', userId: 't1', academicTermId: 10, academicYearId: 2, misToken: 'mis-tkn',
     });
     expect(forYear2.map((s) => s.subjectId)).toEqual([9]);
+  });
+});
+
+describe("A student's own attendance report (auto-detected class, own row only)", () => {
+  let db: Database;
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+    await db.run(`INSERT INTO subjects (id, name, code) VALUES (5, 'Applied Mathematics II', 'MATH2')`);
+    await db.run(
+      `INSERT INTO class_subject_assignments
+         (class_id, class_name, subject_id, subject_name, teacher_id, teacher_name, academic_term_id, day_of_week, period)
+       VALUES ('cls-y2c', 'Year 2C', 5, 'Applied Mathematics II', 't1', 'Jean Bosco Uwitonze', 10, 1, '08:00')`
+    );
+    // s1 and s2 are classmates in cls-y2c; s1 is "me" throughout these tests.
+    const rows: Array<[string, string, string, 'homeroom' | 'subject', number | null, string]> = [
+      ['s1', 'Amina K.', '2026-03-02', 'subject', 5, 'present'],
+      ['s1', 'Amina K.', '2026-03-04', 'subject', 5, 'absent'],
+      ['s1', 'Amina K.', '2026-03-02', 'homeroom', null, 'present'],
+      ['s2', 'Ben T.', '2026-03-02', 'subject', 5, 'present'],
+      ['s2', 'Ben T.', '2026-03-02', 'homeroom', null, 'present'],
+    ];
+    for (const [studentId, studentName, date, sessionType, subjectId, status] of rows) {
+      await db.run(
+        `INSERT INTO attendance_records
+           (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
+         VALUES (?, ?, 'cls-y2c', 'Year 2C', ?, 'Morning', ?, ?, ?, 't1', 10)`,
+        studentId, studentName, date, sessionType, subjectId, status
+      );
+    }
+  });
+
+  it('auto-detects the class from the student\'s own most recent attendance row', async () => {
+    expect(await resolveOwnClassId(db, 's1')).toBe('cls-y2c');
+    expect(await resolveOwnClassId(db, 'never-attended-anything')).toBeNull();
+  });
+
+  it('lists homeroom + subjects for the auto-detected class, no class_id input needed', async () => {
+    const sections = await listOwnSections(db, 's1', 10);
+    expect(sections[0]).toEqual({ kind: 'homeroom' });
+    expect(sections[1]).toMatchObject({ kind: 'subject', subjectId: 5, subjectName: 'Applied Mathematics II' });
+  });
+
+  it("returns only the student's own row, never a classmate's", async () => {
+    const report = await getOwnSectionReport(db, 's1', { academicTermId: 10, sessionType: 'subject', subjectId: 5 });
+    expect(report.students).toHaveLength(1);
+    expect(report.students[0].studentId).toBe('s1');
+    expect(report.students[0].rate).toBe(50);
+    expect(report.classAverageRate).toBe(50); // their own rate, not the class's
+    expect(report.className).toBe('Year 2C');
+    expect(report.subjectName).toBe('Applied Mathematics II');
+
+    // Confirm the classmate's row genuinely never leaves the function, not
+    // just that it's filtered from what we asserted on.
+    expect(JSON.stringify(report)).not.toContain('Ben T.');
+    expect(JSON.stringify(report)).not.toContain('s2');
+  });
+
+  it('returns a friendly empty report for a student with no attendance history at all', async () => {
+    const report = await getOwnSectionReport(db, 'brand-new-student', { academicTermId: 10, sessionType: 'homeroom' });
+    expect(report.students).toEqual([]);
+    expect(report.classId).toBe('');
+    expect(report.dateColumns).toEqual([]);
   });
 });

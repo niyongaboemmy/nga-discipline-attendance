@@ -11,31 +11,11 @@ import {
   type SubjectOverview, type SubjectClassOverview,
 } from '../api/attendanceReport';
 import { isoDate } from '../utils/time';
+import { COMMENT_META, COMMENT_BADGE, rateColor } from '../utils/attendanceComment';
 import {
   Printer, Download, Users, TrendingUp, AlertTriangle, Search, ArrowUpDown,
-  CheckCircle2, ThumbsUp, AlertCircle, XCircle, Sun, BookOpen, LayoutGrid,
-  ChevronRight, GraduationCap, ClipboardList,
+  Sun, BookOpen, LayoutGrid, ChevronRight, GraduationCap, ClipboardList,
 } from 'lucide-react';
-
-/** Excellent/Good/Fair/Poor -> the same semantic tokens used everywhere else
- *  in the app (success/info/warning/danger) rather than a new palette. */
-const COMMENT_META: Record<ClassSectionReport['students'][number]['comment'], { color: string; icon: React.ReactNode }> = {
-  Excellent: { color: 'var(--success)', icon: <CheckCircle2 size={12} /> },
-  Good: { color: 'var(--info)', icon: <ThumbsUp size={12} /> },
-  Fair: { color: 'var(--warning)', icon: <AlertCircle size={12} /> },
-  Poor: { color: 'var(--danger)', icon: <XCircle size={12} /> },
-};
-const COMMENT_BADGE: Record<string, string> = { Excellent: 'badge-success', Good: 'badge-info', Fair: 'badge-warning', Poor: 'badge-danger' };
-
-/** Mirrors attendanceReport.service.ts's attendanceComment() tiers, for
- *  coloring the subject/class overview cards (which carry only an
- *  averageRate, not a per-row comment field). */
-function rateColor(rate: number): string {
-  if (rate >= 95) return COMMENT_META.Excellent.color;
-  if (rate >= 85) return COMMENT_META.Good.color;
-  if (rate >= 75) return COMMENT_META.Fair.color;
-  return COMMENT_META.Poor.color;
-}
 
 const addDays = (d: string, n: number) => { const x = new Date(`${d}T00:00:00`); x.setDate(x.getDate() + n); return isoDate(x); };
 const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
