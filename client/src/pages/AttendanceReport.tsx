@@ -372,21 +372,25 @@ export const AttendanceReport: React.FC = () => {
             ) : subjects.length === 0 ? (
               <div className="empty-state">No subjects to report on this term.</div>
             ) : (
-              <div className="subject-card-grid">
+              <div className="ar-listgroup">
                 {subjects.map((s) => (
-                  <button key={s.subjectId} className="card card-pad card-interactive subject-overview-card" onClick={() => openSubject(s.subjectId)}>
-                    <div className="subject-card-head">
-                      <span className="subject-card-icon"><BookOpen size={16} /></span>
-                      <span className="subject-card-name">{s.subjectName}</span>
-                    </div>
-                    <div className="subject-card-rate" style={{ color: rateColor(s.averageRate) }}>{s.averageRate}%</div>
-                    <div className="subject-card-meta">
-                      <span><GraduationCap size={12} /> {s.classCount} class{s.classCount === 1 ? '' : 'es'}</span>
-                      <span><Users size={12} /> {s.studentsTracked} students</span>
-                    </div>
-                    {s.atRiskCount > 0 && (
-                      <div className="subject-card-risk"><AlertTriangle size={12} /> {s.atRiskCount} at risk</div>
-                    )}
+                  <button key={s.subjectId} className="ar-listitem" onClick={() => openSubject(s.subjectId)}>
+                    <span className="ar-listitem-icon"><BookOpen size={16} /></span>
+                    <span className="ar-listitem-main">
+                      <span className="ar-listitem-name">{s.subjectName}</span>
+                      <span className="ar-listitem-meta">
+                        <span><GraduationCap size={12} /> {s.classCount} class{s.classCount === 1 ? '' : 'es'}</span>
+                        <span><Users size={12} /> {s.studentsTracked} students</span>
+                        {s.atRiskCount > 0 && (
+                          <span className="ar-listitem-risk"><AlertTriangle size={12} /> {s.atRiskCount} at risk</span>
+                        )}
+                      </span>
+                    </span>
+                    <span className="ar-listitem-bar">
+                      <span className="ar-listitem-bar-fill" style={{ width: `${s.averageRate}%`, background: rateColor(s.averageRate) }} />
+                    </span>
+                    <span className="ar-listitem-rate" style={{ color: rateColor(s.averageRate) }}>{s.averageRate}%</span>
+                    <ChevronRight size={16} className="ar-listitem-chevron" />
                   </button>
                 ))}
               </div>
@@ -397,18 +401,22 @@ export const AttendanceReport: React.FC = () => {
             ) : subjectClasses.length === 0 ? (
               <div className="empty-state">No classes are teaching this subject this term.</div>
             ) : (
-              <div className="subject-card-grid">
+              <div className="ar-listgroup">
                 {subjectClasses.map((c) => (
-                  <button key={c.classId} className="card card-pad card-interactive subject-overview-card" onClick={() => openSubjectClass(c.classId)}>
-                    <div className="subject-card-head">
-                      <span className="subject-card-icon"><GraduationCap size={16} /></span>
-                      <span className="subject-card-name">{c.className}</span>
-                    </div>
-                    <div className="subject-card-rate" style={{ color: rateColor(c.averageRate) }}>{c.averageRate}%</div>
-                    <div className="subject-card-meta">
-                      <span><Users size={12} /> {c.studentsTracked} students</span>
-                      {c.teacherName && <span><ClipboardList size={12} /> {c.teacherName}</span>}
-                    </div>
+                  <button key={c.classId} className="ar-listitem" onClick={() => openSubjectClass(c.classId)}>
+                    <span className="ar-listitem-icon"><GraduationCap size={16} /></span>
+                    <span className="ar-listitem-main">
+                      <span className="ar-listitem-name">{c.className}</span>
+                      <span className="ar-listitem-meta">
+                        <span><Users size={12} /> {c.studentsTracked} students</span>
+                        {c.teacherName && <span><ClipboardList size={12} /> {c.teacherName}</span>}
+                      </span>
+                    </span>
+                    <span className="ar-listitem-bar">
+                      <span className="ar-listitem-bar-fill" style={{ width: `${c.averageRate}%`, background: rateColor(c.averageRate) }} />
+                    </span>
+                    <span className="ar-listitem-rate" style={{ color: rateColor(c.averageRate) }}>{c.averageRate}%</span>
+                    <ChevronRight size={16} className="ar-listitem-chevron" />
                   </button>
                 ))}
               </div>
