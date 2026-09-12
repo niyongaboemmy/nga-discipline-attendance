@@ -10,7 +10,7 @@ import { Login } from './pages/Login';
 import { SSOCallback } from './pages/SSOCallback';
 import { Welcome } from './pages/Welcome';
 import { Dashboard } from './pages/Dashboard';
-import { AttendanceCalendar } from './pages/AttendanceCalendar';
+import { AttendanceCalendarGate } from './pages/AttendanceCalendarGate';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { RolesPermissions } from './pages/RolesPermissions';
 import { Pending } from './pages/Pending';
@@ -111,7 +111,7 @@ export const App: React.FC = () => {
             path="/attendance"
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
-                <AttendanceCalendar />
+                <AttendanceCalendarGate />
               </ProtectedRoute>
             }
           />
