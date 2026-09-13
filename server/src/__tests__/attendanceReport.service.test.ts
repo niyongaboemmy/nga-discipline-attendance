@@ -4,6 +4,7 @@ import { setupTestDb } from './testUtils.js';
 import {
   listReportableClasses, listClassSections, getClassSectionReport, attendanceComment,
   listAvailableSubjects, listSubjectClasses, listOwnSections, getOwnSectionReport, resolveOwnClassId,
+  getOwnSubjectsOverview,
 } from '../modules/reporting/attendanceReport.service.js';
 
 describe('attendanceComment', () => {
@@ -375,5 +376,79 @@ describe("A student's own attendance report (auto-detected class, own row only)"
     expect(report.students).toEqual([]);
     expect(report.classId).toBe('');
     expect(report.dateColumns).toEqual([]);
+  });
+
+  // Reported bug: the letterhead showed "Class: 26" (a raw class id) and
+  // "Subject: Homeroom" while viewing a real subject, because
+  // class_subject_assignments had no row for it (the same roster-cache
+  // staleness this file already routes around for scoping) and the name
+  // resolution had no fallback.
+  it('resolves the real class/subject name from attendance_records when the roster cache has no row for it', async () => {
+    await db.run(`INSERT INTO subjects (id, name, code) VALUES (6, 'Web3 Applications', 'WEB3')`);
+    // Deliberately no class_subject_assignments row for subject 6.
+    await db.run(
+      `INSERT INTO attendance_records
+         (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
+       VALUES ('s1', 'Amina K.', 'cls-y2c', 'Year 2C', '2026-03-05', 'Morning', 'subject', 6, 'late', 't1', 10)`
+    );
+
+    const report = await getOwnSectionReport(db, 's1', { academicTermId: 10, sessionType: 'subject', subjectId: 6 });
+    expect(report.className).toBe('Year 2C');
+    expect(report.className).not.toBe('cls-y2c');
+    expect(report.subjectName).toBe('Web3 Applications');
+    expect(report.subjectName).not.toBe('Homeroom');
+  });
+});
+
+describe('getOwnSubjectsOverview — the "All Subjects" comparison view', () => {
+  let db: Database;
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+    await db.run(`INSERT INTO subjects (id, name, code) VALUES (5, 'Applied Mathematics II', 'MATH2'), (6, 'Web3 Applications', 'WEB3')`);
+    await db.run(
+      `INSERT INTO class_subject_assignments
+         (class_id, class_name, subject_id, subject_name, teacher_id, teacher_name, academic_term_id, day_of_week, period)
+       VALUES
+         ('cls-y2c', 'Year 2C', 5, 'Applied Mathematics II', 't1', 'Jean Bosco Uwitonze', 10, 1, '08:00'),
+         ('cls-y2c', 'Year 2C', 6, 'Web3 Applications', 't1', 'Jean Bosco Uwitonze', 10, 2, '10:50')`
+    );
+    // Only Applied Mathematics II has any recorded attendance for this
+    // student — Web3 Applications is assigned (per the cache row above) but
+    // genuinely untouched, and homeroom has one present.
+    const rows: Array<[string, 'homeroom' | 'subject', number | null, string]> = [
+      ['2026-03-02', 'subject', 5, 'present'],
+      ['2026-03-04', 'subject', 5, 'absent'],
+      ['2026-03-02', 'homeroom', null, 'present'],
+    ];
+    for (const [date, sessionType, subjectId, status] of rows) {
+      await db.run(
+        `INSERT INTO attendance_records
+           (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
+         VALUES ('s1', 'Amina K.', 'cls-y2c', 'Year 2C', ?, 'Morning', ?, ?, ?, 't1', 10)`,
+        date, sessionType, subjectId, status
+      );
+    }
+  });
+
+  it('includes every section — including one with zero recorded sessions — sorted homeroom first', async () => {
+    const overview = await getOwnSubjectsOverview(db, 's1', { academicTermId: 10 });
+    expect(overview.map((s) => s.kind === 'homeroom' ? 'homeroom' : s.subjectName)).toEqual([
+      'homeroom', 'Applied Mathematics II', 'Web3 Applications',
+    ]);
+  });
+
+  it('zero-fills a section with no attendance instead of defaulting it to 100%', async () => {
+    const overview = await getOwnSubjectsOverview(db, 's1', { academicTermId: 10 });
+    const web3 = overview.find((s) => s.subjectName === 'Web3 Applications')!;
+    expect(web3.hasData).toBe(false);
+    expect(web3).toMatchObject({ present: 0, absent: 0, late: 0, excused: 0, total: 0, rate: 0 });
+  });
+
+  it('reports real numbers for a section that does have attendance', async () => {
+    const overview = await getOwnSubjectsOverview(db, 's1', { academicTermId: 10 });
+    const math = overview.find((s) => s.subjectName === 'Applied Mathematics II')!;
+    expect(math.hasData).toBe(true);
+    expect(math).toMatchObject({ present: 1, absent: 1, total: 2, rate: 50 });
   });
 });

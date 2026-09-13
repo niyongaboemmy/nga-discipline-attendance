@@ -121,4 +121,11 @@ describe('Unified reporting module (C: termly / combined)', () => {
     expect((await request(app).get('/api/reporting/attendance/classes').set(authHeader(studentToken))).status).toBe(403);
     expect((await request(app).get('/api/reporting/termly').set(authHeader(studentToken))).status).toBe(403);
   });
+
+  it("lets a student load their own all-subjects comparison view", async () => {
+    const res = await request(app).get('/api/reporting/attendance/me/subjects').set(authHeader(studentToken));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data[0]).toHaveProperty('hasData');
+  });
 });

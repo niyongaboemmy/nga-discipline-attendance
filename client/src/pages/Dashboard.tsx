@@ -5,10 +5,12 @@ import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { HeroBanner } from '../components/common/HeroBanner';
 import { getScheduleDay, type DayResponse } from '../api/schedule';
+import { attendanceReportApi, type OwnSubjectSummary } from '../api/attendanceReport';
+import { rateColor } from '../utils/attendanceComment';
 import { CalendarClock, ArrowRight } from 'lucide-react';
 import {
   Users, UserCheck, UserX, TrendingUp, TrendingDown, FileText, AlertCircle, Inbox,
-  Gavel, Award, BookOpen, Activity, ChevronRight,
+  Gavel, Award, BookOpen, Activity, ChevronRight, Sun,
 } from 'lucide-react';
 
 interface OverviewData {
@@ -19,9 +21,12 @@ interface OverviewData {
   trends: Array<{ date: string; rate: number }>;
   recentActivity: Array<{ student_name: string; class_name: string; status: string; updated_at: string }>;
 }
-interface StudentRecord {
-  id: number; class_name: string; session_date: string; period: string;
-  status: 'present' | 'absent' | 'late' | 'excused'; notes: string;
+/** One real session, flattened out of `/api/attendance/me`'s day-by-day
+ *  merge — a homeroom row and each subject row on the same day both become
+ *  their own entry here, so the "Recent Sessions" feed shows subject
+ *  sessions too instead of only ever showing homeroom. */
+interface RecentEvent {
+  key: string; date: string; label: string; status: string; period: string;
 }
 interface ConductTotals { total: number; demerits: number; merits: number; open: number; underReview: number; }
 
@@ -206,38 +211,27 @@ const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | n
 };
 
 // ---- Student ----
-const StudentDashboard: React.FC<{ records: StudentRecord[] }> = ({ records }) => {
-  const total = records.length;
-  const present = records.filter((r) => r.status === 'present').length;
-  const late = records.filter((r) => r.status === 'late').length;
-  const excused = records.filter((r) => r.status === 'excused').length;
-  const absent = records.filter((r) => r.status === 'absent').length;
+const sectionName = (r: Pick<OwnSubjectSummary, 'kind' | 'subjectName'>) => (r.kind === 'homeroom' ? 'Homeroom' : r.subjectName || 'Unknown subject');
 
-  // Per-class breakdown from real records
-  const byClass = Object.values(records.reduce((acc, r) => {
-    const k = r.class_name;
-    acc[k] = acc[k] || { className: k, total: 0, ok: 0 };
-    acc[k].total += 1;
-    if (r.status !== 'absent') acc[k].ok += 1;
-    return acc;
-  }, {} as Record<string, { className: string; total: number; ok: number }>))
-    .map((c) => ({ ...c, rate: Math.round((c.ok / c.total) * 100) }));
-
-  const recent = [...records]
-    .sort((a, b) => +new Date(b.session_date) - +new Date(a.session_date))
-    .slice(0, 6);
-
-  if (total === 0) {
-    return <div className="card"><div className="empty-state"><Inbox size={28} /><span className="text-sm">No attendance has been recorded for you yet.</span></div></div>;
-  }
+/** Every enrolled section, side by side — including ones with nothing
+ *  recorded yet (shown zero-filled with a muted tag rather than omitted).
+ *  This is what replaces the old homeroom-only records list: a student
+ *  whose teacher never marks homeroom but does mark subjects used to see a
+ *  fully blank dashboard, because only the homeroom array fed this page. */
+const StudentDashboard: React.FC<{ overview: OwnSubjectSummary[]; recent: RecentEvent[] }> = ({ overview, recent }) => {
+  const present = overview.reduce((n, r) => n + r.present, 0);
+  const late = overview.reduce((n, r) => n + r.late, 0);
+  const excused = overview.reduce((n, r) => n + r.excused, 0);
+  const absent = overview.reduce((n, r) => n + r.absent, 0);
+  const total = present + late + excused + absent;
 
   return (
     <>
       <div className="grid grid-stats mb-6">
-        <StatCard label="Present" value={present} accent="var(--success)" icon={<UserCheck size={18} />} tag="Sessions" trend={{ dir: 'up', text: `${Math.round((present / total) * 100)}% of total` }} />
+        <StatCard label="Present" value={present} accent="var(--success)" icon={<UserCheck size={18} />} tag="Sessions" sub={total ? `${Math.round((present / total) * 100)}% of total` : 'No sessions yet'} />
         <StatCard label="Late" value={late} accent="var(--warning)" icon={<AlertCircle size={18} />} tag="Sessions" />
         <StatCard label="Excused" value={excused} accent="var(--info)" icon={<FileText size={18} />} tag="Sessions" />
-        <StatCard label="Absent" value={absent} accent="var(--danger)" icon={<UserX size={18} />} tag="Sessions" trend={absent > 0 ? { dir: 'down', text: `${Math.round((absent / total) * 100)}% of total` } : undefined} />
+        <StatCard label="Absent" value={absent} accent="var(--danger)" icon={<UserX size={18} />} tag="Sessions" sub={absent > 0 && total ? `${Math.round((absent / total) * 100)}% of total` : undefined} />
       </div>
 
       <div className="grid grid-main">
@@ -248,26 +242,44 @@ const StudentDashboard: React.FC<{ records: StudentRecord[] }> = ({ records }) =
               <div>
                 <div className="flex items-center gap-2">
                   <span className="section-title">My Classes</span>
-                  <span className="count-badge">{byClass.length} Enrolled</span>
+                  <span className="count-badge">{overview.length} Enrolled</span>
                 </div>
-                <div className="card-subtitle">Attendance per class this term</div>
+                <div className="card-subtitle">Every subject, side by side — including ones not yet recorded</div>
               </div>
             </div>
-            <Link to="/attendance/report" className="btn btn-ghost btn-sm">View All <ChevronRight size={14} /></Link>
+            <Link to="/attendance/report" className="btn btn-ghost btn-sm">Compare all <ChevronRight size={14} /></Link>
           </div>
-          <div className="card-body">
-            {byClass.map((c) => (
-              <div key={c.className} className="list-item">
-                <div style={{ minWidth: 0 }}>
-                  <div className="font-semibold">{c.className}</div>
-                  <div className="text-xs text-secondary mt-1">{c.total} sessions recorded</div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="progress" style={{ width: '130px' }}><div className={`progress-fill ${rateClass(c.rate)}`} style={{ width: `${c.rate}%` }} /></div>
-                  <span className="text-sm font-semibold">{c.rate}%</span>
-                </div>
-              </div>
-            ))}
+          <div className="card-body" style={{ padding: 0 }}>
+            <div className="ar-listgroup" style={{ border: 'none', boxShadow: 'none', margin: 0 }}>
+              {overview.map((r) => {
+                const key = r.kind === 'homeroom' ? 'homeroom' : String(r.subjectId);
+                return (
+                  <Link key={key} to="/attendance/report" className={`ar-listitem${!r.hasData ? ' is-empty' : ''}`}>
+                    <span className="ar-listitem-icon">{r.kind === 'homeroom' ? <Sun size={16} /> : <BookOpen size={16} />}</span>
+                    <span className="ar-listitem-main">
+                      <span className="ar-listitem-name">{sectionName(r)}</span>
+                      <span className="ar-listitem-meta">
+                        <span>{r.present} present</span>
+                        <span>{r.absent} absent</span>
+                        {r.late > 0 && <span>{r.late} late</span>}
+                        {r.excused > 0 && <span>{r.excused} excused</span>}
+                      </span>
+                    </span>
+                    {r.hasData ? (
+                      <>
+                        <span className="ar-listitem-bar">
+                          <span className="ar-listitem-bar-fill" style={{ width: `${r.rate}%`, background: rateColor(r.rate) }} />
+                        </span>
+                        <span className="ar-listitem-rate" style={{ color: rateColor(r.rate) }}>{r.rate}%</span>
+                      </>
+                    ) : (
+                      <span className="ar-listitem-empty-tag">No sessions yet</span>
+                    )}
+                    <ChevronRight size={16} className="ar-listitem-chevron" />
+                  </Link>
+                );
+              })}
+            </div>
           </div>
         </section>
 
@@ -279,18 +291,22 @@ const StudentDashboard: React.FC<{ records: StudentRecord[] }> = ({ records }) =
             </div>
           </div>
           <div className="card-body">
-            <div className="feed">
-              {recent.map((r) => (
-                <div key={r.id} className="feed-item">
-                  <div className={`feed-dot is-${statusToTone(r.status)}`} />
-                  <div style={{ flex: 1 }}>
-                    <div className="text-sm"><span className="font-semibold">{r.class_name}</span><span className="text-secondary"> · </span><span className="capitalize font-medium">{r.status}</span></div>
-                    <div className="text-xs text-secondary">{r.period}</div>
+            {recent.length === 0 ? (
+              <div className="empty-state"><Inbox size={24} /><span className="text-sm">No sessions recorded yet</span></div>
+            ) : (
+              <div className="feed">
+                {recent.map((r) => (
+                  <div key={r.key} className="feed-item">
+                    <div className={`feed-dot is-${statusToTone(r.status)}`} />
+                    <div style={{ flex: 1 }}>
+                      <div className="text-sm"><span className="font-semibold">{r.label}</span><span className="text-secondary"> · </span><span className="capitalize font-medium">{r.status}</span></div>
+                      <div className="text-xs text-secondary">{r.period}</div>
+                    </div>
+                    <span className="feed-time">{new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                   </div>
-                  <span className="feed-time">{new Date(r.session_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       </div>
@@ -302,7 +318,8 @@ export const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState<OverviewData | null>(null);
   const [conduct, setConduct] = useState<ConductTotals | null>(null);
-  const [records, setRecords] = useState<StudentRecord[] | null>(null);
+  const [overview, setOverview] = useState<OwnSubjectSummary[] | null>(null);
+  const [recentEvents, setRecentEvents] = useState<RecentEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -311,15 +328,35 @@ export const Dashboard: React.FC = () => {
     const role = user?.role;
     try {
       if (role === 'student') {
-        const res = await fetch('/api/attendance/me', { headers: authHeaders() });
-        if (!res.ok) throw new Error('Could not load your attendance.');
-        const result = await res.json();
-        if (!result.success) throw new Error(result.message || 'Server error.');
-        // /api/attendance/me returns { summary, days, homeroom, subjects } (see
-        // routes/attendance.ts's Remediation A16 comment) — not a bare array.
-        // StudentDashboard wants the flat per-day homeroom register, which is
-        // the closest match to the old StudentRecord[] shape this page expects.
-        setRecords(result.data?.homeroom ?? []);
+        // Two calls: the zero-filled "every section" overview (never empty
+        // just because homeroom wasn't marked — see getOwnSubjectsOverview)
+        // drives the stat cards and class list, while /api/attendance/me's
+        // day-by-day merge feeds the recent-sessions feed with both
+        // homeroom AND subject events (previously only homeroom fed this
+        // page at all, so a student with subject-only records saw a
+        // completely blank dashboard).
+        const [overviewRes, meRes] = await Promise.all([
+          attendanceReportApi.myAllSubjects(),
+          fetch('/api/attendance/me', { headers: authHeaders() }).then(async (res) => {
+            if (!res.ok) throw new Error('Could not load your attendance.');
+            const result = await res.json();
+            if (!result.success) throw new Error(result.message || 'Server error.');
+            return result.data;
+          }),
+        ]);
+        setOverview(overviewRes.data ?? []);
+
+        const events: RecentEvent[] = [];
+        for (const day of meRes?.days ?? []) {
+          if (day.homeroom) {
+            events.push({ key: `${day.date}-homeroom`, date: day.date, label: 'Homeroom', status: day.homeroom.status, period: day.homeroom.period });
+          }
+          for (const s of day.subjects ?? []) {
+            events.push({ key: `${day.date}-${s.subjectId}`, date: day.date, label: s.subjectName || 'Subject', status: s.status, period: s.period });
+          }
+        }
+        events.sort((a, b) => (a.date < b.date ? 1 : -1));
+        setRecentEvents(events.slice(0, 6));
       } else {
         const res = await fetch('/api/reports/overview', { headers: authHeaders() });
         if (!res.ok) throw new Error('Could not load the overview.');
@@ -341,10 +378,11 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user]);
 
-  // Hero subline tailored to what the data says right now.
-  const studentRate = records?.length
-    ? Math.round((records.filter((r) => r.status !== 'absent').length / records.length) * 100)
-    : null;
+  // Hero subline tailored to what the data says right now — rolled up
+  // across every enrolled section, not just homeroom.
+  const overviewTotal = overview?.reduce((n, r) => n + r.total, 0) ?? 0;
+  const overviewOk = overview?.reduce((n, r) => n + r.present + r.late + r.excused, 0) ?? 0;
+  const studentRate = overviewTotal > 0 ? Math.round((overviewOk / overviewTotal) * 100) : null;
 
   return (
     <DashboardLayout>
@@ -352,7 +390,7 @@ export const Dashboard: React.FC = () => {
         <HeroBanner name={user.name} role={user.role} title={`${greeting()}, ${user.name.split(' ')[0]}!`}>
           {user.role === 'student' ? (
             studentRate !== null ? (
-              <>Your overall presence is <strong>{studentRate}%</strong> across <strong>{records!.length} sessions</strong>. Keep up the momentum! 🚀</>
+              <>Your overall presence is <strong>{studentRate}%</strong> across <strong>{overviewTotal} sessions</strong>. Keep up the momentum! 🚀</>
             ) : (
               <>Welcome to your attendance and conduct overview.</>
             )
@@ -370,7 +408,7 @@ export const Dashboard: React.FC = () => {
         <div className="card"><div className="empty-state"><AlertCircle size={28} /><span className="text-sm">{error}</span>
           <button className="btn btn-outline btn-sm mt-2" onClick={load}>Retry</button></div></div>
       ) : user?.role === 'student' ? (
-        <StudentDashboard records={records || []} />
+        <StudentDashboard overview={overview || []} recent={recentEvents} />
       ) : stats ? (
         <StaffDashboard stats={stats} conduct={conduct} />
       ) : null}

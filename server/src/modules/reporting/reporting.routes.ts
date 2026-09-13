@@ -9,6 +9,7 @@ import {
 import {
   listReportableClasses, listClassSections, getClassSectionReport,
   listAvailableSubjects, listSubjectClasses, listOwnSections, getOwnSectionReport,
+  getOwnSubjectsOverview,
 } from './attendanceReport.service.js';
 
 /** C: termly / annual / combined / comparison reporting. Mounted at /api/reporting. */
@@ -52,6 +53,23 @@ router.get('/attendance/me/report', authorizePermission('ATTENDANCE_REPORT_VIEW_
   } catch (error) {
     console.error('Error generating own attendance report:', error);
     return res.status(500).json({ success: false, message: 'Error generating your attendance report.' });
+  }
+});
+
+// The "All Subjects" comparison view — every section side by side, including
+// ones with zero attendance recorded yet (see getOwnSubjectsOverview).
+router.get('/attendance/me/subjects', authorizePermission('ATTENDANCE_REPORT_VIEW_OWN', 'REPORTS_VIEW'), async (req: any, res: Response) => {
+  const db = getDb();
+  const authReq = req as AuthenticatedRequest;
+  const { academicTermId } = resolveAcademicPeriod(authReq);
+  const fromDate = typeof req.query.from === 'string' && req.query.from ? req.query.from : undefined;
+  const toDate = typeof req.query.to === 'string' && req.query.to ? req.query.to : undefined;
+  try {
+    const data = await getOwnSubjectsOverview(db, authReq.user!.id, { academicTermId, fromDate, toDate });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error generating own subjects overview:', error);
+    return res.status(500).json({ success: false, message: 'Error generating your subjects overview.' });
   }
 });
 

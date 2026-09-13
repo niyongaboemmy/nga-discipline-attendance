@@ -92,4 +92,29 @@ export const attendanceReportApi = {
     if (q.to) qs.set('to', q.to);
     return apiGet<ClassSectionReport>(`/api/reporting/attendance/me/report?${qs.toString()}`);
   },
+
+  /** Every section (homeroom + each subject) side by side — the "All
+   *  Subjects" comparison view, zero-filled rather than omitting a subject
+   *  with nothing recorded yet. */
+  myAllSubjects: (from?: string, to?: string) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return apiGet<OwnSubjectSummary[]>(`/api/reporting/attendance/me/subjects${suffix}`);
+  },
 };
+
+export interface OwnSubjectSummary {
+  kind: 'homeroom' | 'subject';
+  subjectId: number | null;
+  subjectName: string | null;
+  present: number;
+  absent: number;
+  late: number;
+  excused: number;
+  total: number;
+  rate: number;
+  comment: AttendanceComment;
+  hasData: boolean;
+}
