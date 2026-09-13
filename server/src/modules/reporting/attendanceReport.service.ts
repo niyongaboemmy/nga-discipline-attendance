@@ -373,6 +373,45 @@ export interface ClassSectionReportParams {
   toDate?: string;
 }
 
+/** Class/subject/teacher display names for the letterhead. Tries the
+ *  class_subject_assignments cache first (richer — carries a teacher name),
+ *  then falls back to attendance_records (class_name is denormalised on
+ *  every row) joined to `subjects` for the subject name. Without this
+ *  fallback, a (class, subject) pair missing from the cache — the same
+ *  staleness this file already routes around for *scoping* elsewhere —
+ *  silently produced a raw class id and a null subject name, which the
+ *  frontend then mislabeled as "Homeroom" purely because the name came back
+ *  empty. Reported bug: letterhead showed "Class: 26 / Subject: Homeroom"
+ *  while viewing a real subject (Web3 Applications) whose class had no
+ *  synced roster row. */
+async function resolveSectionMeta(
+  db: Database, classId: string, sessionType: 'homeroom' | 'subject', subjectId?: number
+): Promise<{ className: string | null; subjectName: string | null; teacherName: string | null } | undefined> {
+  if (sessionType !== 'subject') {
+    const row = await db.get(`SELECT class_name as className FROM attendance_records WHERE class_id = ? LIMIT 1`, classId);
+    return row ? { className: row.className, subjectName: null, teacherName: null } : undefined;
+  }
+
+  const cached = await db.get(
+    `SELECT class_name as className, subject_name as subjectName, teacher_name as teacherName
+       FROM class_subject_assignments WHERE class_id = ? AND subject_id = ? LIMIT 1`,
+    classId, subjectId
+  );
+  if (cached?.className && cached?.subjectName) return cached;
+
+  const fallback = await db.get(
+    `SELECT ar.class_name as className, s.name as subjectName
+       FROM attendance_records ar LEFT JOIN subjects s ON s.id = ar.subject_id
+      WHERE ar.class_id = ? AND ar.subject_id = ? LIMIT 1`,
+    classId, subjectId
+  );
+  return {
+    className: cached?.className ?? fallback?.className ?? null,
+    subjectName: cached?.subjectName ?? fallback?.subjectName ?? null,
+    teacherName: cached?.teacherName ?? null,
+  };
+}
+
 export async function getClassSectionReport(db: Database, p: ClassSectionReportParams): Promise<ClassSectionReport> {
   const { clause: termClause, params: termParams } = periodFilter(p.academicTermId);
 
@@ -388,16 +427,7 @@ export async function getClassSectionReport(db: Database, p: ClassSectionReportP
   scopeParams.push(...termParams);
 
   const [classMeta, dateRows, recordRows] = await Promise.all([
-    // Class/subject/teacher display names — the class_subject_assignments
-    // cache, falling back to whatever attendance_records has denormalised
-    // for a class that only ever gets homeroom attendance.
-    p.sessionType === 'subject'
-      ? db.get(
-          `SELECT class_name as className, subject_name as subjectName, teacher_name as teacherName
-             FROM class_subject_assignments WHERE class_id = ? AND subject_id = ? LIMIT 1`,
-          p.classId, p.subjectId
-        )
-      : db.get(`SELECT class_name as className FROM attendance_records WHERE class_id = ? LIMIT 1`, p.classId),
+    resolveSectionMeta(db, p.classId, p.sessionType, p.subjectId),
     db.all(`SELECT DISTINCT session_date FROM attendance_records${scope} ORDER BY session_date`, ...scopeParams),
     db.all(
       `SELECT student_id, student_name, session_date, status FROM attendance_records${scope}
@@ -471,4 +501,57 @@ export async function getOwnSectionReport(
   const full = await getClassSectionReport(db, { ...p, classId });
   const own = full.students.find((s) => s.studentId === studentId) ?? null;
   return { ...full, students: own ? [own] : [], classAverageRate: own ? own.rate : 100 };
+}
+
+export interface OwnSubjectSummary {
+  kind: 'homeroom' | 'subject';
+  subjectId: number | null;
+  subjectName: string | null;
+  present: number;
+  absent: number;
+  late: number;
+  excused: number;
+  total: number;
+  rate: number;
+  comment: ReturnType<typeof attendanceComment>;
+  /** False when nothing has been recorded for this section yet in the
+   *  selected range — every count (including `rate`) is a real 0, not the
+   *  "innocent until proven guilty" 100 the single-section view defaults to.
+   *  A comparison list that quietly showed an untouched subject as "100%"
+   *  would misread as perfect attendance rather than "nothing to show yet",
+   *  so this view deliberately zero-fills and flags it instead. */
+  hasData: boolean;
+}
+
+/** Every section (homeroom + each subject) for a student's own class, side
+ *  by side — the "All Subjects" comparison view. Reuses listOwnSections for
+ *  the roster (already resilient to a stale sync cache) and
+ *  getOwnSectionReport per section for the numbers. */
+export async function getOwnSubjectsOverview(
+  db: Database, studentId: string, opts: { academicTermId?: number; fromDate?: string; toDate?: string }
+): Promise<OwnSubjectSummary[]> {
+  const sections = await listOwnSections(db, studentId, opts.academicTermId);
+  return Promise.all(
+    sections.map(async (sec): Promise<OwnSubjectSummary> => {
+      const report = await getOwnSectionReport(db, studentId, {
+        academicTermId: opts.academicTermId, fromDate: opts.fromDate, toDate: opts.toDate,
+        sessionType: sec.kind, subjectId: sec.kind === 'subject' ? sec.subjectId : undefined,
+      });
+      const own = report.students[0];
+      const hasData = !!own && own.total > 0;
+      return {
+        kind: sec.kind,
+        subjectId: sec.kind === 'subject' ? sec.subjectId : null,
+        subjectName: sec.kind === 'subject' ? sec.subjectName : null,
+        present: own?.present ?? 0,
+        absent: own?.absent ?? 0,
+        late: own?.late ?? 0,
+        excused: own?.excused ?? 0,
+        total: own?.total ?? 0,
+        rate: hasData ? own!.rate : 0,
+        comment: hasData ? own!.comment : attendanceComment(0),
+        hasData,
+      };
+    })
+  );
 }
