@@ -315,7 +315,11 @@ export const Dashboard: React.FC = () => {
         if (!res.ok) throw new Error('Could not load your attendance.');
         const result = await res.json();
         if (!result.success) throw new Error(result.message || 'Server error.');
-        setRecords(result.data);
+        // /api/attendance/me returns { summary, days, homeroom, subjects } (see
+        // routes/attendance.ts's Remediation A16 comment) — not a bare array.
+        // StudentDashboard wants the flat per-day homeroom register, which is
+        // the closest match to the old StudentRecord[] shape this page expects.
+        setRecords(result.data?.homeroom ?? []);
       } else {
         const res = await fetch('/api/reports/overview', { headers: authHeaders() });
         if (!res.ok) throw new Error('Could not load the overview.');
