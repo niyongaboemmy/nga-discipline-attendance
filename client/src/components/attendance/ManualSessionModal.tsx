@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Dialog } from '../common/Dialog';
 import { SearchableSelect } from '../common/SearchableSelect';
 import { apiGet } from '../../api/client';
-import type { CalendarSession } from '../../api/schedule';
+import { getHomeroomClasses, type CalendarSession, type HomeroomClass } from '../../api/schedule';
 import { isoDate } from '../../utils/time';
 
 interface ClassRow { id: string; name: string; department: string }
@@ -20,6 +20,7 @@ export const ManualSessionModal: React.FC<{
   onPick: (t: { session: CalendarSession; date: string }) => void;
 }> = ({ open, onClose, onPick }) => {
   const [classes, setClasses] = useState<ClassRow[]>([]);
+  const [homeroomClasses, setHomeroomClasses] = useState<HomeroomClass[]>([]);
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
 
@@ -32,7 +33,18 @@ export const ManualSessionModal: React.FC<{
   useEffect(() => {
     if (!open) return;
     apiGet<ClassRow[]>('/api/mis/classes').then((r) => setClasses(r.data ?? [])).catch(() => setClasses([]));
+    // Only the classes this teacher is the assigned Class Teacher of may take
+    // a morning register — the subject picker below stays unrestricted.
+    getHomeroomClasses().then(setHomeroomClasses).catch(() => setHomeroomClasses([]));
   }, [open]);
+
+  // The class list depends on session type; drop a selection that no longer
+  // belongs to the active list (e.g. switching to Homeroom after picking a
+  // class you don't lead).
+  useEffect(() => {
+    const options = sessionType === 'homeroom' ? homeroomClasses : classes;
+    if (classId && !options.some((c) => c.id === classId)) setClassId('');
+  }, [sessionType, classes, homeroomClasses, classId]);
 
   useEffect(() => {
     if (!classId) { setSubjects([]); return; }
@@ -49,7 +61,8 @@ export const ManualSessionModal: React.FC<{
     if (subjectId !== '' && !subjects.some((s) => s.id === subjectId)) setSubjectId('');
   }, [subjects, subjectId]);
 
-  const cls = classes.find((c) => c.id === classId);
+  const classOptions = sessionType === 'homeroom' ? homeroomClasses : classes;
+  const cls = classOptions.find((c) => c.id === classId);
   const subj = subjects.find((s) => s.id === subjectId);
   const ready = !!classId && (sessionType === 'homeroom' || subjectId !== '');
 
@@ -118,11 +131,16 @@ export const ManualSessionModal: React.FC<{
           <label className="label">Class</label>
           <SearchableSelect
             aria-label="Class"
-            placeholder="Select a class…"
+            placeholder={sessionType === 'homeroom' ? 'Select a class you lead…' : 'Select a class…'}
             value={classId}
             onChange={setClassId}
-            options={classes.map((c) => ({ value: c.id, label: c.name, hint: c.department }))}
+            options={classOptions.map((c) => ({ value: c.id, label: c.name, hint: (c as ClassRow).department }))}
           />
+          {sessionType === 'homeroom' && homeroomClasses.length === 0 && (
+            <p className="text-xs" style={{ color: 'var(--text-secondary)', marginTop: 4 }}>
+              You aren't the assigned Class Teacher of any class, so there's no homeroom register for you to take.
+            </p>
+          )}
         </div>
 
         {sessionType === 'subject' && (

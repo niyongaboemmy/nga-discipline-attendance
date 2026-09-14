@@ -108,6 +108,34 @@ async function fetchTimetable(
   return { slots, source: 'mis' };
 }
 
+/** Class groups where `userId` is the officially assigned Class Teacher for
+ *  the given academic year — the MIS's `UserGrade` assignment, not merely
+ *  "teaches a lesson in that class". The morning register is that teacher's
+ *  responsibility alone, so this is what gates whether a homeroom entry is
+ *  generated for them at all (co-teachers who happen to have the first
+ *  period in a class, or admins with no such assignment, get none). */
+async function fetchClassTeacherClasses(
+  misToken: string,
+  userId: string,
+  academicYearId: number | undefined
+): Promise<{ id: string; name: string }[]> {
+  const rows = await misGetListOrNull(misToken, `/users/${userId}/grades`);
+  const out: { id: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const r of rows ?? []) {
+    if (r?.class_group_id == null) continue;
+    const matchesYear = academicYearId != null
+      ? Number(r.academic_year_id) === academicYearId
+      : !!r.academic_year_is_current;
+    const id = String(r.class_group_id);
+    if (matchesYear && !seen.has(id)) {
+      seen.add(id);
+      out.push({ id, name: r.class_group_name || 'Class' });
+    }
+  }
+  return out;
+}
+
 interface Agg {
   present: number;
   absent: number;
@@ -208,13 +236,18 @@ function buildDaySessions(
   daySlots: Slot[],
   date: string,
   agg: Map<string, Agg>,
-  userId: string
+  userId: string,
+  // The full timetable (not just this day's slots) — the morning register is
+  // owed every school day for every class on the timetable, including days
+  // with no lessons for that class, so homeroom entries are derived from the
+  // whole schedule rather than from `daySlots` alone.
+  homeroomSlots: Slot[] = daySlots
 ): SessionItem[] {
-  // One homeroom entry per distinct class that has a lesson today, earliest
+  // One homeroom entry per distinct class on the timetable, earliest known
   // slot's class first — that teacher most often takes the morning register.
   const classOrder: string[] = [];
   const classMeta = new Map<string, Slot>();
-  for (const s of [...daySlots].sort((a, b) => a.startTime.localeCompare(b.startTime))) {
+  for (const s of [...homeroomSlots].sort((a, b) => a.startTime.localeCompare(b.startTime))) {
     if (!classMeta.has(s.classId)) { classMeta.set(s.classId, s); classOrder.push(s.classId); }
   }
 
@@ -272,6 +305,21 @@ function buildDaySessions(
   return [...homeroom, ...subjects];
 }
 
+/** Slots eligible to seed a homeroom entry: for a student, their own
+ *  timetable (there's nothing to gate — they don't take the register); for
+ *  everyone else, only the classes they are the assigned Class Teacher of. */
+async function resolveHomeroomSlots(
+  authReq: AuthenticatedRequest,
+  slots: Slot[],
+  academicYearId: number | undefined
+): Promise<Slot[]> {
+  if (authReq.user?.role === 'student') return slots;
+  const misToken = authReq.user?.misToken;
+  if (!misToken) return [];
+  const classTeacherOf = new Set((await fetchClassTeacherClasses(misToken, authReq.user!.id, academicYearId)).map((c) => c.id));
+  return slots.filter((s) => classTeacherOf.has(s.classId));
+}
+
 const ATT_PERMS = ['ATTENDANCE_MARK', 'ATTENDANCE_VIEW_ALL', 'ATTENDANCE_VIEW_OWN', 'ATTENDANCE_CALENDAR_VIEW_OWN'];
 
 // GET /api/attendance/schedule/day?date=YYYY-MM-DD
@@ -281,7 +329,7 @@ router.get('/schedule/day', authorizePermission(...ATT_PERMS), async (req: any, 
   if (!DATE_RE.test(date)) {
     return res.status(400).json({ success: false, message: 'date must be YYYY-MM-DD.' });
   }
-  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
+  const { academicYearId, academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
@@ -289,15 +337,19 @@ router.get('/schedule/day', authorizePermission(...ATT_PERMS), async (req: any, 
       authReq,
       academicTermId != null ? String(academicTermId) : undefined
     );
+    const homeroomSlots = await resolveHomeroomSlots(authReq, slots, academicYearId);
     const dow = dayOfWeekFor(date);
     const daySlots = slots.filter((s) => s.dayOfWeek === dow);
-    const classIds = [...new Set(daySlots.map((s) => s.classId))];
+    // Full timetable's classes, not just today's — the morning register is
+    // owed for every class on the schedule regardless of whether it has a
+    // lesson today.
+    const classIds = [...new Set(slots.map((s) => s.classId))];
     const agg = await loadAttendance(
       classIds, date, date,
       isStudent ? authReq.user!.id : null,
       academicTermId
     );
-    const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id);
+    const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id, homeroomSlots);
 
     // Progress tracks the subject registers plus the first (primary) homeroom.
     let seenHomeroom = false;
@@ -334,7 +386,7 @@ router.get('/schedule/week', authorizePermission(...ATT_PERMS), async (req: any,
   }
   const weekStart = weekStartFor(anchor);
   const weekEnd = addDays(weekStart, 6);
-  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
+  const { academicYearId, academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
@@ -342,6 +394,7 @@ router.get('/schedule/week', authorizePermission(...ATT_PERMS), async (req: any,
       authReq,
       academicTermId != null ? String(academicTermId) : undefined
     );
+    const homeroomSlots = await resolveHomeroomSlots(authReq, slots, academicYearId);
     const classIds = [...new Set(slots.map((s) => s.classId))];
     const agg = await loadAttendance(
       classIds, weekStart, weekEnd,
@@ -353,7 +406,7 @@ router.get('/schedule/week', authorizePermission(...ATT_PERMS), async (req: any,
       const date = addDays(weekStart, i);
       const dow = dayOfWeekFor(date);
       const daySlots = slots.filter((s) => s.dayOfWeek === dow);
-      const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id).map((s) => ({
+      const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id, homeroomSlots).map((s) => ({
         kind: s.kind,
         classId: s.classId,
         className: s.className,
@@ -392,7 +445,7 @@ router.get('/schedule/month', authorizePermission(...ATT_PERMS), async (req: any
   const first = `${month}-01`;
   const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const last = `${month}-${String(daysInMonth).padStart(2, '0')}`;
-  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
+  const { academicYearId, academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
@@ -400,6 +453,7 @@ router.get('/schedule/month', authorizePermission(...ATT_PERMS), async (req: any
       authReq,
       academicTermId != null ? String(academicTermId) : undefined
     );
+    const homeroomSlots = await resolveHomeroomSlots(authReq, slots, academicYearId);
     const classIds = [...new Set(slots.map((s) => s.classId))];
     const agg = await loadAttendance(
       classIds, first, last, isStudent ? authReq.user!.id : null, academicTermId
@@ -409,7 +463,7 @@ router.get('/schedule/month', authorizePermission(...ATT_PERMS), async (req: any
       const date = addDays(first, i);
       const dow = dayOfWeekFor(date);
       const daySlots = slots.filter((s) => s.dayOfWeek === dow);
-      const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id);
+      const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id, homeroomSlots);
       let seenHome = false;
       const recordable = sessions.filter((s) => {
         if (s.kind === 'subject') return true;
@@ -445,7 +499,7 @@ router.get('/schedule/upcoming', authorizePermission(...ATT_PERMS), async (req: 
   const authReq = req as AuthenticatedRequest;
   const date = schoolDateString();
   const nowMin = schoolMinutesOfDay();
-  const { academicTermId } = await resolveLiveAcademicPeriod(authReq);
+  const { academicYearId, academicTermId } = await resolveLiveAcademicPeriod(authReq);
   const isStudent = authReq.user?.role === 'student';
 
   try {
@@ -453,13 +507,14 @@ router.get('/schedule/upcoming', authorizePermission(...ATT_PERMS), async (req: 
       authReq,
       academicTermId != null ? String(academicTermId) : undefined
     );
+    const homeroomSlots = await resolveHomeroomSlots(authReq, slots, academicYearId);
     const dow = dayOfWeekFor(date);
     const daySlots = slots.filter((s) => s.dayOfWeek === dow);
-    const classIds = [...new Set(daySlots.map((s) => s.classId))];
+    const classIds = [...new Set(slots.map((s) => s.classId))];
     const agg = await loadAttendance(
       classIds, date, date, isStudent ? authReq.user!.id : null, academicTermId
     );
-    const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id);
+    const sessions = buildDaySessions(daySlots, date, agg, authReq.user!.id, homeroomSlots);
 
     // "Live or ahead": lessons that have not finished yet.
     const upcoming = sessions
@@ -477,6 +532,26 @@ router.get('/schedule/upcoming', authorizePermission(...ATT_PERMS), async (req: 
   } catch (error) {
     console.error('Error building schedule/upcoming:', (error as Error).message);
     return res.status(502).json({ success: false, message: 'Could not load upcoming sessions.' });
+  }
+});
+
+// GET /api/attendance/schedule/homeroom-classes — the class groups this user
+// may take a morning register for, i.e. the classes they are the assigned
+// Class Teacher of. Powers the "Record a session" picker so a teacher can
+// only ever offer a homeroom entry for a class that's actually theirs (the
+// subject-session picker stays scoped by curriculum only, unaffected).
+router.get('/schedule/homeroom-classes', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const { academicYearId } = await resolveLiveAcademicPeriod(authReq);
+  const misToken = authReq.user?.misToken;
+  if (!misToken) return res.json({ success: true, data: [] });
+
+  try {
+    const classes = await fetchClassTeacherClasses(misToken, authReq.user!.id, academicYearId);
+    return res.json({ success: true, data: classes });
+  } catch (error) {
+    console.error('Error loading homeroom-classes:', (error as Error).message);
+    return res.status(502).json({ success: false, message: 'Could not load your classes.' });
   }
 });
 
