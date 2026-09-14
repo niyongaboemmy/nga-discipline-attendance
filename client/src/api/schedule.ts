@@ -88,3 +88,10 @@ export interface MonthResponse {
 }
 export const getScheduleMonth = (month?: string) =>
   apiGet<MonthResponse>(`/api/attendance/schedule/month${month ? `?month=${month}` : ''}`).then((r) => r.data!);
+
+export interface HomeroomClass { id: string; name: string }
+
+/** Classes the signed-in user is the assigned Class Teacher of — the only
+ *  classes they may take a morning register for. */
+export const getHomeroomClasses = () =>
+  apiGet<HomeroomClass[]>('/api/attendance/schedule/homeroom-classes').then((r) => r.data ?? []);

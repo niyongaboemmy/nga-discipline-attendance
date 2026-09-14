@@ -25,13 +25,23 @@ const slot = (over: Partial<Record<string, unknown>> = {}) => ({
   location: 'Room 3', ...over,
 });
 
-function mockMis(slots: unknown[]) {
+/** `classTeacherOf` defaults to `['cg-1']` — the class group every `slot()`
+ *  fixture belongs to — so existing tests keep exercising a teacher who *is*
+ *  the assigned Class Teacher without having to say so explicitly. Pass `[]`
+ *  to simulate a teacher with no such assignment. */
+function mockMis(slots: unknown[], classTeacherOf: string[] = ['cg-1']) {
   vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
     const u = String(url);
     if (u.includes('/calendar/my-calendar')) {
       return new Response(JSON.stringify({ data: { slots, upcoming: [], term_id: 1 } }), {
         status: 200, headers: { 'content-type': 'application/json' },
       });
+    }
+    if (u.includes('/grades')) {
+      const rows = classTeacherOf.map((cg) => ({
+        class_group_id: cg, academic_year_id: 1, academic_year_is_current: true,
+      }));
+      return new Response(JSON.stringify({ data: rows }), { status: 200 });
     }
     return new Response(JSON.stringify({ data: [] }), { status: 200 });
   }));
@@ -119,7 +129,9 @@ describe('GET /api/attendance/schedule/day', () => {
     expect(mon14.lessonCount).toBe(1);
     expect(mon14.progress.total).toBe(2); // homeroom + 1 subject
     const tue15 = res.body.data.days.find((d: any) => d.date === '2026-09-15');
-    expect(tue15.progress.total).toBe(0);
+    expect(tue15.lessonCount).toBe(0);
+    // No lesson that day, but the class still owes a morning register.
+    expect(tue15.progress.total).toBe(1);
   });
 
   it('is graceful when the session has no MIS link', async () => {
@@ -130,5 +142,45 @@ describe('GET /api/attendance/schedule/day', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.timetableAvailable).toBe(false);
     expect(res.body.data.sessions).toEqual([]);
+  });
+
+  it('omits the homeroom card for a teacher who is not the class\'s assigned Class Teacher', async () => {
+    mockMis([slot()], []); // teaches Maths in cg-1, but isn't its Class Teacher
+    const res = await request(app)
+      .get('/api/attendance/schedule/day?date=2026-09-14')
+      .set(authHeader(token));
+    expect(res.status).toBe(200);
+    const kinds = res.body.data.sessions.map((s: any) => s.kind);
+    expect(kinds).toEqual(['subject']); // no homeroom entry
+    expect(res.body.data.progress.total).toBe(1);
+  });
+});
+
+describe('GET /api/attendance/schedule/homeroom-classes', () => {
+  let db: Database;
+  let token: string;
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+    token = await misTeacher(db, 'hr-teacher');
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('lists only the classes this teacher is the assigned Class Teacher of', async () => {
+    mockMis([slot()], ['cg-1', 'cg-9']);
+    const res = await request(app)
+      .get('/api/attendance/schedule/homeroom-classes')
+      .set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((c: any) => c.id).sort()).toEqual(['cg-1', 'cg-9']);
+  });
+
+  it('is empty for a teacher with no Class Teacher assignment', async () => {
+    mockMis([slot()], []);
+    const res = await request(app)
+      .get('/api/attendance/schedule/homeroom-classes')
+      .set(authHeader(token));
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
   });
 });
