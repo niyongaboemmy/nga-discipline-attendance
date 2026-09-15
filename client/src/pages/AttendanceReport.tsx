@@ -12,6 +12,7 @@ import {
 } from '../api/attendanceReport';
 import { isoDate } from '../utils/time';
 import { COMMENT_META, COMMENT_BADGE, rateColor } from '../utils/attendanceComment';
+import { ClassAnalytics } from '../components/charts/ClassAnalytics';
 import {
   Printer, Download, Users, TrendingUp, AlertTriangle, Search, ArrowUpDown,
   Sun, BookOpen, LayoutGrid, ChevronRight, GraduationCap, ClipboardList,
@@ -471,6 +472,8 @@ export const AttendanceReport: React.FC = () => {
               <div><span className="text-xs text-secondary">Subject</span><div className="font-medium">{report.subjectName || 'Homeroom'}</div></div>
               <div><span className="text-xs text-secondary">Teacher</span><div className="font-medium">{report.teacherName || '—'}</div></div>
             </div>
+
+            <ClassAnalytics report={report} />
 
             <RateChart students={report.students} />
 
