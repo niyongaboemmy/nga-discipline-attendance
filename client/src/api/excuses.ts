@@ -1,4 +1,5 @@
 import { apiGet, apiPost, apiDelete } from './client';
+import type { CalendarSession } from './schedule';
 
 export type ExcuseStatus = 'pending' | 'approved' | 'rejected';
 export type ExcuseSessionType = 'homeroom' | 'subject';
@@ -101,3 +102,13 @@ export const newExcuseLink = (t: ExcuseTarget) => {
   }
   return `/excuses/new?${qs.toString()}`;
 };
+
+/** Pre-filled "new excuse" link for one calendar session. The register
+ *  endpoint keys a session by its period label, which only the server can
+ *  derive from a start time — so it is lifted from the deep link the server
+ *  already built for the session. */
+export const newExcuseLinkForSession = (s: CalendarSession, date: string) => newExcuseLink({
+  date, classId: s.classId, className: s.className, sessionType: s.kind,
+  period: new URLSearchParams(s.deepLink.split('?')[1] || '').get('period'),
+  subjectId: s.subjectId, subjectName: s.subjectName,
+});
