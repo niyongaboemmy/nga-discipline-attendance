@@ -25,6 +25,7 @@ export type NotificationType =
   | 'register_missing'
   | 'homeroom_missing'
   | 'lesson_soon'
+  | 'attendance_marked'
   | 'excuse_decided'
   | 'low_attendance'
   | 'system';
@@ -179,4 +180,66 @@ export async function notifyExcuseDecision(
     link: '/excuses',
     dedupeKey: `excuse:${opts.excuseId}:${opts.approved ? 'a' : 'd'}`,
   });
+}
+
+/** Statuses a student should be told about. Present is the expected case and
+ *  excused was their own request — neither needs a ping. */
+const NOTIFY_STATUSES = new Set(['absent', 'late']);
+
+const humanDate = (d: string) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+
+/**
+ * Tell a student how *they* were marked for one session — "You were marked
+ * absent for JavaScript". This is the only attendance notification a student
+ * gets about a register; the class-level ones stay with staff.
+ *
+ * Idempotent per session + status, and a correction withdraws the earlier
+ * notice: absent → present deletes the "absent" row rather than leaving a
+ * stale alarm in the bell; absent → late swaps it for a "late" one.
+ */
+export async function notifyStudentMarked(
+  db: Database,
+  opts: {
+    studentId: string;
+    status: string;
+    date: string;
+    period: string;
+    sessionType: 'homeroom' | 'subject';
+    classId: string;
+    className: string;
+    subjectId: number | null;
+    subjectName: string | null;
+  }
+): Promise<void> {
+  const base = `att:${opts.studentId}:${opts.date}:${opts.sessionType}:${opts.classId}:${opts.subjectId ?? '-'}:${opts.period}`;
+  const key = `${base}:${opts.status}`;
+  try {
+    // Drop any notice for this session with a different status (ids can
+    // contain `_`, which LIKE treats as a wildcard — escape it).
+    const likeBase = base.replace(/[\\%_]/g, (c) => `\\${c}`);
+    await db.run(
+      `DELETE FROM notifications WHERE user_id = ? AND dedupe_key LIKE ? ESCAPE '\\' AND dedupe_key <> ?`,
+      opts.studentId, `${likeBase}:%`, key
+    );
+    if (!NOTIFY_STATUSES.has(opts.status)) return;
+
+    const what = opts.sessionType === 'homeroom'
+      ? 'the morning check'
+      : (opts.subjectName ?? 'a lesson');
+    const qs = new URLSearchParams({ date: opts.date, classId: opts.classId, sessionType: opts.sessionType });
+    if (opts.sessionType === 'subject' && opts.subjectId != null) qs.set('subjectId', String(opts.subjectId));
+
+    await pushNotification(db, {
+      userId: opts.studentId,
+      type: 'attendance_marked',
+      severity: opts.status === 'absent' ? 'warning' : 'info',
+      title: opts.status === 'absent' ? 'Marked absent' : 'Marked late',
+      message: `You were marked ${opts.status} for ${what} · ${opts.className}, ${humanDate(opts.date)}.`,
+      link: `/attendance/session?${qs.toString()}`,
+      dedupeKey: key,
+    });
+  } catch (err) {
+    console.error('notifyStudentMarked failed:', (err as Error).message);
+  }
 }
