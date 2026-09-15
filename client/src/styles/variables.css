@@ -55,6 +55,21 @@
   /* Fallback spine colour for a timetable slot with no subject colour set. */
   --subject-fallback: var(--primary);
 
+  /* --- Chart fills (report analytics) ---
+     Deliberately NOT the status tokens above: those are tuned for text/badges
+     and the dark-mode set is too light to work as a large fill (fails the
+     lightness band on a dark surface). These four pass the dataviz palette
+     checks on both the light and the dark card surface, so they are the same
+     in both themes. Segment order present → late → excused → absent keeps
+     every adjacent pair distinguishable; legends carry an icon as well. */
+  --chart-present: #059669;
+  --chart-late: #d97706;
+  --chart-excused: #0284c7;
+  --chart-absent: #dc2626;
+  --chart-line: var(--primary);
+  --chart-line-wash: rgba(37, 99, 235, 0.10);
+  --chart-grid: #eef2f7;
+
   /* --- Surfaces (slate neutral) --- */
   --bg-page: #f3f4f6;          /* gray-100, matches SystemLayout shell bg */
   --bg-page-solid: #f3f4f6;
@@ -169,6 +184,10 @@
   --danger-light: rgba(248, 113, 113, 0.14);
   --info: #38bdf8;
   --info-light: rgba(56, 189, 248, 0.14);
+
+  /* Chart fills stay on their light-mode steps (see above); only the grid moves. */
+  --chart-line-wash: rgba(37, 99, 235, 0.18);
+  --chart-grid: rgba(255, 255, 255, 0.06);
 
   --bg-page: #000000;          /* matches shared apps' shell: dark:bg-black */
   --bg-page-solid: #000000;

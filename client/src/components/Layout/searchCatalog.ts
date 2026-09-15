@@ -17,13 +17,13 @@ export interface SearchItem {
  *  this searches page/feature names, not live record data. */
 export const searchCatalog: SearchItem[] = [
   {
-    label: 'Attendance Calendar', description: 'Month / week / day — open any lesson to take its register', path: '/attendance',
-    roles: ['admin', 'teacher', 'student'],
-    keywords: ['agenda', 'timetable', 'schedule', 'calendar', 'my day', 'week', 'registers', 'take attendance', 'lessons'],
-  },
-  {
     label: 'Dashboard', description: 'Overview and quick stats', path: '/dashboard',
     roles: ['admin', 'teacher', 'student'], keywords: ['home', 'overview', 'summary'],
+  },
+  {
+    label: 'Attendance Calendar', description: 'Month / week / day — open any lesson for its details or register', path: '/attendance',
+    roles: ['admin', 'teacher', 'student'],
+    keywords: ['agenda', 'timetable', 'schedule', 'calendar', 'my day', 'week', 'registers', 'take attendance', 'lessons'],
   },
 
   // Administration
@@ -65,7 +65,7 @@ export const searchCatalog: SearchItem[] = [
 
   // Attendance (student)
   {
-    label: 'Leaves & Excuses', description: 'Request an excuse for an absence', path: '/excuses',
+    label: 'Leaves & Excuses', description: 'Explain an absence and track whether it was approved', path: '/excuses',
     roles: ['student'], keywords: ['excuse request', 'absence request', 'leave form', 'sick note'],
   },
 

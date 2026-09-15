@@ -14,6 +14,8 @@ interface Excuse {
   student_id: string;
   student_name: string;
   class_name: string;
+  session_type?: 'homeroom' | 'subject';
+  subject_name?: string | null;
   session_date: string;
   reason: string;
   description: string;
@@ -172,8 +174,8 @@ export const ExcuseReview: React.FC = () => {
                       <div className="text-xs text-secondary mono">{ex.student_id}</div>
                     </td>
                     <td>
-                      <div>{ex.class_name}</div>
-                      <div className="text-xs text-secondary">{ex.session_date}</div>
+                      <div>{ex.session_type === 'subject' ? (ex.subject_name || 'Lesson') : 'Morning check'}</div>
+                      <div className="text-xs text-secondary">{ex.class_name} · {ex.session_date}</div>
                     </td>
                     <td>
                       <div>{ex.reason}</div>

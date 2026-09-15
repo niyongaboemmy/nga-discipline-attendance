@@ -95,3 +95,24 @@ export interface HomeroomClass { id: string; name: string }
  *  classes they may take a morning register for. */
 export const getHomeroomClasses = () =>
   apiGet<HomeroomClass[]>('/api/attendance/schedule/homeroom-classes').then((r) => r.data ?? []);
+
+/** Route for the read-only session detail page. Carries exactly what the
+ *  page needs to find the session again in that day's schedule payload —
+ *  `start` disambiguates a class that has the same subject twice in a day. */
+export const sessionDetailLink = (s: Pick<CalendarSession, 'kind' | 'classId' | 'subjectId' | 'startTime'>, date: string) => {
+  const qs = new URLSearchParams({ date, classId: s.classId, sessionType: s.kind });
+  if (s.kind === 'subject' && s.subjectId != null) qs.set('subjectId', String(s.subjectId));
+  if (s.startTime) qs.set('start', s.startTime.slice(0, 5));
+  return `/attendance/session?${qs.toString()}`;
+};
+
+/** Find `link`'s session in a loaded day — the inverse of sessionDetailLink. */
+export const findSession = (
+  sessions: CalendarSession[],
+  q: { sessionType: string; classId: string; subjectId: number | null; start: string | null }
+): CalendarSession | undefined => {
+  const matches = sessions.filter(
+    (s) => s.kind === q.sessionType && s.classId === q.classId && (q.sessionType === 'homeroom' || s.subjectId === q.subjectId)
+  );
+  return matches.find((s) => q.start && s.startTime.slice(0, 5) === q.start) ?? matches[0];
+};

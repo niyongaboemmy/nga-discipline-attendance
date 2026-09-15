@@ -21,7 +21,9 @@ import { Reports } from './pages/Reports';
 import { Directory } from './pages/Directory';
 import { Settings } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
-import { LeaveRequests } from './pages/LeaveRequests';
+import { Excuses } from './pages/Excuses';
+import { ExcuseNew } from './pages/ExcuseNew';
+import { ExcuseDetail } from './pages/ExcuseDetail';
 import { LogIncident } from './pages/LogIncident';
 import { DisciplineRecords } from './pages/DisciplineRecords';
 import { DisciplineRules } from './pages/DisciplineRules';
@@ -30,6 +32,7 @@ import { ExcuseReview } from './pages/ExcuseReview';
 import { AuditLog } from './pages/AuditLog';
 import { StudentReport } from './pages/StudentReport';
 import { AttendanceReportGate } from './pages/AttendanceReportGate';
+import { SessionDetail } from './pages/SessionDetail';
 
 export const App: React.FC = () => {
   return (
@@ -114,6 +117,14 @@ export const App: React.FC = () => {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/attendance/session"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+                <SessionDetail />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/today" element={<Navigate to="/attendance?view=day" replace />} />
           <Route path="/schedule" element={<Navigate to="/attendance?view=week" replace />} />
           <Route
@@ -144,7 +155,23 @@ export const App: React.FC = () => {
             path="/excuses"
             element={
               <ProtectedRoute allowedRoles={['student']}>
-                <LeaveRequests />
+                <Excuses />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/excuses/new"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <ExcuseNew />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/excuses/:id"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <ExcuseDetail />
               </ProtectedRoute>
             }
           />

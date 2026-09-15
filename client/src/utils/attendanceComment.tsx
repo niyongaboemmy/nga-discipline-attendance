@@ -13,6 +13,13 @@ export const COMMENT_META: Record<AttendanceCommentTier, { color: string; icon: 
   Poor: { color: 'var(--danger)', icon: <XCircle size={12} /> },
 };
 
+/** Fill colours for chart marks (bars, columns) — the --chart-* tokens, which
+ *  stay legible as large fills on both themes; COMMENT_META's colours are the
+ *  text/badge tokens and are too light for fills in dark mode. */
+export const COMMENT_FILL: Record<AttendanceCommentTier, string> = {
+  Excellent: 'var(--chart-present)', Good: 'var(--chart-excused)', Fair: 'var(--chart-late)', Poor: 'var(--chart-absent)',
+};
+
 export const COMMENT_BADGE: Record<AttendanceCommentTier, string> = {
   Excellent: 'badge-success', Good: 'badge-info', Fair: 'badge-warning', Poor: 'badge-danger',
 };

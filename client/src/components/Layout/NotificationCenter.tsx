@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Bell, CheckCheck, Trash2, PenLine, Sun, Clock3, FileCheck2, TrendingDown, Info,
+  Bell, CheckCheck, Trash2, PenLine, Sun, Clock3, FileCheck2, TrendingDown, Info, UserX,
 } from 'lucide-react';
 import {
   getNotifications, markNotificationRead, markAllNotificationsRead, clearNotifications,
@@ -13,6 +13,7 @@ const ICONS: Record<NotificationType, React.ReactNode> = {
   register_missing: <PenLine size={15} />,
   homeroom_missing: <Sun size={15} />,
   lesson_soon: <Clock3 size={15} />,
+  attendance_marked: <UserX size={15} />,
   excuse_decided: <FileCheck2 size={15} />,
   low_attendance: <TrendingDown size={15} />,
   reminder: <Info size={15} />,
