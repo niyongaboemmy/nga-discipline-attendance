@@ -177,7 +177,7 @@ export async function notifyExcuseDecision(
     severity: opts.approved ? 'success' : 'info',
     title: opts.approved ? 'Excuse approved' : 'Excuse declined',
     message: `Your excuse for ${opts.sessionDate} was ${opts.approved ? 'approved' : 'declined'}.`,
-    link: '/excuses',
+    link: `/excuses/${opts.excuseId}`,
     dedupeKey: `excuse:${opts.excuseId}:${opts.approved ? 'a' : 'd'}`,
   });
 }

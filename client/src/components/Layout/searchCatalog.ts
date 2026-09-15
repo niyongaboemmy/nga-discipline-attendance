@@ -65,7 +65,7 @@ export const searchCatalog: SearchItem[] = [
 
   // Attendance (student)
   {
-    label: 'Leaves & Excuses', description: 'Request an excuse for an absence', path: '/excuses',
+    label: 'Leaves & Excuses', description: 'Explain an absence and track whether it was approved', path: '/excuses',
     roles: ['student'], keywords: ['excuse request', 'absence request', 'leave form', 'sick note'],
   },
 
