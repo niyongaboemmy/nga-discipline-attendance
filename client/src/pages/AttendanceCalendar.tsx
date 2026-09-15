@@ -3,11 +3,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
   Sun, BookOpen, MapPin, Clock, PenLine, RotateCcw, Plus, ArrowRight, CheckCircle2,
-  AlertTriangle, X, User, Eye,
+  AlertTriangle, X, User, Eye, PartyPopper,
 } from 'lucide-react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
 import { StatusChip } from '../components/attendance/StatusChip';
+import { useToast } from '../context/ToastContext';
 import { RegisterDrawer, type DrawerTarget } from '../components/attendance/RegisterDrawer';
 import { ManualSessionModal } from '../components/attendance/ManualSessionModal';
 import { EventHoverCard, type HoverTarget } from '../components/attendance/EventHoverCard';
@@ -385,6 +386,22 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
     .filter((s) => s.status === 'missing')
     .sort((a, b) => toMin(a.startTime) - toMin(b.startTime))[0]
     ?? homeroom.find((s) => s.status === 'missing');
+  const pg = dayProgress(data.sessions);
+
+  // A quick, low-key celebration when a day's registers go from incomplete to
+  // fully recorded during this visit — not on cold-loading an already-done day.
+  const toast = useToast();
+  const seenIncomplete = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (pg.total === 0) return;
+    if (pg.done < pg.total) {
+      seenIncomplete.current.add(data.date);
+    } else if (seenIncomplete.current.has(data.date)) {
+      seenIncomplete.current.delete(data.date);
+      toast.success('All registers done', `Every register for ${dayTitle(data.date).toLowerCase()} is recorded.`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.date, pg.done, pg.total]);
 
   if (!data.timetableAvailable) {
     return (
@@ -440,12 +457,14 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
           <span className="t-start">{clock(s.startTime)}</span>
           {s.endTime && <span className="t-end">{clock(s.endTime)}</span>}
         </div>
-        <div className="agenda-spine" />
+        <div className="agenda-icon">
+          {s.kind === 'homeroom'
+            ? <Sun size={16} />
+            : <BookOpen size={16} />}
+        </div>
         <div className="agenda-body">
           <div className="agenda-title">
-            {s.kind === 'homeroom'
-              ? <><Sun size={15} className="homeroom-icon" /> Morning check · {s.className}</>
-              : <><BookOpen size={15} style={{ color: s.color || 'var(--text-secondary)' }} /> {s.subjectName || 'Lesson'}</>}
+            {s.kind === 'homeroom' ? <>Morning check · {s.className}</> : <>{s.subjectName || 'Lesson'}</>}
           </div>
           <div className="agenda-meta">
             {s.kind === 'subject' && <span>{s.className}</span>}
@@ -471,10 +490,10 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
           {s.status === 'recorded' ? (
             <>
               <StatusChip kind="recorded" />
-              {canMark && <button className="btn btn-outline btn-sm" onClick={() => open(s)}><PenLine size={13} /> Edit</button>}
+              {canMark && <button className="btn btn-outline btn-sm" onClick={(e) => { e.stopPropagation(); open(s); }}><PenLine size={13} /> Edit</button>}
             </>
           ) : canMark ? (
-            <button className="btn btn-primary btn-sm" onClick={() => open(s)}><PenLine size={13} /> Take register</button>
+            <button className="btn btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); open(s); }}><PenLine size={13} /> Take register</button>
           ) : (
             <StatusChip kind={s.ownStatus ?? 'missing'} label={s.ownStatus ? undefined : 'Awaiting'} />
           )}
@@ -486,15 +505,13 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
     );
   };
 
-  const pg = dayProgress(data.sessions);
-
   return (
     <div className="agenda">
       {pg.total > 0 && (
         <div className="agenda-progress">
           <div className="agenda-progress-text">
             {pg.done === pg.total ? (
-              <><CheckCircle2 size={15} style={{ color: 'var(--success)' }} /> All {pg.total} registers done</>
+              <><PartyPopper size={15} style={{ color: 'var(--success)' }} /> All {pg.total} registers done</>
             ) : (
               <><strong>{pg.done}</strong> of {pg.total} registers done</>
             )}
