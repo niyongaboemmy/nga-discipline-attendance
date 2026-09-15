@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, BookOpen, Sun, Clock, MapPin, User, Users, CalendarDays, Hash,
-  CheckCircle2, AlertTriangle, CircleDashed, PenLine, Eye, ExternalLink,
+  CheckCircle2, AlertTriangle, CircleDashed, PenLine, Eye, ExternalLink, FileText,
 } from 'lucide-react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiGet, ApiError } from '../api/client';
 import { getScheduleDay, findSession, type CalendarSession, type AttStatus } from '../api/schedule';
 import { isoDate, clock, fmtWhen } from '../utils/time';
+import { newExcuseLink } from '../api/excuses';
 
 /**
  * One lesson (or morning check), on one day, in full — the "simple page of
@@ -68,6 +69,12 @@ interface RegisterPayload {
  *  server knows how to derive from a start time — so lift it from the deep
  *  link the server already built for this session. */
 const periodFromDeepLink = (link: string) => new URLSearchParams(link.split('?')[1] || '').get('period') || 'Morning';
+
+/** Pre-filled "new excuse" link for this exact session. */
+const excuseLinkFor = (s: CalendarSession, date: string) => newExcuseLink({
+  date, classId: s.classId, className: s.className, sessionType: s.kind,
+  period: periodFromDeepLink(s.deepLink), subjectId: s.subjectId, subjectName: s.subjectName,
+});
 
 export const SessionDetail: React.FC = () => {
   const navigate = useNavigate();
@@ -219,6 +226,11 @@ export const SessionDetail: React.FC = () => {
                 <StatusChip kind={session.ownStatus} className="sd-own-chip" />
               ) : (
                 <span className="sd-own-pending"><CircleDashed size={14} /> Not yet recorded for this lesson.</span>
+              )}
+              {session.ownStatus === 'absent' && (
+                <Link to={excuseLinkFor(session, query.date)} className="btn btn-outline btn-sm mt-2" style={{ alignSelf: 'flex-start' }}>
+                  <FileText size={14} /> Submit an excuse for this absence
+                </Link>
               )}
             </section>
           )}

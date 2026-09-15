@@ -21,7 +21,9 @@ import { Reports } from './pages/Reports';
 import { Directory } from './pages/Directory';
 import { Settings } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
-import { LeaveRequests } from './pages/LeaveRequests';
+import { Excuses } from './pages/Excuses';
+import { ExcuseNew } from './pages/ExcuseNew';
+import { ExcuseDetail } from './pages/ExcuseDetail';
 import { LogIncident } from './pages/LogIncident';
 import { DisciplineRecords } from './pages/DisciplineRecords';
 import { DisciplineRules } from './pages/DisciplineRules';
@@ -153,7 +155,23 @@ export const App: React.FC = () => {
             path="/excuses"
             element={
               <ProtectedRoute allowedRoles={['student']}>
-                <LeaveRequests />
+                <Excuses />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/excuses/new"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <ExcuseNew />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/excuses/:id"
+            element={
+              <ProtectedRoute allowedRoles={['student']}>
+                <ExcuseDetail />
               </ProtectedRoute>
             }
           />

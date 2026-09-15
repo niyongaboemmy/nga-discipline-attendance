@@ -634,6 +634,14 @@ async function migrateExcuseRequestLinkage(db: Database) {
   if (!has('reviewed_by')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN reviewed_by TEXT`);
   if (!has('reviewed_by_name')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN reviewed_by_name TEXT`);
   if (!has('supersedes_id')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN supersedes_id INTEGER`);
+  // An excuse can cover one subject lesson, not only the morning register —
+  // "I missed JavaScript on Monday". Existing rows default to homeroom, which
+  // is what they always were.
+  if (!has('session_type')) {
+    await db.run(`ALTER TABLE excuse_requests ADD COLUMN session_type TEXT NOT NULL DEFAULT 'homeroom' CHECK(session_type IN ('homeroom','subject'))`);
+  }
+  if (!has('subject_id')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN subject_id INTEGER`);
+  if (!has('subject_name')) await db.run(`ALTER TABLE excuse_requests ADD COLUMN subject_name TEXT`);
   await db.run(`CREATE INDEX IF NOT EXISTS idx_excuse_student_date ON excuse_requests(student_id, session_date)`);
 }
 
