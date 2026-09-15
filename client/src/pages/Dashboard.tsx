@@ -226,7 +226,7 @@ const StudentDashboard: React.FC<{ overview: OwnSubjectSummary[]; recent: Recent
               {overview.map((r) => {
                 const key = r.kind === 'homeroom' ? 'homeroom' : String(r.subjectId);
                 return (
-                  <Link key={key} to="/attendance/report" className={`ar-listitem${!r.hasData ? ' is-empty' : ''}`}>
+                  <Link key={key} to={`/attendance/report?section=${key}`} className={`ar-listitem${!r.hasData ? ' is-empty' : ''}`}>
                     <span className="ar-listitem-icon">{r.kind === 'homeroom' ? <Sun size={16} /> : <BookOpen size={16} />}</span>
                     <span className="ar-listitem-main">
                       <span className="ar-listitem-name">{sectionName(r)}</span>

@@ -11,7 +11,6 @@ export interface Column {
   hint?: string;
 }
 
-const PLOT_H = 120;
 
 /**
  * A few columns (≤ 6) with the value on each cap — for "how many fall in
@@ -19,7 +18,7 @@ const PLOT_H = 120;
  * and square at the baseline. The columns here are status-coloured tiers,
  * each labelled with its icon and name, so hue is never the only signal.
  */
-export const ColumnChart: React.FC<{ title: string; columns: Column[]; unit?: string }> = ({ title, columns, unit = 'students' }) => {
+export const ColumnChart: React.FC<{ title: string; columns: Column[]; unit?: string; plotHeight?: number }> = ({ title, columns, unit = 'students', plotHeight: PLOT_H = 120 }) => {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [tip, setTip] = useState<TooltipState | null>(null);
   const max = Math.max(1, ...columns.map((c) => c.value));
