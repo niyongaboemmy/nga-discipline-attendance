@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
   Sun, BookOpen, MapPin, Clock, PenLine, RotateCcw, Plus, ArrowRight, CheckCircle2,
-  AlertTriangle, X, User,
+  AlertTriangle, X, User, Eye,
 } from 'lucide-react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
@@ -13,7 +13,7 @@ import { ManualSessionModal } from '../components/attendance/ManualSessionModal'
 import { EventHoverCard, type HoverTarget } from '../components/attendance/EventHoverCard';
 import { usePermissions } from '../hooks/usePermissions';
 import {
-  getScheduleMonth, getScheduleWeek, getScheduleDay,
+  getScheduleMonth, getScheduleWeek, getScheduleDay, sessionDetailLink,
   type MonthResponse, type WeekResponse, type DayResponse, type CalendarSession,
 } from '../api/schedule';
 import { ApiError } from '../api/client';
@@ -320,7 +320,7 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
                           width: `calc(${100 / lanes}% - 4px)`,
                           ...(s.color ? { ['--spine' as string]: s.color } : {}),
                         }}
-                        onClick={() => (canMark ? onOpen(buildTarget(d.sessions, s, d.date)) : navigate(s.deepLink))}
+                        onClick={() => navigate(sessionDetailLink(s, d.date))}
                         onMouseEnter={(e) => scheduleShow(s, d.date, e.currentTarget.getBoundingClientRect())}
                         onMouseLeave={scheduleHide}
                         onFocus={(e) => scheduleShow(s, d.date, e.currentTarget.getBoundingClientRect())}
@@ -360,7 +360,7 @@ const WeekView: React.FC<{ data: WeekResponse; onOpen: (t: DrawerTarget) => void
           isNow={hover.date === today && nowMin() >= toMin(hover.session.startTime) && nowMin() < toMin(hover.session.endTime || hover.session.startTime)}
           canMark={canMark}
           onOpen={() => { setHover(null); onOpen(buildTarget(sessionsForHoverDate(hover.date), hover.session, hover.date)); }}
-          onNavigate={() => { setHover(null); navigate(hover.session.deepLink); }}
+          onNavigate={() => { setHover(null); navigate(sessionDetailLink(hover.session, hover.date)); }}
           onMouseEnter={cancelHide}
           onMouseLeave={scheduleHide}
         />
@@ -412,11 +412,21 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
     const isPastMissing = isOverdue(s, data.date, isoDate());
     const isDim = focusSubject != null && s.kind === 'subject' && s.subjectId !== focusSubject;
     const isFocus = focusSubject != null && s.kind === 'subject' && s.subjectId === focusSubject;
-    const cls = ['agenda-card', isNow && 'is-now', isFuture && 'is-future', isPastMissing && 'is-past-missing', isDim && 'is-dimmed', isFocus && 'is-focused', s.isMine && 'is-mine']
+    const cls = ['agenda-card', 'is-clickable', isNow && 'is-now', isFuture && 'is-future', isPastMissing && 'is-past-missing', isDim && 'is-dimmed', isFocus && 'is-focused', s.isMine && 'is-mine']
       .filter(Boolean).join(' ');
     const badgeCls = s.status === 'recorded' ? 'is-recorded' : isPastMissing ? 'is-missing-past' : isNow ? 'is-now' : 'is-future';
+    const detail = sessionDetailLink(s, data.date);
+    const stop = (e: React.MouseEvent) => e.stopPropagation();
     return (
-      <div className={cls} style={s.color ? ({ ['--spine' as string]: s.color }) : undefined}>
+      <div
+        className={cls}
+        style={s.color ? ({ ['--spine' as string]: s.color }) : undefined}
+        role="link"
+        tabIndex={0}
+        aria-label={`${s.kind === 'homeroom' ? 'Morning check' : s.subjectName || 'Lesson'} · ${s.className} — view details`}
+        onClick={() => navigate(detail)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(detail); } }}
+      >
         <span className={`agenda-badge ${badgeCls}`}>
           {s.status === 'recorded'
             ? <CheckCircle2 size={11} />
@@ -457,7 +467,7 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
             </div>
           )}
         </div>
-        <div className="agenda-action">
+        <div className="agenda-action" onClick={stop}>
           {s.status === 'recorded' ? (
             <>
               <StatusChip kind="recorded" />
@@ -468,6 +478,9 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
           ) : (
             <StatusChip kind={s.ownStatus ?? 'missing'} label={s.ownStatus ? undefined : 'Awaiting'} />
           )}
+          <button className="btn btn-ghost btn-sm" onClick={() => navigate(detail)} aria-label="View details">
+            <Eye size={13} /> <span className="hide-mobile">Details</span>
+          </button>
         </div>
       </div>
     );
@@ -614,8 +627,8 @@ export const AttendanceCalendar: React.FC = () => {
           <h1 className="page-title">Attendance</h1>
           <p className="page-subtitle">
             {canMark
-              ? 'Your calendar is the register. Open any lesson to take attendance.'
-              : 'Your lessons and their attendance status.'}
+              ? 'Your calendar is the register. Click any lesson for its details, or take attendance straight from it.'
+              : 'Your lessons and their attendance status. Click any lesson for its details.'}
           </p>
         </div>
       </div>

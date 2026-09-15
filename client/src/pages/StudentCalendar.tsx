@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
   CheckCircle2, XCircle, Clock, ShieldCheck, CircleDashed, MapPin, BookOpen, Sun,
@@ -7,7 +8,7 @@ import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
 import { StudentSessionHoverCard, type StudentHoverTarget } from '../components/attendance/StudentSessionHoverCard';
 import {
-  getScheduleMonth, getScheduleWeek, getScheduleDay,
+  getScheduleMonth, getScheduleWeek, getScheduleDay, sessionDetailLink,
   type MonthResponse, type WeekResponse, type DayResponse, type CalendarSession, type AttStatus,
 } from '../api/schedule';
 import { ApiError } from '../api/client';
@@ -18,7 +19,14 @@ import { isoDate, clock, DOW_LABEL } from '../utils/time';
  * AttendanceCalendar — there is nothing to record here, so no drawer, no
  * "overdue" alarm styling, no click-to-mark. Just: was I here, or not, for
  * each lesson — a tick, a cross, a clock, a shield, or a quiet "not yet".
+ * Every session is a link to its detail page (/attendance/session) for the
+ * full picture — room, teacher, and their own mark, without truncation.
  */
+
+/** Keyboard activation for the div-as-link session rows. */
+const onActivate = (go: () => void) => (e: React.KeyboardEvent) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+};
 
 type View = 'month' | 'week' | 'day';
 
@@ -92,6 +100,7 @@ const MonthView: React.FC<{ data: MonthResponse; cursor: string; onPickDay: (d: 
 /* Week                                                                      */
 /* -------------------------------------------------------------------------- */
 const WeekView: React.FC<{ data: WeekResponse }> = ({ data }) => {
+  const navigate = useNavigate();
   const today = isoDate();
   // School week: Monday–Friday only. A weekend column with "No lessons" adds
   // width and noise for no reason — a real Saturday/Sunday lesson is rare
@@ -160,9 +169,13 @@ const WeekView: React.FC<{ data: WeekResponse }> = ({ data }) => {
                   // wrap a separate child component.
                   <div
                     key={i}
-                    className="sc-session is-compact"
+                    className="sc-session is-compact is-clickable"
                     style={s.color ? ({ ['--spine' as string]: s.color }) : undefined}
+                    role="link"
                     tabIndex={0}
+                    aria-label={`${s.kind === 'homeroom' ? 'Morning check' : s.subjectName} — view details`}
+                    onClick={() => navigate(sessionDetailLink(s, d.date))}
+                    onKeyDown={onActivate(() => navigate(sessionDetailLink(s, d.date)))}
                     onMouseEnter={(e) => scheduleShow(s, d.date, e.currentTarget.getBoundingClientRect())}
                     onMouseLeave={scheduleHide}
                     onFocus={(e) => scheduleShow(s, d.date, e.currentTarget.getBoundingClientRect())}
@@ -206,10 +219,18 @@ const WeekView: React.FC<{ data: WeekResponse }> = ({ data }) => {
 /* -------------------------------------------------------------------------- */
 /* Shared session row (used by week + day)                                  */
 /* -------------------------------------------------------------------------- */
-const SessionRow: React.FC<{ s: CalendarSession; compact?: boolean }> = ({ s, compact }) => (
+const SessionRow: React.FC<{ s: CalendarSession; date: string; compact?: boolean }> = ({ s, date, compact }) => {
+  const navigate = useNavigate();
+  const go = () => navigate(sessionDetailLink(s, date));
+  return (
   <div
-    className={`sc-session${compact ? ' is-compact' : ''}`}
+    className={`sc-session is-clickable${compact ? ' is-compact' : ''}`}
     style={s.color ? ({ ['--spine' as string]: s.color }) : undefined}
+    role="link"
+    tabIndex={0}
+    aria-label={`${s.kind === 'homeroom' ? 'Morning check' : s.subjectName} — view details`}
+    onClick={go}
+    onKeyDown={onActivate(go)}
   >
     <div className="sc-session-body">
       <div className="sc-session-title">
@@ -225,7 +246,8 @@ const SessionRow: React.FC<{ s: CalendarSession; compact?: boolean }> = ({ s, co
     </div>
     <StatusBadge status={s.ownStatus} />
   </div>
-);
+  );
+};
 
 /* -------------------------------------------------------------------------- */
 /* Day (agenda)                                                              */
@@ -245,11 +267,11 @@ const DayView: React.FC<{ data: DayResponse }> = ({ data }) => {
     <div className="sc-day">
       {homeroom.length > 0 && <>
         <div className="sc-group-label">Morning check</div>
-        {homeroom.map((s, i) => <SessionRow key={`hr-${i}`} s={s} />)}
+        {homeroom.map((s, i) => <SessionRow key={`hr-${i}`} s={s} date={data.date} />)}
       </>}
       {lessons.length > 0 && <>
         <div className="sc-group-label">Lessons</div>
-        {lessons.map((s, i) => <SessionRow key={`sl-${i}`} s={s} />)}
+        {lessons.map((s, i) => <SessionRow key={`sl-${i}`} s={s} date={data.date} />)}
       </>}
     </div>
   );
@@ -304,7 +326,7 @@ export const StudentCalendar: React.FC = () => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Attendance Calendar</h1>
-          <p className="page-subtitle">Your lessons and whether you were marked present.</p>
+          <p className="page-subtitle">Your lessons and whether you were marked present. Click any lesson for its details.</p>
         </div>
       </div>
 

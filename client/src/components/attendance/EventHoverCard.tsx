@@ -25,7 +25,9 @@ export const EventHoverCard: React.FC<{
   overdue: boolean;
   isNow: boolean;
   canMark: boolean;
+  /** Open the register drawer (markers only). */
   onOpen: () => void;
+  /** Go to the session detail page. */
   onNavigate: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -108,15 +110,14 @@ export const EventHoverCard: React.FC<{
       )}
 
       <div className="ehc-actions">
-        {canMark ? (
+        {canMark && (
           <button className="ehc-btn is-primary" onClick={onOpen}>
             <PenLine size={13} /> {s.status === 'recorded' ? 'Update attendance' : 'Record attendance'}
           </button>
-        ) : (
-          <button className="ehc-btn" onClick={onNavigate}>
-            <Eye size={13} /> View register <ArrowRight size={12} />
-          </button>
         )}
+        <button className="ehc-btn" onClick={onNavigate}>
+          <Eye size={13} /> View details <ArrowRight size={12} />
+        </button>
       </div>
     </div>,
     document.body
