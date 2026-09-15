@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import type { ClassSectionReport } from '../../api/attendanceReport';
-import { COMMENT_META } from '../../utils/attendanceComment';
+import { COMMENT_META, COMMENT_FILL } from '../../utils/attendanceComment';
 import { dailyClassRates, sumCounts, tierCounts } from '../../utils/attendanceAnalytics';
 import { STATUS_SERIES } from './statusSeries';
 import { TrendLine, type TrendPoint } from './TrendLine';
@@ -11,8 +11,6 @@ const fmtShort = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(und
 const fmtLong = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
 const TIER_BANDS = { Excellent: '95% and above', Good: '85 – 94%', Fair: '75 – 84%', Poor: 'below 75%' } as const;
-// Fill colours, not the badge/text tokens COMMENT_META carries — see variables.css.
-const TIER_COLOR = { Excellent: 'var(--chart-present)', Good: 'var(--chart-excused)', Fair: 'var(--chart-late)', Poor: 'var(--chart-absent)' } as const;
 
 /**
  * The three analytics a class register needs and no more:
@@ -54,7 +52,7 @@ export const ClassAnalytics: React.FC<{ report: ClassSectionReport }> = ({ repor
         <ColumnChart
           title="Students by attendance band"
           columns={(Object.keys(tiers) as Array<keyof typeof tiers>).map((k) => ({
-            label: k, value: tiers[k], color: TIER_COLOR[k], icon: COMMENT_META[k].icon, hint: TIER_BANDS[k],
+            label: k, value: tiers[k], color: COMMENT_FILL[k], icon: COMMENT_META[k].icon, hint: TIER_BANDS[k],
           }))}
         />
       </div>

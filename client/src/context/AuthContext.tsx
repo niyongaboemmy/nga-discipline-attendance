@@ -12,14 +12,12 @@ export interface User {
   academicTermId?: number;
 }
 
-/** Where each role lands by default. Single source of truth for role routing.
- *  Every assigned role shares one "you're in" welcome screen right after
- *  login (inside the full layout, sidebar included) rather than jumping
- *  straight into a role-specific console — that shared landing is what
- *  makes ProtectedRoute's post-login redirect and the "/" auth-guard below
- *  behave consistently across admin/teacher/student. */
+/** Where each role lands by default. Single source of truth for role routing:
+ *  ProtectedRoute's post-login redirect, the "/" auth-guard and the 404 page
+ *  all send an assigned user to the dashboard (which carries today's
+ *  calendar); only the unassigned wait on /pending. */
 export const homeRouteForRole = (role: Role): string =>
-  role === 'unassigned' ? '/pending' : '/attendance';
+  role === 'unassigned' ? '/pending' : '/dashboard';
 
 interface AuthContextType {
   isAuthenticated: boolean;

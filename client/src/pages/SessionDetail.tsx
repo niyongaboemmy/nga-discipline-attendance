@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiGet, ApiError } from '../api/client';
 import { getScheduleDay, findSession, type CalendarSession, type AttStatus } from '../api/schedule';
 import { isoDate, clock, fmtWhen } from '../utils/time';
-import { newExcuseLink, getMyAbsences, type Absence } from '../api/excuses';
+import { newExcuseLinkForSession, getMyAbsences, type Absence } from '../api/excuses';
 import { ExcuseStatusBadge } from '../components/excuses/ExcuseStatusBadge';
 
 /**
@@ -71,11 +71,6 @@ interface RegisterPayload {
  *  link the server already built for this session. */
 const periodFromDeepLink = (link: string) => new URLSearchParams(link.split('?')[1] || '').get('period') || 'Morning';
 
-/** Pre-filled "new excuse" link for this exact session. */
-const excuseLinkFor = (s: CalendarSession, date: string) => newExcuseLink({
-  date, classId: s.classId, className: s.className, sessionType: s.kind,
-  period: periodFromDeepLink(s.deepLink), subjectId: s.subjectId, subjectName: s.subjectName,
-});
 
 export const SessionDetail: React.FC = () => {
   const navigate = useNavigate();
@@ -191,7 +186,7 @@ export const SessionDetail: React.FC = () => {
                 <FileText size={16} /> Your excuse <ExcuseStatusBadge status={absence.excuse.status} />
               </Link>
             ) : (
-              <Link to={excuseLinkFor(session, query.date)} className="btn btn-primary">
+              <Link to={newExcuseLinkForSession(session, query.date)} className="btn btn-primary">
                 <FileText size={16} /> Submit an excuse
               </Link>
             )
@@ -266,7 +261,7 @@ export const SessionDetail: React.FC = () => {
                 ) : (
                   <div className="sd-own-excuse">
                     <span className="text-sm text-secondary">Were you away for a reason? Explain it and a teacher will review it.</span>
-                    <Link to={excuseLinkFor(session, query.date)} className="btn btn-outline btn-sm" style={{ alignSelf: 'flex-start' }}>
+                    <Link to={newExcuseLinkForSession(session, query.date)} className="btn btn-outline btn-sm" style={{ alignSelf: 'flex-start' }}>
                       <FileText size={14} /> Submit an excuse for this absence
                     </Link>
                   </div>

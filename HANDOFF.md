@@ -1,31 +1,32 @@
 # HANDOFF
 
 ## Current Task
-Analytics charts on the Attendance Report (staff + student).
+Sidebar double-highlight, Attendance Report restyle, dashboard "Today" agenda, /dashboard as home.
 
 ## Status
-Solved — uncommitted in the working tree on `main`. Client typecheck + `vite build` clean;
-charts rendered and screenshotted via a throwaway harness (headless Edge) in light, dark and
-narrow widths. Not clicked through against live data (no local SSO env).
+Solved — uncommitted in the working tree on `main`. Client typecheck + `vite build` clean. Rendered via a
+throwaway full-app harness (mocked API, headless Edge): report landing + loaded report, staff dashboard
+(light), student dashboard (dark). Not exercised against live data.
 
 ## Progress
-- [x] `components/charts/`: TrendLine (SVG, crosshair + keyboard), StackedBar (100% stacks, per-segment
-      tooltip), ColumnChart, shared tooltip/legend/table-twin, `statusSeries.tsx`, `useWidth.ts`.
-- [x] `utils/attendanceAnalytics.ts`: daily class rates, running rate, totals, tier counts — all client-side
-      from the existing report payload (no new endpoints).
-- [x] Staff report: `ClassAnalytics` panel (daily rate trend · mark mix · students by band) above the
-      per-student ranking, inside the print area.
-- [x] Student report: overview's comparison bars → status mix by subject; section detail gets the running-rate
-      trend + a legend-bearing mix bar (replacing the unlabeled colour strip).
-- [x] `--chart-*` fill tokens in variables.css, validated with the dataviz palette script on both surfaces.
+- [x] Sidebar: one active item — longest matching nav path wins (`activePathFor` in Sidebar.tsx).
+- [x] `homeRouteForRole` → `/dashboard` (login, "/" guard, 404, ProtectedRoute all follow it).
+- [x] Attendance Report (staff): single toolbar (mode · date presets 2w/30d/term · class + register chips),
+      landing card with class tiles, 4 stat tiles, "students who need attention" (bottom 8, expandable),
+      URL-driven state (`?mode&classId&section&subjectId&from&to`) so reports are linkable.
+- [x] `components/dashboard/TodayAgenda.tsx` + `styles/todayAgenda.css`: today's timetable on both
+      dashboards — done/now/overdue/upcoming, Take register / Edit for staff, own mark + Excuse for students,
+      rows open the session detail page. Replaces the old TodayStrip.
+- [x] `COMMENT_FILL` (chart tokens) for tier bars; `newExcuseLinkForSession` shared in api/excuses.ts.
 - [ ] Commit/push when asked.
 
 ## Working Notes
-- Chart fills deliberately don't follow the dark-mode status tokens (too light for fills); same four hexes
-  in both themes, segment order present → late → excused → absent, icons + 2px gaps as secondary encoding.
-- Trend charts need ≥ 2 recorded days; otherwise a one-line note is shown in their slot.
+- Harness recipe (deleted, easy to recreate): `.harness/mock.ts` overriding window.fetch by URL regex +
+  seeding localStorage session, `.harness/page.tsx` mounting `<App />` after `history.replaceState(go)`,
+  screenshot with `msedge --headless=new --screenshot`. Headless Edge clamps viewport width to ~496px.
 
 ## Recently Completed
+- 2026-09-15: Sidebar single-highlight; report restyle + linkable URLs; dashboard Today agenda; /dashboard home.
 - 2026-09-15: Report analytics charts (trend, mark mix, bands) for staff and student reports.
 - 2026-09-15: Excuses rebuilt as overview/new/detail pages; subject-lesson excuses; withdraw + appeal.
 - 2026-09-15: Student-scoped notifications + personal absent/late notices.

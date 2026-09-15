@@ -4,10 +4,9 @@ import { useAuth } from '../context/AuthContext';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { HeroBanner } from '../components/common/HeroBanner';
-import { getScheduleDay, type DayResponse } from '../api/schedule';
 import { attendanceReportApi, type OwnSubjectSummary } from '../api/attendanceReport';
 import { rateColor } from '../utils/attendanceComment';
-import { CalendarClock, ArrowRight } from 'lucide-react';
+import { TodayAgenda } from '../components/dashboard/TodayAgenda';
 import {
   Users, UserCheck, UserX, TrendingUp, TrendingDown, FileText, AlertCircle, Inbox,
   Gavel, Award, BookOpen, Activity, ChevronRight, Sun,
@@ -80,35 +79,6 @@ const Feed: React.FC<{ items: OverviewData['recentActivity'] }> = ({ items }) =>
   );
 };
 
-/** Calendar-first entry point on the dashboard: today's register progress,
- *  one click into the agenda. Self-fetching so a MIS/calendar hiccup can't
- *  break the rest of the dashboard. */
-const TodayStrip: React.FC = () => {
-  const [day, setDay] = useState<DayResponse | null>(null);
-  useEffect(() => { getScheduleDay().then(setDay).catch(() => setDay(null)); }, []);
-  if (!day || !day.timetableAvailable || day.progress.total === 0) return null;
-  const { done, total } = day.progress;
-  const pct = Math.round((done / total) * 100);
-  const allDone = done === total;
-  return (
-    <Link to="/attendance?view=day" className="card card-body mb-6 flex items-center gap-4" style={{ textDecoration: 'none' }}>
-      <span className="section-icon"><CalendarClock size={18} /></span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="flex items-center gap-2">
-          <span className="section-title">Today’s registers</span>
-          <span className="count-badge">{done}/{total}</span>
-        </div>
-        <div className="progress mt-2" style={{ maxWidth: 320 }}>
-          <div className={`progress-fill ${allDone ? 'is-success' : pct >= 50 ? 'is-warning' : 'is-danger'}`} style={{ width: `${pct}%` }} />
-        </div>
-      </div>
-      <span className="btn btn-primary btn-sm">
-        {allDone ? 'All done' : 'Open agenda'} <ArrowRight size={14} />
-      </span>
-    </Link>
-  );
-};
-
 // ---- Teacher / Admin ----
 const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | null }> = ({ stats, conduct }) => {
   const presentShare = stats.today.total ? Math.round((stats.today.present / stats.today.total) * 100) : 0;
@@ -117,7 +87,7 @@ const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | n
 
   return (
     <>
-      <TodayStrip />
+      <TodayAgenda />
       <div className="grid grid-stats mb-6">
         <StatCard label="Total Students" value={stats.totalStudentsTracked} accent="var(--primary)" icon={<Users size={18} />} tag="Term" sub="Tracked this term" />
         <StatCard label="Present Today" value={stats.today.present} accent="var(--success)" icon={<UserCheck size={18} />} tag="Today" trend={{ dir: 'up', text: `${presentShare}% of total` }} />
@@ -227,6 +197,7 @@ const StudentDashboard: React.FC<{ overview: OwnSubjectSummary[]; recent: Recent
 
   return (
     <>
+      <TodayAgenda />
       <div className="grid grid-stats mb-6">
         <StatCard label="Present" value={present} accent="var(--success)" icon={<UserCheck size={18} />} tag="Sessions" sub={total ? `${Math.round((present / total) * 100)}% of total` : 'No sessions yet'} />
         <StatCard label="Late" value={late} accent="var(--warning)" icon={<AlertCircle size={18} />} tag="Sessions" />

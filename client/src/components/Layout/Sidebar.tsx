@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { navItems, type NavItem } from './navConfig';
@@ -25,8 +25,23 @@ function buildGroups(role: NavItem['roles'][number]): NavGroup[] {
   return groups;
 }
 
-const SidebarLink: React.FC<{ item: NavItem; collapsed: boolean; onNavigate?: () => void }> = ({
-  item, collapsed, onNavigate,
+/** The one nav item the current URL belongs to: the longest item path that
+ *  is the URL or a parent of it. NavLink's own prefix matching would light
+ *  up both "Attendance Calendar" (/attendance) and "Attendance Report"
+ *  (/attendance/report) at once; picking the longest match keeps exactly one
+ *  active, while /attendance/session or /excuses/new still highlight their
+ *  section's entry. */
+function activePathFor(pathname: string, items: NavItem[]): string | null {
+  let best: string | null = null;
+  for (const it of items) {
+    const hit = pathname === it.path || pathname.startsWith(`${it.path}/`);
+    if (hit && (best == null || it.path.length > best.length)) best = it.path;
+  }
+  return best;
+}
+
+const SidebarLink: React.FC<{ item: NavItem; collapsed: boolean; active: boolean; onNavigate?: () => void }> = ({
+  item, collapsed, active, onNavigate,
 }) => {
   const Icon = item.icon;
   return (
@@ -34,7 +49,8 @@ const SidebarLink: React.FC<{ item: NavItem; collapsed: boolean; onNavigate?: ()
       to={item.path}
       onClick={onNavigate}
       title={collapsed ? item.label : undefined}
-      className={({ isActive }) => `sidebar-item${isActive ? ' is-active' : ''}`}
+      className={`sidebar-item${active ? ' is-active' : ''}`}
+      aria-current={active ? 'page' : undefined}
     >
       <Icon size={collapsed ? 20 : 18} className="sidebar-item-icon" />
       {!collapsed && <span>{item.label}</span>}
@@ -44,24 +60,28 @@ const SidebarLink: React.FC<{ item: NavItem; collapsed: boolean; onNavigate?: ()
 
 const SidebarNav: React.FC<{ collapsed: boolean; role: NavItem['roles'][number]; onNavigate?: () => void }> = ({
   collapsed, role, onNavigate,
-}) => (
-  <nav className="sidebar-nav" aria-label="Primary">
-    {buildGroups(role).map((g, i) =>
-      'standalone' in g ? (
-        <SidebarLink key={g.standalone.path} item={g.standalone} collapsed={collapsed} onNavigate={onNavigate} />
-      ) : (
-        <div key={`${g.section}-${i}`}>
-          {!collapsed && <div className="sidebar-group-label">{g.section}</div>}
-          <div className="sidebar-group-items">
-            {g.items.map((item) => (
-              <SidebarLink key={item.path} item={item} collapsed={collapsed} onNavigate={onNavigate} />
-            ))}
+}) => {
+  const { pathname } = useLocation();
+  const active = activePathFor(pathname, navItems.filter((i) => i.roles.includes(role)));
+  return (
+    <nav className="sidebar-nav" aria-label="Primary">
+      {buildGroups(role).map((g, i) =>
+        'standalone' in g ? (
+          <SidebarLink key={g.standalone.path} item={g.standalone} collapsed={collapsed} active={g.standalone.path === active} onNavigate={onNavigate} />
+        ) : (
+          <div key={`${g.section}-${i}`}>
+            {!collapsed && <div className="sidebar-group-label">{g.section}</div>}
+            <div className="sidebar-group-items">
+              {g.items.map((item) => (
+                <SidebarLink key={item.path} item={item} collapsed={collapsed} active={item.path === active} onNavigate={onNavigate} />
+              ))}
+            </div>
           </div>
-        </div>
-      )
-    )}
-  </nav>
-);
+        )
+      )}
+    </nav>
+  );
+};
 
 interface SidebarProps {
   mobileOpen: boolean;

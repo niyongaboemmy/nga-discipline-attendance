@@ -8,6 +8,7 @@
 @import './styles/studentCalendar.css';
 @import './styles/excuses.css';
 @import './styles/charts.css';
+@import './styles/todayAgenda.css';
 
 /* ==========================================================================
    Global typography — Inter (UI) + JetBrains Mono (code)
