@@ -197,13 +197,14 @@ const StudentDashboard: React.FC<{ overview: OwnSubjectSummary[]; recent: Recent
 
   return (
     <>
-      <TodayAgenda />
       <div className="grid grid-stats mb-6">
         <StatCard label="Present" value={present} accent="var(--success)" icon={<UserCheck size={18} />} tag="Sessions" sub={total ? `${Math.round((present / total) * 100)}% of total` : 'No sessions yet'} />
         <StatCard label="Late" value={late} accent="var(--warning)" icon={<AlertCircle size={18} />} tag="Sessions" />
         <StatCard label="Excused" value={excused} accent="var(--info)" icon={<FileText size={18} />} tag="Sessions" />
         <StatCard label="Absent" value={absent} accent="var(--danger)" icon={<UserX size={18} />} tag="Sessions" sub={absent > 0 && total ? `${Math.round((absent / total) * 100)}% of total` : undefined} />
       </div>
+
+      <TodayAgenda />
 
       <div className="grid grid-main">
         <section className="card">
