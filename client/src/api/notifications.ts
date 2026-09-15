@@ -4,6 +4,7 @@ export type NotificationType =
   | 'register_missing'
   | 'homeroom_missing'
   | 'lesson_soon'
+  | 'attendance_marked'
   | 'excuse_decided'
   | 'low_attendance'
   | 'reminder'

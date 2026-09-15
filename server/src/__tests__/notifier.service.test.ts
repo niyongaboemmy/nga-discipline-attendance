@@ -96,3 +96,83 @@ describe('excuse decision notification', () => {
     expect(decided[0].title).toBe('Excuse approved');
   });
 });
+
+/** The per-student notice is written after the response, in the background. */
+async function eventually<T>(fn: () => Promise<T>, ok: (v: T) => boolean, tries = 40): Promise<T> {
+  let last!: T;
+  for (let i = 0; i < tries; i++) {
+    last = await fn();
+    if (ok(last)) return last;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return last;
+}
+
+describe('student-facing attendance notifications', () => {
+  let db: Database;
+  let teacherToken: string;
+  let studentToken: string;
+  let classmateToken: string;
+
+  const session = {
+    classId: 'cg_9', className: 'Grade 9A', date: '2026-09-14', period: 'Morning', sessionType: 'subject' as const, subjectId: 9,
+  };
+  const mark = (records: { studentId: string; studentName: string; status: string }[]) =>
+    request(app).post('/api/attendance/mark').set(authHeader(teacherToken)).send({ ...session, records });
+  const bellFor = (token: string) => request(app).get('/api/notifications').set(authHeader(token)).then((r) => r.body.data as any[]);
+  const marks = (list: any[]) => list.filter((n) => n.type === 'attendance_marked');
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+    teacherToken = (await createTestUser(db, { id: 'am-teacher', name: 'Tia', email: 'tia@s.test', roleLevel: 'TEACHER' })).token;
+    studentToken = (await createTestUser(db, { id: 'am-stu', name: 'Ada', email: 'ada@s.test', roleLevel: 'STUDENT' })).token;
+    classmateToken = (await createTestUser(db, { id: 'am-mate', name: 'Ben', email: 'ben@s.test', roleLevel: 'STUDENT' })).token;
+    await db.run(`INSERT INTO subjects (id, name) VALUES (9, 'JavaScript')`);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })));
+  });
+
+  it('tells a student they were marked absent — with the subject, and only them', async () => {
+    const res = await mark([
+      { studentId: 'am-stu', studentName: 'Ada', status: 'absent' },
+      { studentId: 'am-mate', studentName: 'Ben', status: 'present' },
+    ]);
+    expect(res.status).toBe(200);
+
+    const mine = await eventually(() => bellFor(studentToken), (l) => marks(l).length === 1);
+    const notice = marks(mine)[0];
+    expect(notice.title).toBe('Marked absent');
+    expect(notice.message).toContain('absent for JavaScript');
+    expect(notice.message).toContain('Grade 9A');
+    expect(notice.severity).toBe('warning');
+    expect(notice.link).toContain('/attendance/session?');
+    expect(notice.link).toContain('subjectId=9');
+
+    // The classmate was present: nothing for them, and nothing about Ada.
+    expect(marks(await bellFor(classmateToken))).toHaveLength(0);
+  });
+
+  it('does not duplicate on a re-save, and withdraws the notice on a correction', async () => {
+    await mark([{ studentId: 'am-stu', studentName: 'Ada', status: 'absent' }]);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(marks(await bellFor(studentToken))).toHaveLength(1);
+
+    await mark([{ studentId: 'am-stu', studentName: 'Ada', status: 'late' }]);
+    const swapped = await eventually(() => bellFor(studentToken), (l) => marks(l)[0]?.title === 'Marked late');
+    expect(marks(swapped)).toHaveLength(1);
+
+    await mark([{ studentId: 'am-stu', studentName: 'Ada', status: 'present' }]);
+    const cleared = await eventually(() => bellFor(studentToken), (l) => marks(l).length === 0);
+    expect(marks(cleared)).toHaveLength(0);
+  });
+
+  it("keeps staff broadcasts ('all') away from students", async () => {
+    await db.run(
+      `INSERT INTO notifications (user_id, type, title, message) VALUES ('all', 'low_attendance', 'Attendance drop: Ben', 'Ben dropped to 40%.')`
+    );
+    const studentBell = await bellFor(studentToken);
+    expect(studentBell.some((n) => n.user_id === 'all')).toBe(false);
+
+    const staffBell = await bellFor(teacherToken);
+    expect(staffBell.some((n) => n.title === 'Attendance drop: Ben')).toBe(true);
+  });
+});

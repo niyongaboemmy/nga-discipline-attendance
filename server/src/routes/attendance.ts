@@ -8,7 +8,7 @@ import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod, resolveAcademicPeriodForDate } from '../utils/academicPeriod.js';
 import { isSubjectOnClassCurriculum, resolveGradeId, misGetList } from './mis.js';
 import { validateBody, DATE_RE } from '../shared/validation.js';
-import { notifyExcuseDecision, generateForUser } from '../modules/attendance/notifier.service.js';
+import { notifyExcuseDecision, notifyStudentMarked, generateForUser } from '../modules/attendance/notifier.service.js';
 import { isFutureSchoolDate } from '../shared/schoolTime.js';
 import {
   ATTENDANCE_STATUSES,
@@ -163,6 +163,10 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
     // and surface the next one — reconcile in the background.
     void generateForUser(db, authReq).catch(() => {});
 
+    // Each student hears about their own mark (absent/late) — never about a
+    // classmate's. Background, after the commit; never blocks the response.
+    void notifyStudentsMarked(db, { classId, className, date, period, sessionType, subjectId, records }).catch(() => {});
+
     return res.json({
       success: true,
       message: updatedCount > 0
@@ -179,6 +183,25 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
     });
   }
 });
+
+async function notifyStudentsMarked(
+  db: ReturnType<typeof getDb>,
+  s: {
+    classId: string; className: string; date: string; period: string;
+    sessionType: 'homeroom' | 'subject'; subjectId: number | null;
+    records: { studentId: string; status: string }[];
+  }
+) {
+  const subject = s.sessionType === 'subject' && s.subjectId != null
+    ? await db.get('SELECT name FROM subjects WHERE id = ?', s.subjectId)
+    : null;
+  for (const r of s.records) {
+    await notifyStudentMarked(db, {
+      studentId: r.studentId, status: r.status, date: s.date, period: s.period, sessionType: s.sessionType,
+      classId: s.classId, className: s.className, subjectId: s.subjectId, subjectName: subject?.name ?? null,
+    });
+  }
+}
 
 /**
  * Remediation A2/A3 — return an existing register so it can be edited.
