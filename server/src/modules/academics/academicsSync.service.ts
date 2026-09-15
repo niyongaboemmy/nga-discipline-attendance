@@ -248,3 +248,45 @@ export async function syncAll(db: Database, misToken: string): Promise<SyncResul
   const roster = await syncRosterSchedule(db, misToken);
   return { years: periods.years, terms: periods.terms, subjects: roster.subjects, assignments: roster.assignments };
 }
+
+/**
+ * Make sure one subject exists in the local cache before something
+ * references it. `attendance_records.subject_id` is a foreign key to
+ * `subjects`, but that table is only filled by the admin-run roster sync —
+ * so a teacher saving a register for a subject that hadn't been synced yet
+ * got "SQLITE_CONSTRAINT: FOREIGN KEY constraint failed". Resolution order:
+ * already cached → the MIS subject list (readable by any user) → a
+ * placeholder from the name the client supplied. Never throws.
+ */
+export async function ensureSubjectCached(
+  db: Database,
+  subjectId: number,
+  misToken: string | undefined,
+  nameHint: string | null
+): Promise<void> {
+  try {
+    if (await db.get('SELECT 1 FROM subjects WHERE id = ?', subjectId)) return;
+
+    let name: string | null = nameHint;
+    let code: string | null = null;
+    if (misToken) {
+      try {
+        const match = (await fetchMisList('/academics/subjects', misToken))
+          .find((s) => Number(pick(s, 'subject_id', 'id')) === subjectId);
+        if (match) {
+          name = pick(match, 'name', 'subject_name') ?? name;
+          code = pick(match, 'code', 'subject_code');
+        }
+      } catch (err) {
+        console.error('ensureSubjectCached: MIS lookup skipped:', (err as Error).message);
+      }
+    }
+    await db.run(
+      `INSERT INTO subjects (id, name, code, synced_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(id) DO NOTHING`,
+      subjectId, name ?? `Subject ${subjectId}`, code
+    );
+  } catch (err) {
+    console.error('ensureSubjectCached failed:', (err as Error).message);
+  }
+}

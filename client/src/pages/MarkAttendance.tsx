@@ -285,6 +285,7 @@ export const MarkAttendance: React.FC = () => {
         classId: selectedClass, className: activeClass?.name ?? 'Unknown Class',
         date: sessionDate, period, records: Object.values(attendance),
         sessionType, subjectId: sessionType === 'subject' ? subjectId : null,
+        subjectName: sessionType === 'subject' ? subjects.find((s) => s.id === subjectId)?.name : undefined,
       });
       setDirty(false);
       // Adopt what we just saved as the new server baseline, so a follow-up

@@ -1,22 +1,22 @@
 # HANDOFF
 
 ## Current Task
-Student Attendance Report restyle (the staff one was done earlier; the student page still had the old look).
+Fix "SQLITE_CONSTRAINT: FOREIGN KEY constraint failed" when a teacher saves a subject register.
 
 ## Status
-Solved — uncommitted on `main`. Typecheck + build clean; rendered via the mocked-API harness as a
-student (overview light, subject detail dark). Not exercised against live data.
+Solved — uncommitted on `main`. 171/171 server tests (4 new in `markUnsyncedSubject.test.ts`, which
+reproduce the failure without the fix). Server + client typecheck clean.
 
 ## Progress
-- [x] `StudentAttendanceReport.tsx` rewritten: same toolbar as staff (breadcrumb · Full term / 30d / 2w presets ·
-      From/To), **default range = full term** (the old 2-week default often had no marks → no charts),
-      4 stat tiles (overall rate + tier, sessions, unexcused absences, late), analytics panel (term running-rate
-      trend from `/api/attendance/me` days · marks-by-subject stack · absences-by-subject columns), subject list.
-      Detail view: trend + mix + register. `?from&to&section` in the URL; dashboard "My Classes" rows deep-link.
-- [x] `ColumnChart` gained `plotHeight`.
+- [x] Root cause: `attendance_records.subject_id` → `subjects(id)` FK; `subjects` is a local cache filled only
+      by the admin roster sync, so an unsynced subject made the insert fail.
+- [x] `ensureSubjectCached()` in academicsSync.service.ts: cached → MIS `/academics/subjects` → placeholder
+      from the client-supplied name. Called from POST /mark before the transaction.
+- [x] `subjectName` accepted by the mark schema; RegisterDrawer + MarkAttendance send it.
 - [ ] Commit/push when asked.
 
 ## Recently Completed
+- 2026-09-15: Save-register FK failure fixed — subject cache self-heals on save.
 - 2026-09-15: Student attendance report restyled with term trend, subject mix, absences chart; full-term default.
 - 2026-09-15: Sidebar single-highlight; report restyle + linkable URLs; dashboard Today agenda; /dashboard home.
 - 2026-09-15: Report analytics charts (trend, mark mix, bands) for staff and student reports.
