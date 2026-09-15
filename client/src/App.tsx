@@ -30,6 +30,7 @@ import { ExcuseReview } from './pages/ExcuseReview';
 import { AuditLog } from './pages/AuditLog';
 import { StudentReport } from './pages/StudentReport';
 import { AttendanceReportGate } from './pages/AttendanceReportGate';
+import { SessionDetail } from './pages/SessionDetail';
 
 export const App: React.FC = () => {
   return (
@@ -111,6 +112,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
                 <AttendanceCalendarGate />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/attendance/session"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher', 'student']}>
+                <SessionDetail />
               </ProtectedRoute>
             }
           />

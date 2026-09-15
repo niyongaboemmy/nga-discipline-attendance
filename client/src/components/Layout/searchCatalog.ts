@@ -17,13 +17,13 @@ export interface SearchItem {
  *  this searches page/feature names, not live record data. */
 export const searchCatalog: SearchItem[] = [
   {
-    label: 'Attendance Calendar', description: 'Month / week / day — open any lesson to take its register', path: '/attendance',
-    roles: ['admin', 'teacher', 'student'],
-    keywords: ['agenda', 'timetable', 'schedule', 'calendar', 'my day', 'week', 'registers', 'take attendance', 'lessons'],
-  },
-  {
     label: 'Dashboard', description: 'Overview and quick stats', path: '/dashboard',
     roles: ['admin', 'teacher', 'student'], keywords: ['home', 'overview', 'summary'],
+  },
+  {
+    label: 'Attendance Calendar', description: 'Month / week / day — open any lesson for its details or register', path: '/attendance',
+    roles: ['admin', 'teacher', 'student'],
+    keywords: ['agenda', 'timetable', 'schedule', 'calendar', 'my day', 'week', 'registers', 'take attendance', 'lessons'],
   },
 
   // Administration

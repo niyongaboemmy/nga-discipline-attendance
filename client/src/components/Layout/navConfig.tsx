@@ -34,8 +34,10 @@ export interface NavItem {
 /* Items are ordered so that, after filtering by role, every section's items
    are consecutive — the sidebar renders one heading per run. */
 export const navItems: NavItem[] = [
-  { label: 'Attendance Calendar', path: '/attendance', icon: CalendarClock, roles: ['admin', 'teacher', 'student'] },
+  // Dashboard first: it's the overview you land on; the calendar is the
+  // working surface you go to next.
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'teacher', 'student'] },
+  { label: 'Attendance Calendar', path: '/attendance', icon: CalendarClock, roles: ['admin', 'teacher', 'student'] },
 
   // Admin — Discipline Rules lives here, not under Discipline: it's catalog
   // governance (admin job). Teachers pick rules inline from the same catalog
