@@ -8,6 +8,10 @@ import { ApiError } from '../api/client';
 import { attendanceReportApi, type ClassSectionReport, type OwnSubjectSummary } from '../api/attendanceReport';
 import { isoDate } from '../utils/time';
 import { COMMENT_META, COMMENT_BADGE, rateColor } from '../utils/attendanceComment';
+import { STATUS_SERIES } from '../components/charts/statusSeries';
+import { StackedBar } from '../components/charts/StackedBar';
+import { TrendLine } from '../components/charts/TrendLine';
+import { countsOf, runningRate } from '../utils/attendanceAnalytics';
 import {
   Printer, Download, TrendingUp, CalendarDays, AlertTriangle, Sun, BookOpen,
   ChevronRight, Users,
@@ -31,34 +35,20 @@ const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(unde
 const fmtDateLong = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 const sectionName = (row: Pick<OwnSubjectSummary, 'kind' | 'subjectName'>) => (row.kind === 'homeroom' ? 'Homeroom' : row.subjectName || 'Unknown subject');
 
-/** Comparison bar chart — only sections with real data are meaningful to
- *  rank against each other; a "no sessions yet" section has nothing to
- *  compare, and a phantom 0-width bar next to a real 0% (real absences)
- *  bar would be indistinguishable and misleading. Those still appear in
- *  the list below, just not here. */
-const CompareChart: React.FC<{ rows: OwnSubjectSummary[] }> = ({ rows }) => {
+/** Every subject side by side as a 100% stack of what the marks were —
+ *  worst rate first, so whatever is dragging the term down is at the top.
+ *  A "no sessions yet" section has nothing to show here and is left to the
+ *  list below rather than drawn as an empty bar. */
+const SubjectMixChart: React.FC<{ rows: OwnSubjectSummary[] }> = ({ rows }) => {
   const withData = useMemo(() => [...rows].filter((r) => r.hasData).sort((a, b) => a.rate - b.rate), [rows]);
   if (withData.length === 0) return null;
   return (
-    <div className="ar-chart">
-      <div className="ar-chart-legend">
-        {(Object.keys(COMMENT_META) as Array<keyof typeof COMMENT_META>).map((k) => (
-          <span key={k} className="ar-chart-legend-item" style={{ color: COMMENT_META[k].color }}>
-            {COMMENT_META[k].icon} {k}
-          </span>
-        ))}
-      </div>
-      <div className="ar-chart-rows">
-        {withData.map((r) => (
-          <div className="ar-chart-row" key={r.kind === 'homeroom' ? 'homeroom' : r.subjectId} title={`${sectionName(r)}: ${r.rate}% (${r.present} present, ${r.absent} absent, ${r.late} late, ${r.excused} excused)`}>
-            <span className="ar-chart-name">{sectionName(r)}</span>
-            <div className="ar-chart-track">
-              <div className="ar-chart-fill" style={{ width: `${r.rate}%`, background: COMMENT_META[r.comment].color }} />
-            </div>
-            <span className="ar-chart-value">{r.rate}%</span>
-          </div>
-        ))}
-      </div>
+    <div className="ar-analytics" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+      <StackedBar
+        title="What your marks were, by subject"
+        series={STATUS_SERIES}
+        rows={withData.map((r) => ({ label: sectionName(r), values: countsOf(r), endLabel: `${r.rate}%` }))}
+      />
     </div>
   );
 };
@@ -111,15 +101,17 @@ export const StudentAttendanceReport: React.FC = () => {
   };
 
   const me = report?.students[0] ?? null;
-  const segs = useMemo(() => {
-    if (!me) return [];
-    return [
-      { n: me.present, c: 'var(--success)' },
-      { n: me.late, c: 'var(--warning)' },
-      { n: me.excused, c: 'var(--info)' },
-      { n: me.absent, c: 'var(--danger)' },
-    ].filter((s) => s.n > 0);
-  }, [me]);
+  // "Where has my term been heading" — the running rate after each recorded day.
+  const trend = useMemo(() => {
+    if (!me || !report) return [];
+    return runningRate(me, report.dateColumns).map((p) => {
+      const status = STATUS_SERIES.find((x) => x.key === p.status)!;
+      return {
+        label: fmtDate(p.date), longLabel: fmtDateLong(p.date), value: p.rate,
+        detail: [{ label: 'that day', value: status.label, color: status.color }],
+      };
+    });
+  }, [me, report]);
 
   const overallAtRisk = overview.filter((r) => r.hasData && r.rate < 80).length;
   const trackedCount = overview.filter((r) => r.hasData).length;
@@ -241,7 +233,7 @@ export const StudentAttendanceReport: React.FC = () => {
             </div>
 
             <div className="card card-pad print-area">
-              <CompareChart rows={overview} />
+              <SubjectMixChart rows={overview} />
 
               <div className="ar-listgroup">
                 {overview.map((r) => {
@@ -329,11 +321,23 @@ export const StudentAttendanceReport: React.FC = () => {
               <div><span className="text-xs text-secondary">Subject</span><div className="font-medium">{report.sessionType === 'homeroom' ? 'Homeroom' : (report.subjectName || 'Unknown subject')}</div></div>
             </div>
 
-            {segs.length > 0 && (
-              <div className="flex mb-4" style={{ height: '10px', gap: '2px', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
-                {segs.map((s, i) => <div key={i} style={{ flex: s.n, background: s.c }} title={`${s.n}`} />)}
+            <div className="ar-analytics">
+              {trend.length >= 2 ? (
+                <TrendLine title="Your attendance rate over the term" points={trend} valueLabel="Running rate" />
+              ) : (
+                <div className="ch">
+                  <div className="ch-head"><span className="ch-title">Your attendance rate over the term</span></div>
+                  <p className="text-xs text-secondary">The trend appears once at least two days are recorded in the range.</p>
+                </div>
+              )}
+              <div className="ar-analytics-side">
+                <StackedBar
+                  title="What your marks were"
+                  series={STATUS_SERIES}
+                  rows={[{ label: sectionName(selected!), values: countsOf(me), endLabel: `${me.rate}%` }]}
+                />
               </div>
-            )}
+            </div>
 
             <div className="table-wrap ar-grid-wrap" style={{ maxHeight: 'none' }}>
               <table className="table table--zebra ar-grid">
