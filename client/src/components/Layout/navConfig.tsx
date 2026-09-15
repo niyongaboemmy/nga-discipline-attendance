@@ -34,10 +34,8 @@ export interface NavItem {
 /* Items are ordered so that, after filtering by role, every section's items
    are consecutive — the sidebar renders one heading per run. */
 export const navItems: NavItem[] = [
-  // Dashboard first: it's the overview you land on; the calendar is the
-  // working surface you go to next.
+  // Dashboard first: it's the overview you land on.
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'teacher', 'student'] },
-  { label: 'Attendance Calendar', path: '/attendance', icon: CalendarClock, roles: ['admin', 'teacher', 'student'] },
 
   // Admin — Discipline Rules lives here, not under Discipline: it's catalog
   // governance (admin job). Teachers pick rules inline from the same catalog
@@ -50,6 +48,7 @@ export const navItems: NavItem[] = [
   // Attendance (staff) — taking a register now happens inside the Attendance
   // Calendar (open a lesson) or its "Record a session" action; the standalone
   // /attendance/mark page stays reachable from there for the full-screen view.
+  { label: 'Attendance Calendar', path: '/attendance', icon: CalendarClock, roles: ['admin', 'teacher', 'student'], section: 'Attendance' },
   { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
   { label: 'Attendance Report', path: '/attendance/report', icon: Table2, roles: ['admin', 'teacher', 'student'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
