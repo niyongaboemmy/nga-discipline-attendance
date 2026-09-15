@@ -12,7 +12,8 @@ import { useAuth } from '../context/AuthContext';
 import { apiGet, ApiError } from '../api/client';
 import { getScheduleDay, findSession, type CalendarSession, type AttStatus } from '../api/schedule';
 import { isoDate, clock, fmtWhen } from '../utils/time';
-import { newExcuseLink } from '../api/excuses';
+import { newExcuseLink, getMyAbsences, type Absence } from '../api/excuses';
+import { ExcuseStatusBadge } from '../components/excuses/ExcuseStatusBadge';
 
 /**
  * One lesson (or morning check), on one day, in full — the "simple page of
@@ -94,6 +95,10 @@ export const SessionDetail: React.FC = () => {
   const validQuery = DATE_RE.test(query.date) && query.classId !== '' && (query.sessionType === 'homeroom' || query.sessionType === 'subject');
 
   const [session, setSession] = useState<CalendarSession | null>(null);
+  // A student's absence for this session, with the excuse already filed for
+  // it (if any) — so the page offers "submit an excuse" or "see your excuse",
+  // never a duplicate.
+  const [absence, setAbsence] = useState<Absence | null>(null);
   const [register, setRegister] = useState<RegisterPayload | null>(null);
   const [registerError, setRegisterError] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -102,12 +107,24 @@ export const SessionDetail: React.FC = () => {
 
   const load = useCallback(async () => {
     if (!validQuery) { setLoading(false); return; }
-    setLoading(true); setError(null); setNotFound(false); setRegister(null); setRegisterError(false);
+    setLoading(true); setError(null); setNotFound(false); setRegister(null); setRegisterError(false); setAbsence(null);
     try {
       const day = await getScheduleDay(query.date);
       const found = findSession(day.sessions, query);
       if (!found) { setNotFound(true); return; }
       setSession(found);
+
+      if (isStudent && found.ownStatus === 'absent') {
+        try {
+          const mine = await getMyAbsences();
+          setAbsence(mine.find((a) =>
+            a.date === query.date && a.sessionType === found.kind && a.classId === found.classId
+            && (found.kind !== 'subject' || a.subjectId === found.subjectId)
+          ) ?? null);
+        } catch {
+          // Without the list we simply offer the form; the server still de-duplicates.
+        }
+      }
 
       if (canMark) {
         const qs = new URLSearchParams({
@@ -127,7 +144,7 @@ export const SessionDetail: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [query, validQuery, canMark]);
+  }, [query, validQuery, canMark, isStudent]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -167,6 +184,17 @@ export const SessionDetail: React.FC = () => {
             <button className="btn btn-primary" onClick={() => navigate(session.deepLink)}>
               <PenLine size={16} /> {session.status === 'recorded' ? 'Update register' : 'Take register'}
             </button>
+          )}
+          {session && isStudent && session.ownStatus === 'absent' && (
+            absence?.excuse ? (
+              <Link to={`/excuses/${absence.excuse.id}`} className="btn btn-outline">
+                <FileText size={16} /> Your excuse <ExcuseStatusBadge status={absence.excuse.status} />
+              </Link>
+            ) : (
+              <Link to={excuseLinkFor(session, query.date)} className="btn btn-primary">
+                <FileText size={16} /> Submit an excuse
+              </Link>
+            )
           )}
         </div>
       </div>
@@ -228,9 +256,21 @@ export const SessionDetail: React.FC = () => {
                 <span className="sd-own-pending"><CircleDashed size={14} /> Not yet recorded for this lesson.</span>
               )}
               {session.ownStatus === 'absent' && (
-                <Link to={excuseLinkFor(session, query.date)} className="btn btn-outline btn-sm mt-2" style={{ alignSelf: 'flex-start' }}>
-                  <FileText size={14} /> Submit an excuse for this absence
-                </Link>
+                absence?.excuse ? (
+                  <div className="sd-own-excuse">
+                    <span className="text-sm text-secondary">You’ve explained this absence:</span>
+                    <Link to={`/excuses/${absence.excuse.id}`} className="ex-alert-link text-sm">
+                      <ExcuseStatusBadge status={absence.excuse.status} /> View request
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="sd-own-excuse">
+                    <span className="text-sm text-secondary">Were you away for a reason? Explain it and a teacher will review it.</span>
+                    <Link to={excuseLinkFor(session, query.date)} className="btn btn-outline btn-sm" style={{ alignSelf: 'flex-start' }}>
+                      <FileText size={14} /> Submit an excuse for this absence
+                    </Link>
+                  </div>
+                )
               )}
             </section>
           )}

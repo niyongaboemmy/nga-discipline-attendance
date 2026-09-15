@@ -903,6 +903,8 @@
 .sd-own .status-chip.sd-own-chip { font-size: 15px; padding: 8px 14px 8px 11px; align-self: flex-start; }
 .sd-own .status-chip.sd-own-chip svg { width: 17px; height: 17px; }
 .sd-own-pending { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.sd-own-excuse { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.sd-own-excuse .ex-alert-link { display: inline-flex; align-items: center; gap: 6px; color: var(--primary); }
 
 .sd-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
 .sd-stats .stat-value { margin-top: 0; }
