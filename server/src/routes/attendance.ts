@@ -10,6 +10,7 @@ import { isSubjectOnClassCurriculum, resolveGradeId, misGetList } from './mis.js
 import { validateBody, DATE_RE } from '../shared/validation.js';
 import { notifyExcuseDecision, notifyStudentMarked, generateForUser } from '../modules/attendance/notifier.service.js';
 import { isFutureSchoolDate } from '../shared/schoolTime.js';
+import { ensureSubjectCached } from '../modules/academics/academicsSync.service.js';
 import {
   ATTENDANCE_STATUSES,
   ATTENDED_SQL_CASE,
@@ -33,6 +34,8 @@ const markSchema = z.object({
   period: z.enum(PERIODS).default('Morning'),
   sessionType: z.enum(['homeroom', 'subject']).default('homeroom'),
   subjectId: z.union([z.number().int().positive(), z.null()]).default(null),
+  /** Only used to seed the local subject cache when the subject hasn't been synced yet. */
+  subjectName: z.string().max(160).optional(),
   records: z.array(z.object({
     studentId: z.string().min(1).max(64),
     studentName: z.string().min(1).max(160),
@@ -88,6 +91,13 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
   const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
     db, date, resolveAcademicPeriod(authReq)
   );
+
+  // The subject row must exist locally before attendance_records can point
+  // at it (foreign key). Self-heal here rather than fail the teacher's save
+  // over a roster sync nobody ran.
+  if (sessionType === 'subject' && subjectId != null) {
+    await ensureSubjectCached(db, subjectId, authReq.user?.misToken, req.body.subjectName ?? null);
+  }
 
   const conflictClause = sessionType === 'homeroom'
     ? `ON CONFLICT(student_id, class_id, session_date, period) WHERE session_type = 'homeroom'`

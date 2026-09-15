@@ -175,6 +175,7 @@ export const RegisterDrawer: React.FC<{
         period: link.period,
         sessionType: link.sessionType,
         subjectId: link.sessionType === 'subject' ? link.subjectId : null,
+        subjectName: link.sessionType === 'subject' ? session.subjectName ?? undefined : undefined,
         records: Object.values(rows),
       });
       const t = STATUSES.reduce((acc, s) => {
