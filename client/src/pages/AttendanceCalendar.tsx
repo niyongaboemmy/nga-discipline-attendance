@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarClock,
   Sun, BookOpen, MapPin, Clock, PenLine, RotateCcw, Plus, ArrowRight, CheckCircle2,
-  AlertTriangle, X, User, Eye, PartyPopper,
+  AlertTriangle, X, User, PartyPopper,
 } from 'lucide-react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { ErrorState } from '../components/common/ErrorState';
@@ -431,7 +431,6 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
     const isFocus = focusSubject != null && s.kind === 'subject' && s.subjectId === focusSubject;
     const cls = ['agenda-card', 'is-clickable', isNow && 'is-now', isFuture && 'is-future', isPastMissing && 'is-past-missing', isDim && 'is-dimmed', isFocus && 'is-focused', s.isMine && 'is-mine']
       .filter(Boolean).join(' ');
-    const badgeCls = s.status === 'recorded' ? 'is-recorded' : isPastMissing ? 'is-missing-past' : isNow ? 'is-now' : 'is-future';
     const detail = sessionDetailLink(s, data.date);
     const stop = (e: React.MouseEvent) => e.stopPropagation();
     return (
@@ -444,27 +443,17 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
         onClick={() => navigate(detail)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(detail); } }}
       >
-        <span className={`agenda-badge ${badgeCls}`}>
-          {s.status === 'recorded'
-            ? <CheckCircle2 size={11} />
-            : isPastMissing
-              ? <AlertTriangle size={11} />
-              : isNow
-                ? <Clock size={11} />
-                : null}
-        </span>
         <div className="agenda-time">
           <span className="t-start">{clock(s.startTime)}</span>
           {s.endTime && <span className="t-end">{clock(s.endTime)}</span>}
         </div>
-        <div className="agenda-icon">
-          {s.kind === 'homeroom'
-            ? <Sun size={16} />
-            : <BookOpen size={16} />}
-        </div>
+        <span className="agenda-spine" />
         <div className="agenda-body">
           <div className="agenda-title">
-            {s.kind === 'homeroom' ? <>Morning check · {s.className}</> : <>{s.subjectName || 'Lesson'}</>}
+            {s.kind === 'homeroom'
+              ? <><Sun size={14} className="agenda-icon-inline" /> Morning check · {s.className}</>
+              : <><BookOpen size={14} className="agenda-icon-inline" /> {s.subjectName || 'Lesson'}</>}
+            {isNow && <span className="ta-now"><Clock size={11} /> Now</span>}
           </div>
           <div className="agenda-meta">
             {s.kind === 'subject' && <span>{s.className}</span>}
@@ -474,8 +463,6 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
                 <User size={11} /> {s.isMine ? 'You' : s.teacherName || 'Another teacher'}
               </span>
             )}
-            {isNow && <span style={{ color: 'var(--primary)', fontWeight: 600 }}><Clock size={11} /> In progress</span>}
-            {isPastMissing && <span className="agenda-overdue"><AlertTriangle size={11} /> Register overdue</span>}
           </div>
           {s.status === 'recorded' && s.stats && (
             <div className="agenda-recorded-line">
@@ -489,17 +476,20 @@ const DayView: React.FC<{ data: DayResponse; canMark: boolean; onOpen: (t: Drawe
         <div className="agenda-action" onClick={stop}>
           {s.status === 'recorded' ? (
             <>
-              <StatusChip kind="recorded" />
-              {canMark && <button className="btn btn-outline btn-sm" onClick={(e) => { e.stopPropagation(); open(s); }}><PenLine size={13} /> Edit</button>}
+              <span className="agenda-done"><CheckCircle2 size={13} /> Done</span>
+              {canMark && <button className="btn btn-ghost btn-sm" onClick={() => open(s)}><PenLine size={13} /> Edit</button>}
+            </>
+          ) : isPastMissing ? (
+            <>
+              <span className="agenda-late"><AlertTriangle size={13} /> Overdue</span>
+              {canMark && <button className="btn btn-primary btn-sm" onClick={() => open(s)}><PenLine size={13} /> Take register</button>}
             </>
           ) : canMark ? (
-            <button className="btn btn-primary btn-sm" onClick={(e) => { e.stopPropagation(); open(s); }}><PenLine size={13} /> Take register</button>
+            <button className="btn btn-primary btn-sm" onClick={() => open(s)}><PenLine size={13} /> Take register</button>
           ) : (
             <StatusChip kind={s.ownStatus ?? 'missing'} label={s.ownStatus ? undefined : 'Awaiting'} />
           )}
-          <button className="btn btn-ghost btn-sm" onClick={() => navigate(detail)} aria-label="View details">
-            <Eye size={13} /> <span className="hide-mobile">Details</span>
-          </button>
+          <ChevronRight size={15} className="agenda-chevron" />
         </div>
       </div>
     );
