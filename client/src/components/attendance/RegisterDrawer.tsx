@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Save, CheckCircle2, XCircle, Clock, ShieldCheck, Users, MapPin, CalendarDays,
   Sun, BookOpen, Undo2, ExternalLink, Search, History, Pencil, ArrowRight, Command,
@@ -68,6 +68,9 @@ export const RegisterDrawer: React.FC<{
   const [confirmClose, setConfirmClose] = useState(false);
   const [savedView, setSavedView] = useState<null | { present: number; absent: number; late: number; excused: number }>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const topbarRef = useRef<HTMLDivElement>(null);
+  const footRef = useRef<HTMLDivElement>(null);
 
   const isEditing = !!existing;
 
@@ -118,6 +121,28 @@ export const RegisterDrawer: React.FC<{
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  // Measure the header and footer's real rendered height (they change --
+  // the toolbar/editbar/kbd-hint appear and disappear, height media queries
+  // trim padding, text wraps differently) and drive the student list's
+  // height with an explicit calc() off those exact pixel values, rather
+  // than a CSS-only distribution scheme. Re-measures whenever either box
+  // resizes for any reason.
+  useLayoutEffect(() => {
+    const drawerEl = drawerRef.current;
+    const topbarEl = topbarRef.current;
+    const footEl = footRef.current;
+    if (!drawerEl) return;
+    const apply = () => {
+      drawerEl.style.setProperty('--dh-head', `${topbarEl?.offsetHeight ?? 0}px`);
+      drawerEl.style.setProperty('--dh-foot', `${footEl?.offsetHeight ?? 0}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    if (topbarEl) ro.observe(topbarEl);
+    if (footEl) ro.observe(footEl);
+    return () => ro.disconnect();
   }, []);
 
   // Which rows differ from what's on the server (drives the "you changed N" hint
@@ -218,13 +243,14 @@ export const RegisterDrawer: React.FC<{
     <>
       <div className="drawer-scrim" onClick={requestClose} />
       <aside
+        ref={drawerRef}
         className="drawer"
         role="dialog"
         aria-modal="true"
         aria-label={`Register — ${session.subjectName || 'Homeroom'} ${session.className}`}
         style={session.color ? ({ ['--spine' as string]: session.color }) : undefined}
       >
-        <div className="drawer-topbar">
+        <div className="drawer-topbar" ref={topbarRef}>
           <div className="drawer-head">
             <span className="dh-spine" />
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -382,7 +408,7 @@ export const RegisterDrawer: React.FC<{
               )}
             </div>
 
-            <div className="drawer-foot">
+            <div className="drawer-foot" ref={footRef}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 {students.length > 0 && (
                   <>

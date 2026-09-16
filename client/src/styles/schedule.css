@@ -560,13 +560,16 @@
   z-index: var(--z-modal);
   animation: drawer-fade var(--transition-fast) ease-out;
 }
-/* Three explicit rows: header and footer size to their own content (auto),
-   the student list gets exactly whatever is left (1fr) — no vh/dvh unit
-   involved. The box's own height comes purely from `top`/`bottom` both
-   being set on a `position: fixed` element, which CSS guarantees resolves
-   to a definite height (fills exactly between those two edges) with no
-   dependency on viewport-unit support; grid then distributes that definite
-   height across the three rows deterministically. */
+/* The box's own height comes purely from `top`/`bottom` both being set on
+   a `position: fixed` element, which CSS guarantees resolves to a
+   definite height (fills exactly between those two edges) — no vh/dvh
+   unit involved. Header and footer size to their own content and stack
+   normally; the student list's height is the explicit calculation
+   `calc(100% - <measured head height> - <measured foot height>)`, with
+   --dh-head/--dh-foot set from RegisterDrawer's ResizeObserver in JS
+   (see the effect measuring topbarRef/footRef) so it's exact even as
+   that content changes (toolbar hidden at a short height, editbar
+   appearing, text wrapping, ...). */
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: min(560px, 100vw);
@@ -575,14 +578,6 @@
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-popover);
   z-index: var(--z-modal);
-  display: grid;
-  /* minmax(0, 1fr), not plain 1fr -- a bare `fr` track's implicit minimum
-     is `auto` (its content's min-content size), so on a short enough
-     screen the list would refuse to shrink past that floor and push the
-     footer out past `overflow: hidden` even though the list itself has
-     its own scrollbar. Pinning the minimum to 0 lets the list give up
-     every last pixel to the fixed header/footer rows first. */
-  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   animation: drawer-in var(--transition-normal) var(--ease-out);
 }
@@ -660,7 +655,7 @@
    over after the header and footer take what they need, on any screen
    size, and scrolls internally rather than growing further. */
 .drawer-body {
-  min-height: 0;
+  height: calc(100% - var(--dh-head, 0px) - var(--dh-foot, 0px));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -811,7 +806,7 @@
 
 /* Saved → next-lesson state */
 .drawer-saved {
-  flex: 1;
+  height: calc(100% - var(--dh-head, 0px));
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; padding: 40px 24px; gap: 4px;
 }
