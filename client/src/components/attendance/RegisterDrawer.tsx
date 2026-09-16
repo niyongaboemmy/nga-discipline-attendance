@@ -355,6 +355,7 @@ export const RegisterDrawer: React.FC<{
                               className={`drawer-seg-btn is-${st.key}${r?.status === st.key ? ' is-active' : ''}`}
                               aria-pressed={r?.status === st.key}
                               aria-label={st.label}
+                              data-tooltip={st.label}
                               disabled={!canMark}
                               onClick={() => setStatus(s.id, st.key)}
                             >

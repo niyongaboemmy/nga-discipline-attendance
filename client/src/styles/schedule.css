@@ -670,11 +670,51 @@
 
 .drawer-seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--bg-subtle); border-radius: var(--radius-btn); border: 1px solid var(--border); flex: none; }
 .drawer-seg-btn {
+  position: relative;
   width: 32px; height: 27px;
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--radius-btn);
   color: var(--text-tertiary);
   transition: background var(--transition-fast), color var(--transition-fast);
+}
+.drawer-seg-btn[data-tooltip]::after,
+.drawer-seg-btn[data-tooltip]::before {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  transform: translate(-50%, 4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast) ease, transform var(--transition-fast) ease;
+  transition-delay: 0s;
+  z-index: 20;
+}
+.drawer-seg-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  padding: 4px 8px;
+  border-radius: var(--radius-btn);
+  background: var(--bg-inverse);
+  color: var(--bg-page);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-popover);
+}
+.drawer-seg-btn[data-tooltip]::before {
+  content: '';
+  bottom: calc(100% + 3px);
+  width: 6px; height: 6px;
+  background: var(--bg-inverse);
+  border-radius: 1px;
+  transform: translate(-50%, 4px) rotate(45deg);
+}
+.drawer-seg-btn[data-tooltip]:hover::after,
+.drawer-seg-btn[data-tooltip]:hover::before,
+.drawer-seg-btn[data-tooltip]:focus-visible::after,
+.drawer-seg-btn[data-tooltip]:focus-visible::before {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 0.25s;
 }
 .drawer-seg-btn:hover { color: var(--text-secondary); }
 .drawer-seg-btn.is-active.is-present { background: var(--status-present-bg); color: var(--status-present); }
