@@ -224,40 +224,66 @@ export const RegisterDrawer: React.FC<{
         aria-label={`Register — ${session.subjectName || 'Homeroom'} ${session.className}`}
         style={session.color ? ({ ['--spine' as string]: session.color }) : undefined}
       >
-        <div className="drawer-head">
-          <span className="dh-spine" />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="drawer-title">
-              {session.kind === 'homeroom'
-                ? <><Sun size={16} style={{ verticalAlign: '-3px', color: 'var(--warning)' }} /> Morning check</>
-                : <><BookOpen size={16} style={{ verticalAlign: '-3px' }} /> {session.subjectName || 'Lesson'}</>}
+        <div className="drawer-topbar">
+          <div className="drawer-head">
+            <span className="dh-spine" />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="drawer-title">
+                {session.kind === 'homeroom'
+                  ? <><Sun size={16} style={{ verticalAlign: '-3px', color: 'var(--warning)' }} /> Morning check</>
+                  : <><BookOpen size={16} style={{ verticalAlign: '-3px' }} /> {session.subjectName || 'Lesson'}</>}
+              </div>
+              <div className="drawer-meta">
+                <span><Users size={12} /> {session.className}</span>
+                <span><CalendarDays size={12} /> {new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                {session.startTime && <span><Clock size={12} /> {session.startTime}{session.endTime ? `–${session.endTime}` : ''}</span>}
+                {session.room && <span><MapPin size={12} /> {session.room}</span>}
+              </div>
             </div>
-            <div className="drawer-meta">
-              <span><Users size={12} /> {session.className}</span>
-              <span><CalendarDays size={12} /> {new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-              {session.startTime && <span><Clock size={12} /> {session.startTime}{session.endTime ? `–${session.endTime}` : ''}</span>}
-              {session.room && <span><MapPin size={12} /> {session.room}</span>}
-            </div>
+            <button className="icon-btn" onClick={requestClose} aria-label="Close"><X size={18} /></button>
           </div>
-          <button className="icon-btn" onClick={requestClose} aria-label="Close"><X size={18} /></button>
-        </div>
 
-        {isEditing && !savedView && (
-          <div className={`drawer-editbar ${existing!.markedByMe ? 'is-mine' : 'is-other'}`}>
-            <Pencil size={14} />
-            <span>
-              Editing a register of <strong>{existing!.count}</strong>
-              {existing!.markedByName ? <>, last marked by <strong>{existing!.markedByMe ? 'you' : existing!.markedByName}</strong></> : null}
-              {existing!.lastMarkedAt ? <> {fmtWhen(existing!.lastMarkedAt)}</> : null}.
-              {dirty ? <> You’ve changed <strong>{changedIds.size}</strong>.</> : <> Change a status to update it.</>}
-            </span>
-            {dirty && (
-              <button className="btn btn-ghost btn-sm" onClick={discard}>
-                <History size={13} /> Discard
-              </button>
-            )}
-          </div>
-        )}
+          {isEditing && !savedView && (
+            <div className={`drawer-editbar ${existing!.markedByMe ? 'is-mine' : 'is-other'}`}>
+              <Pencil size={14} />
+              <span>
+                Editing a register of <strong>{existing!.count}</strong>
+                {existing!.markedByName ? <>, last marked by <strong>{existing!.markedByMe ? 'you' : existing!.markedByName}</strong></> : null}
+                {existing!.lastMarkedAt ? <> {fmtWhen(existing!.lastMarkedAt)}</> : null}.
+                {dirty ? <> You’ve changed <strong>{changedIds.size}</strong>.</> : <> Change a status to update it.</>}
+              </span>
+              {dirty && (
+                <button className="btn btn-ghost btn-sm" onClick={discard}>
+                  <History size={13} /> Discard
+                </button>
+              )}
+            </div>
+          )}
+
+          {!savedView && canMark && !loading && !error && students.length > 0 && (
+            <div className="drawer-toolbar">
+              <div className="drawer-search">
+                <Search size={14} className="field-icon" />
+                <input
+                  className="input"
+                  placeholder="Find a student…"
+                  value={query}
+                  aria-label="Find a student"
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                {query && <button className="drawer-search-clear" onClick={() => setQuery('')} aria-label="Clear"><X size={12} /></button>}
+              </div>
+              <div className="drawer-markall">
+                <span className="drawer-markall-lbl">All</span>
+                {STATUSES.map((s) => (
+                  <button key={s.key} className={`drawer-markall-btn is-${s.key}`} onClick={() => markAll(s.key)} title={`Mark everyone ${s.label.toLowerCase()}`}>
+                    {s.icon}<span className="hide-mobile">{s.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {savedView ? (
           <div className="drawer-saved">
@@ -280,30 +306,6 @@ export const RegisterDrawer: React.FC<{
           </div>
         ) : (
           <>
-            {canMark && !loading && !error && students.length > 0 && (
-              <div className="drawer-toolbar">
-                <div className="drawer-search">
-                  <Search size={14} className="field-icon" />
-                  <input
-                    className="input"
-                    placeholder="Find a student…"
-                    value={query}
-                    aria-label="Find a student"
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
-                  {query && <button className="drawer-search-clear" onClick={() => setQuery('')} aria-label="Clear"><X size={12} /></button>}
-                </div>
-                <div className="drawer-markall">
-                  <span className="drawer-markall-lbl">All</span>
-                  {STATUSES.map((s) => (
-                    <button key={s.key} className={`drawer-markall-btn is-${s.key}`} onClick={() => markAll(s.key)} title={`Mark everyone ${s.label.toLowerCase()}`}>
-                      {s.icon}<span className="hide-mobile">{s.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div className="drawer-body" ref={bodyRef}>
               {loading ? (
                 <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>

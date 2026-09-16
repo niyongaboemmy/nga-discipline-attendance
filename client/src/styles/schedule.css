@@ -560,6 +560,14 @@
   z-index: var(--z-modal);
   animation: drawer-fade var(--transition-fast) ease-out;
 }
+/* The drawer itself is the ONE scroll container (not a nested flex child) —
+   header/toolbar/footer are `position: sticky` inside it. This deliberately
+   avoids depending on getting `.drawer`'s own height exactly right (vh vs
+   dvh, minifier collapsing a fallback, a browser's auto-height-from-top/
+   bottom quirk on a flex container, viewport-resizing screenshot tools —
+   all of these broke a previous flex+fixed-height version): as long as this
+   box scrolls, the sticky footer is reachable no matter how tall the box
+   ends up being relative to the viewport. */
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: min(560px, 100vw);
@@ -569,24 +577,29 @@
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-popover);
   z-index: var(--z-modal);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   animation: drawer-in var(--transition-normal) var(--ease-out);
 }
-/* Separate rule (not a duplicate `height` on .drawer) so build minifiers
-   can't collapse this fallback away — some environments (older WebViews,
-   certain device emulators) don't resolve dvh, and a stripped fallback
-   left the drawer with no explicit height at all, letting content push
-   the footer off-screen. */
 @supports (height: 100dvh) {
   .drawer { height: 100dvh; }
 }
 @keyframes drawer-fade { from { opacity: 0; } }
 @keyframes drawer-in { from { transform: translateX(24px); opacity: 0.4; } }
 
+/* Groups head + editbar + toolbar so they stick together as one block —
+   sticky siblings each pinned to top:0 independently would stack on top of
+   each other instead of below one another. */
+.drawer-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--bg-card);
+}
+
 .drawer-head {
-  flex: none;
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -649,13 +662,6 @@
 .drawer-markall-btn.is-late:hover    { border-color: var(--status-late);    color: var(--status-late); }
 .drawer-markall-btn.is-excused:hover { border-color: var(--status-excused); color: var(--status-excused); }
 
-.drawer-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-}
 .drawer-row {
   display: flex; flex-direction: column; gap: 6px;
   padding: 9px 18px;
@@ -730,7 +736,9 @@
 .drawer-seg-btn.is-active.is-excused { background: var(--status-excused-bg); color: var(--status-excused); }
 
 .drawer-foot {
-  flex: none;
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
   padding: 8px 14px;
   border-top: 1px solid var(--border);
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
