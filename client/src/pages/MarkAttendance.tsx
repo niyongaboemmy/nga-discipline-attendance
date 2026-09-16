@@ -58,7 +58,12 @@ export const MarkAttendance: React.FC = () => {
   // subject requires picking which course session this is.
   const [sessionType, setSessionType] = useState<SessionType>(qp.sessionType === 'subject' ? 'subject' : 'homeroom');
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  // A class arriving pre-selected (deep link) means the subjects-fetch
+  // effect below runs on this very first render -- start "loading" so the
+  // invalidation effect after it doesn't judge a deep-linked subjectId
+  // against the still-empty `subjects` array and wipe it out before the
+  // real list has had a chance to load.
+  const [loadingSubjects, setLoadingSubjects] = useState(!!qp.classId);
   const [subjectId, setSubjectId] = useState<number | ''>(qp.subjectId ? Number(qp.subjectId) : '');
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -147,10 +152,15 @@ export const MarkAttendance: React.FC = () => {
     return () => { cancelled = true; };
   }, [selectedClass]);
 
-  // Changing class can invalidate an already-picked subject.
+  // Changing class can invalidate an already-picked subject -- but only
+  // once the subjects list has actually loaded. Without this guard, a
+  // subject arriving via deep link gets judged against the still-empty
+  // `subjects` array on the very first render (before the fetch above
+  // resolves) and is wiped out before it ever had a chance to be found.
   useEffect(() => {
+    if (loadingSubjects) return;
     if (subjectId !== '' && !subjects.some((s) => s.id === subjectId)) setSubjectId('');
-  }, [subjects, subjectId]);
+  }, [subjects, subjectId, loadingSubjects]);
 
   // Build the working roster: each student starts from what's already on the
   // server for this session, falling back to Present for anyone not in it.
