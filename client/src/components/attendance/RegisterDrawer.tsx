@@ -398,6 +398,16 @@ export const RegisterDrawer: React.FC<{
                 )}
               </div>
               <div className="drawer-foot-actions">
+                {canMark && students.length > 0 && (
+                  <span
+                    className="icon-btn drawer-kbd-hint hide-mobile"
+                    data-tooltip="Focus a row, press 1–4 to mark · ⌘↵ to save"
+                    tabIndex={0}
+                    aria-label="Keyboard shortcuts: focus a row, press 1 to 4 to mark, Cmd+Enter to save"
+                  >
+                    <Command size={13} />
+                  </span>
+                )}
                 {dirty && !isEditing && (
                   <button className="btn btn-ghost btn-sm" onClick={discard} title="Reset everyone to Present">
                     <Undo2 size={13} /> Reset
@@ -412,9 +422,6 @@ export const RegisterDrawer: React.FC<{
                   </button>
                 )}
               </div>
-              {canMark && students.length > 0 && (
-                <div className="drawer-kbd hide-mobile"><Command size={11} /> Focus a row, press <kbd>1</kbd>–<kbd>4</kbd> · <kbd>⌘</kbd><kbd>↵</kbd> to save</div>
-              )}
             </div>
           </>
         )}

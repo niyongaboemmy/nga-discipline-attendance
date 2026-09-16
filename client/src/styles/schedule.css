@@ -560,42 +560,30 @@
   z-index: var(--z-modal);
   animation: drawer-fade var(--transition-fast) ease-out;
 }
-/* The drawer itself is the ONE scroll container (not a nested flex child) —
-   header/toolbar/footer are `position: sticky` inside it. This deliberately
-   avoids depending on getting `.drawer`'s own height exactly right (vh vs
-   dvh, minifier collapsing a fallback, a browser's auto-height-from-top/
-   bottom quirk on a flex container, viewport-resizing screenshot tools —
-   all of these broke a previous flex+fixed-height version): as long as this
-   box scrolls, the sticky footer is reachable no matter how tall the box
-   ends up being relative to the viewport. */
+/* Three explicit rows: header and footer size to their own content (auto),
+   the student list gets exactly whatever is left (1fr) — no vh/dvh unit
+   involved. The box's own height comes purely from `top`/`bottom` both
+   being set on a `position: fixed` element, which CSS guarantees resolves
+   to a definite height (fills exactly between those two edges) with no
+   dependency on viewport-unit support; grid then distributes that definite
+   height across the three rows deterministically. */
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: min(560px, 100vw);
   max-width: 100vw;
-  height: 100vh;
   background: var(--bg-card);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-popover);
   z-index: var(--z-modal);
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
   animation: drawer-in var(--transition-normal) var(--ease-out);
-}
-@supports (height: 100dvh) {
-  .drawer { height: 100dvh; }
 }
 @keyframes drawer-fade { from { opacity: 0; } }
 @keyframes drawer-in { from { transform: translateX(24px); opacity: 0.4; } }
 
-/* Groups head + editbar + toolbar so they stick together as one block —
-   sticky siblings each pinned to top:0 independently would stack on top of
-   each other instead of below one another. */
 .drawer-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 3;
   background: var(--bg-card);
 }
 
@@ -662,25 +650,23 @@
 .drawer-markall-btn.is-late:hover    { border-color: var(--status-late);    color: var(--status-late); }
 .drawer-markall-btn.is-excused:hover { border-color: var(--status-excused); color: var(--status-excused); }
 
-/* Hard cap on the list's own height, independent of whatever the outer
-   .drawer does with its own sizing/positioning — the student list can
-   never grow tall enough to push the footer out of view, because it
-   scrolls internally well before that. */
+/* The one dynamic row (grid 1fr on .drawer) — gets exactly the space left
+   over after the header and footer take what they need, on any screen
+   size, and scrolls internally rather than growing further. */
 .drawer-body {
-  max-height: 55vh;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-}
-@supports (max-height: 55dvh) {
-  .drawer-body { max-height: 55dvh; }
 }
 
 .drawer-row {
   display: flex; flex-direction: column; gap: 6px;
   padding: 9px 18px;
   border-bottom: 1px solid var(--border);
+  transition: background-color var(--transition-fast);
 }
+.drawer-row:hover { background: var(--bg-hover); }
 .drawer-row-main { display: flex; align-items: center; gap: 10px; }
 .drawer-row:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; border-radius: 4px; }
 .drawer-row.is-exception { background: color-mix(in srgb, var(--warning) 5%, transparent); }
@@ -705,18 +691,18 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 .drawer-seg-btn[data-tooltip]::after,
-.drawer-seg-btn[data-tooltip]::before {
+.drawer-seg-btn[data-tooltip]::before,
+.drawer-kbd-hint[data-tooltip]::after,
+.drawer-kbd-hint[data-tooltip]::before {
   position: absolute;
-  left: 50%;
   bottom: calc(100% + 7px);
-  transform: translate(-50%, 4px);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--transition-fast) ease, transform var(--transition-fast) ease;
-  transition-delay: 0s;
   z-index: 20;
 }
-.drawer-seg-btn[data-tooltip]::after {
+.drawer-seg-btn[data-tooltip]::after,
+.drawer-kbd-hint[data-tooltip]::after {
   content: attr(data-tooltip);
   padding: 4px 8px;
   border-radius: var(--radius-btn);
@@ -724,23 +710,50 @@
   color: var(--bg-page);
   font-size: 11px;
   font-weight: 600;
-  white-space: nowrap;
   box-shadow: var(--shadow-popover);
 }
-.drawer-seg-btn[data-tooltip]::before {
+.drawer-seg-btn[data-tooltip]::before,
+.drawer-kbd-hint[data-tooltip]::before {
   content: '';
   bottom: calc(100% + 3px);
   width: 6px; height: 6px;
   background: var(--bg-inverse);
   border-radius: 1px;
-  transform: translate(-50%, 4px) rotate(45deg);
 }
+
+/* Centered above the trigger (status buttons) */
+.drawer-seg-btn[data-tooltip]::after,
+.drawer-seg-btn[data-tooltip]::before { left: 50%; white-space: nowrap; transform: translate(-50%, 4px); }
+.drawer-seg-btn[data-tooltip]::before { transform: translate(-50%, 4px) rotate(45deg); }
+.drawer-seg-btn[data-tooltip]:hover::after,
+.drawer-seg-btn[data-tooltip]:focus-visible::after { transform: translate(-50%, 0); }
+.drawer-seg-btn[data-tooltip]:hover::before,
+.drawer-seg-btn[data-tooltip]:focus-visible::before { transform: translate(-50%, 0) rotate(45deg); }
+
+/* Right-aligned above the trigger (footer kbd hint, near the drawer's edge) */
+.drawer-kbd-hint[data-tooltip]::after {
+  right: 0;
+  white-space: normal;
+  width: max-content;
+  max-width: 220px;
+  text-align: left;
+  transform: translateY(4px);
+}
+.drawer-kbd-hint[data-tooltip]::before { right: 10px; transform: translateY(4px) rotate(45deg); }
+.drawer-kbd-hint[data-tooltip]:hover::after,
+.drawer-kbd-hint[data-tooltip]:focus-visible::after { transform: translateY(0); }
+.drawer-kbd-hint[data-tooltip]:hover::before,
+.drawer-kbd-hint[data-tooltip]:focus-visible::before { transform: translateY(0) rotate(45deg); }
+
 .drawer-seg-btn[data-tooltip]:hover::after,
 .drawer-seg-btn[data-tooltip]:hover::before,
 .drawer-seg-btn[data-tooltip]:focus-visible::after,
-.drawer-seg-btn[data-tooltip]:focus-visible::before {
+.drawer-seg-btn[data-tooltip]:focus-visible::before,
+.drawer-kbd-hint[data-tooltip]:hover::after,
+.drawer-kbd-hint[data-tooltip]:hover::before,
+.drawer-kbd-hint[data-tooltip]:focus-visible::after,
+.drawer-kbd-hint[data-tooltip]:focus-visible::before {
   opacity: 1;
-  transform: translate(-50%, 0);
   transition-delay: 0.25s;
 }
 .drawer-seg-btn:hover { color: var(--text-secondary); }
@@ -750,9 +763,6 @@
 .drawer-seg-btn.is-active.is-excused { background: var(--status-excused-bg); color: var(--status-excused); }
 
 .drawer-foot {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
   padding: 8px 14px;
   border-top: 1px solid var(--border);
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
@@ -761,12 +771,7 @@
 .drawer-foot-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .drawer-tally { font-size: 12px; color: var(--text-secondary); display: flex; gap: 8px; flex-wrap: wrap; }
 .drawer-tally .is-zero { color: var(--text-tertiary); opacity: 0.6; }
-.drawer-kbd { flex-basis: 100%; font-size: 10.5px; color: var(--text-tertiary); display: flex; align-items: center; gap: 5px; }
-.drawer-kbd kbd {
-  font-family: var(--font-mono); font-size: 9.5px;
-  padding: 1px 4px; border-radius: 3px;
-  border: 1px solid var(--border-strong); background: var(--bg-subtle);
-}
+.drawer-kbd-hint { position: relative; }
 
 /* Narrow screens: keep chrome compact, list stays the only scroll surface */
 @media (max-width: 480px) {
