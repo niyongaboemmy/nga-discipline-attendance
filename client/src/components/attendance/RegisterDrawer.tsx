@@ -112,6 +112,14 @@ export const RegisterDrawer: React.FC<{
 
   useEffect(() => { load(); }, [load]);
 
+  // Prevent the page behind the drawer from scrolling — the register's
+  // student list is the only thing meant to scroll while the drawer is open.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   // Which rows differ from what's on the server (drives the "you changed N" hint
   // and the save-button state when editing an existing register).
   const changedIds = useMemo(() => {
