@@ -565,7 +565,6 @@
   width: min(560px, 100vw);
   max-width: 100vw;
   height: 100vh;
-  height: 100dvh;
   background: var(--bg-card);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-popover);
@@ -574,6 +573,14 @@
   flex-direction: column;
   overflow: hidden;
   animation: drawer-in var(--transition-normal) var(--ease-out);
+}
+/* Separate rule (not a duplicate `height` on .drawer) so build minifiers
+   can't collapse this fallback away — some environments (older WebViews,
+   certain device emulators) don't resolve dvh, and a stripped fallback
+   left the drawer with no explicit height at all, letting content push
+   the footer off-screen. */
+@supports (height: 100dvh) {
+  .drawer { height: 100dvh; }
 }
 @keyframes drawer-fade { from { opacity: 0; } }
 @keyframes drawer-in { from { transform: translateX(24px); opacity: 0.4; } }
