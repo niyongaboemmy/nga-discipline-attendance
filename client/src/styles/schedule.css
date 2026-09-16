@@ -579,6 +579,13 @@
   box-shadow: var(--shadow-popover);
   z-index: var(--z-modal);
   overflow: hidden;
+  /* Isolate the drawer's own reflow from the rest of the page during a
+     live window/DevTools resize -- without this, every resize tick has
+     to re-lay-out the whole document (including the blurred navbar and
+     the calendar behind the scrim) before the browser gets to the
+     drawer itself, which can visibly lag on a slower machine even
+     though the drawer's own sizing math is instant. */
+  contain: layout;
   animation: drawer-in var(--transition-normal) var(--ease-out);
 }
 @keyframes drawer-fade { from { opacity: 0; } }
