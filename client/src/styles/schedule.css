@@ -576,7 +576,13 @@
   box-shadow: var(--shadow-popover);
   z-index: var(--z-modal);
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  /* minmax(0, 1fr), not plain 1fr -- a bare `fr` track's implicit minimum
+     is `auto` (its content's min-content size), so on a short enough
+     screen the list would refuse to shrink past that floor and push the
+     footer out past `overflow: hidden` even though the list itself has
+     its own scrollbar. Pinning the minimum to 0 lets the list give up
+     every last pixel to the fixed header/footer rows first. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   animation: drawer-in var(--transition-normal) var(--ease-out);
 }
@@ -784,6 +790,23 @@
   .drawer-row { padding: 7px 12px; gap: 4px; }
   .drawer-seg-btn { width: 28px; height: 25px; }
   .drawer-foot { padding: 6px 12px; }
+}
+
+/* Short screens (height, not width) — a laptop window resized short, a
+   phone in landscape: give the list every spare pixel by trimming the
+   header and footer's own footprint further. */
+@media (max-height: 560px) {
+  .drawer-head { padding: 6px 14px; gap: 8px; }
+  .drawer-meta { display: none; }
+  .drawer-toolbar { padding: 5px 14px; }
+  .drawer-row { padding: 6px 18px; gap: 4px; }
+  .drawer-foot { padding: 6px 14px; }
+}
+@media (max-height: 420px) {
+  .drawer-editbar { display: none; }
+  .drawer-toolbar { display: none; }
+  .drawer-row { padding: 4px 18px; }
+  .drawer-row .dr-name .s { display: none; }
 }
 
 /* Saved → next-lesson state */
