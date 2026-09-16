@@ -662,6 +662,20 @@
 .drawer-markall-btn.is-late:hover    { border-color: var(--status-late);    color: var(--status-late); }
 .drawer-markall-btn.is-excused:hover { border-color: var(--status-excused); color: var(--status-excused); }
 
+/* Hard cap on the list's own height, independent of whatever the outer
+   .drawer does with its own sizing/positioning — the student list can
+   never grow tall enough to push the footer out of view, because it
+   scrolls internally well before that. */
+.drawer-body {
+  max-height: 55vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+@supports (max-height: 55dvh) {
+  .drawer-body { max-height: 55dvh; }
+}
+
 .drawer-row {
   display: flex; flex-direction: column; gap: 6px;
   padding: 9px 18px;
