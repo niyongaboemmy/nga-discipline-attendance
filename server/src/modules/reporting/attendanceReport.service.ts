@@ -21,6 +21,24 @@ function periodFilter(academicTermId?: number): { clause: string; params: any[] 
   return { clause: ' AND (academic_term_id = ? OR academic_term_id IS NULL)', params: [academicTermId] };
 }
 
+/** The term immediately before `termId` (by start_date), for a trend
+ *  comparison on the subject/class overview lists -- null if `termId` is
+ *  the first known term or wasn't given at all. */
+async function getPreviousTermId(db: Database, termId?: number): Promise<number | undefined> {
+  if (termId == null) return undefined;
+  const current = await db.get<{ start_date: string | null; academic_year_id: number }>(
+    `SELECT start_date, academic_year_id FROM academic_terms WHERE id = ?`, termId
+  );
+  if (!current?.start_date) return undefined;
+  const prev = await db.get<{ id: number }>(
+    `SELECT id FROM academic_terms
+      WHERE academic_year_id = ? AND start_date IS NOT NULL AND start_date < ?
+      ORDER BY start_date DESC LIMIT 1`,
+    current.academic_year_id, current.start_date
+  );
+  return prev?.id;
+}
+
 export interface ReportableClass {
   classId: string;
   className: string;
@@ -259,6 +277,10 @@ export interface SubjectOverview {
   studentsTracked: number;
   averageRate: number;
   atRiskCount: number;
+  /** Same classes' average rate for this subject last term -- null if there
+   *  is no previous term to compare against, or no attendance was recorded
+   *  for it then. */
+  previousAverageRate: number | null;
 }
 
 export interface SubjectScopeParams {
@@ -310,19 +332,36 @@ export async function listAvailableSubjects(db: Database, opts: SubjectScopePara
     }
   }
 
+  const previousTermId = await getPreviousTermId(db, opts.academicTermId);
+
   const overviews: SubjectOverview[] = [];
   for (const [subjectId, subjectName] of subjectIds) {
     const classes = await classesForSubject(db, subjectId, opts);
     if (classes.length === 0) continue;
     const placeholders = classes.map(() => '?').join(',');
+    const classIdParams = classes.map((c) => c.classId);
     const { clause: tClause, params: tParams } = periodFilter(opts.academicTermId);
     const rows = await db.all(
       `SELECT student_id, status FROM attendance_records
         WHERE subject_id = ? AND class_id IN (${placeholders})${tClause}`,
-      subjectId, ...classes.map((c) => c.classId), ...tParams
+      subjectId, ...classIdParams, ...tParams
     );
     const agg = aggregateStudentRates(rows);
-    overviews.push({ subjectId, subjectName: subjectName || `Subject ${subjectId}`, classCount: classes.length, ...agg });
+
+    let previousAverageRate: number | null = null;
+    if (previousTermId != null) {
+      const prevRows = await db.all(
+        `SELECT student_id, status FROM attendance_records
+          WHERE subject_id = ? AND class_id IN (${placeholders}) AND academic_term_id = ?`,
+        subjectId, ...classIdParams, previousTermId
+      );
+      if (prevRows.length > 0) previousAverageRate = aggregateStudentRates(prevRows).averageRate;
+    }
+
+    overviews.push({
+      subjectId, subjectName: subjectName || `Subject ${subjectId}`, classCount: classes.length,
+      ...agg, previousAverageRate,
+    });
   }
   return overviews.sort((a, b) => a.subjectName.localeCompare(b.subjectName));
 }
@@ -330,6 +369,9 @@ export async function listAvailableSubjects(db: Database, opts: SubjectScopePara
 export interface SubjectClassOverview extends SubjectClassScope {
   studentsTracked: number;
   averageRate: number;
+  /** This class's average rate for this subject last term -- see
+   *  SubjectOverview.previousAverageRate. */
+  previousAverageRate: number | null;
 }
 
 /** Drill-down from a subject: every class teaching it (scoped the same way
@@ -339,6 +381,7 @@ export interface SubjectClassOverview extends SubjectClassScope {
 export async function listSubjectClasses(db: Database, subjectId: number, opts: SubjectScopeParams): Promise<SubjectClassOverview[]> {
   const classes = await classesForSubject(db, subjectId, opts);
   const { clause, params } = periodFilter(opts.academicTermId);
+  const previousTermId = await getPreviousTermId(db, opts.academicTermId);
   const results: SubjectClassOverview[] = [];
   for (const c of classes) {
     const rows = await db.all(
@@ -346,7 +389,17 @@ export async function listSubjectClasses(db: Database, subjectId: number, opts: 
       subjectId, c.classId, ...params
     );
     const agg = aggregateStudentRates(rows);
-    results.push({ ...c, studentsTracked: agg.studentsTracked, averageRate: agg.averageRate });
+
+    let previousAverageRate: number | null = null;
+    if (previousTermId != null) {
+      const prevRows = await db.all(
+        `SELECT student_id, status FROM attendance_records WHERE subject_id = ? AND class_id = ? AND academic_term_id = ?`,
+        subjectId, c.classId, previousTermId
+      );
+      if (prevRows.length > 0) previousAverageRate = aggregateStudentRates(prevRows).averageRate;
+    }
+
+    results.push({ ...c, studentsTracked: agg.studentsTracked, averageRate: agg.averageRate, previousAverageRate });
   }
   return results.sort((a, b) => a.className.localeCompare(b.className));
 }

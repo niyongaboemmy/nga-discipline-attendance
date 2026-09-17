@@ -233,6 +233,66 @@ describe('Subject-first dashboard (listAvailableSubjects / listSubjectClasses)',
   });
 });
 
+describe('Subject/class overview trend (previousAverageRate)', () => {
+  let db: Database;
+
+  beforeAll(async () => {
+    db = await setupTestDb();
+    await db.run(`INSERT INTO academic_years (id, name) VALUES (1, '2025-2026')`);
+    await db.run(
+      `INSERT INTO academic_terms (id, academic_year_id, name, start_date, end_date)
+       VALUES (20, 1, 'Term 1', '2025-09-01', '2025-12-15'), (21, 1, 'Term 2', '2026-01-10', '2026-04-30')`
+    );
+    await db.run(`INSERT INTO subjects (id, name, code) VALUES (5, 'Applied Mathematics II', 'MATH2')`);
+    await db.run(
+      `INSERT INTO class_subject_assignments
+         (class_id, class_name, subject_id, subject_name, teacher_id, teacher_name, academic_term_id, day_of_week, period)
+       VALUES ('cls-y2c', 'Year 2C', 5, 'Applied Mathematics II', 't1', 'Jean Bosco Uwitonze', 21, 1, '08:00')`
+    );
+
+    // Term 1 (id 20): 1 of 2 present -> 50%. Term 2 (id 21, "current"): both
+    // present -> 100%. A real improvement, and the two terms must not bleed
+    // into each other.
+    const rows: Array<[string, string, number, string]> = [
+      ['s1', '2025-10-02', 20, 'present'],
+      ['s1', '2025-10-04', 20, 'absent'],
+      ['s1', '2026-02-02', 21, 'present'],
+      ['s1', '2026-02-04', 21, 'present'],
+    ];
+    for (const [studentId, date, termId, status] of rows) {
+      await db.run(
+        `INSERT INTO attendance_records
+           (student_id, student_name, class_id, class_name, session_date, period, session_type, subject_id, status, marked_by, academic_term_id)
+         VALUES (?, 'Amina K.', 'cls-y2c', 'Year 2C', ?, 'Morning', 'subject', 5, ?, 't1', ?)`,
+        studentId, date, status, termId
+      );
+    }
+  });
+
+  it('compares the current term to the immediately preceding one, not any other term', async () => {
+    const subjects = await listAvailableSubjects(db, { role: 'admin', userId: 'x', academicTermId: 21 });
+    const math = subjects.find((s) => s.subjectId === 5)!;
+    expect(math.averageRate).toBe(100);
+    expect(math.previousAverageRate).toBe(50);
+
+    const classes = await listSubjectClasses(db, 5, { role: 'admin', userId: 'x', academicTermId: 21 });
+    expect(classes[0].averageRate).toBe(100);
+    expect(classes[0].previousAverageRate).toBe(50);
+  });
+
+  it('is null for the first term on record (nothing to compare against)', async () => {
+    const subjects = await listAvailableSubjects(db, { role: 'admin', userId: 'x', academicTermId: 20 });
+    const math = subjects.find((s) => s.subjectId === 5)!;
+    expect(math.previousAverageRate).toBeNull();
+  });
+
+  it('is null with no academicTermId given at all', async () => {
+    const subjects = await listAvailableSubjects(db, { role: 'admin', userId: 'x' });
+    const math = subjects.find((s) => s.subjectId === 5)!;
+    expect(math.previousAverageRate).toBeNull();
+  });
+});
+
 describe('Subject dashboard with a live MIS link (misToken present)', () => {
   let db: Database;
 
