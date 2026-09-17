@@ -24,11 +24,18 @@ Make sure you have Node.js (v20+) and npm installed.
 
 ### 2. Configure Environment variables
 
-Update the placeholders inside the `.env` configuration files.
+```bash
+cp client/.env.example client/.env
+cp server/.env.example server/.env
+```
+
+Then fill in `SSO_CLIENT_SECRET` in `server/.env` (issued by the MIS admin — ask the
+maintainer) and pick any long random `JWT_SECRET`. You sign in with your NGA MIS
+account; the SQLite database is created automatically on first run.
 
 #### Frontend Client Configuration (`client/.env`):
 ```ini
-VITE_MIS_LOGIN_URL=https://ngamis.isengesho.com/login
+VITE_MIS_LOGIN_URL=https://mis.amashuri.com/login
 VITE_SSO_CLIENT_ID=your_client_id
 VITE_API_BASE_URL=/api
 ```
@@ -36,7 +43,7 @@ VITE_API_BASE_URL=/api
 #### Backend Server Configuration (`server/.env`):
 ```ini
 PORT=5171
-NGA_MIS_BASE_URL=https://ngamis.isengesho.com
+NGA_MIS_BASE_URL=https://api.amashuri.com
 SSO_CLIENT_ID=your_client_id
 SSO_CLIENT_SECRET=your_client_secret
 JWT_SECRET=your_jwt_secret_phrase
@@ -51,11 +58,11 @@ From the root directory of this repository:
 # Install dependencies for both frontend and backend
 npm run install:all
 
-# Run both client (port 5172) and server (port 5171) concurrently
+# Run both client (port 3000) and server (port 5171) concurrently
 npm run dev
 ```
 
-The React frontend will open on: **[http://localhost:5172](http://localhost:5172)**.
+The React frontend will open on: **[http://localhost:3000](http://localhost:3000)**.
 
 To build for production:
 
