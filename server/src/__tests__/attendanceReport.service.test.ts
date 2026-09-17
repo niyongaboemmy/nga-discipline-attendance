@@ -239,8 +239,16 @@ describe('Subject dashboard with a live MIS link (misToken present)', () => {
   function mockMisTeacherSubjects(response: unknown[]) {
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes('/academics/teachers/t1/subjects')) {
-        return new Response(JSON.stringify({ data: response }), {
+      if (u.includes('/academics/teacher-assignments')) {
+        // The real endpoint is school-wide (filtered by academic_year_id
+        // only), not per-teacher -- mix in a row for a different teacher to
+        // prove the service itself narrows to the requesting user.
+        return new Response(JSON.stringify({
+          data: [
+            ...response,
+            { subject_id: 7, subject_name: 'Someone Else\'s Subject', class_group_id: 'cls-other', class_group_name: 'Other Class', teacher_id: 't-someone-else', academic_year_id: 1, academic_year_is_current: 1 },
+          ],
+        }), {
           status: 200, headers: { 'content-type': 'application/json' },
         });
       }
@@ -276,7 +284,7 @@ describe('Subject dashboard with a live MIS link (misToken present)', () => {
     // — nothing about subject 9, contradicting both the cache and the
     // attendance record seeded above.
     mockMisTeacherSubjects([
-      { subject_id: 5, subject_name: 'Applied Mathematics II', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', academic_year_id: 1, academic_year_is_current: 1 },
+      { subject_id: 5, subject_name: 'Applied Mathematics II', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', teacher_id: 't1', academic_year_id: 1, academic_year_is_current: 1 },
     ]);
 
     const subjects = await listAvailableSubjects(db, {
@@ -300,8 +308,8 @@ describe('Subject dashboard with a live MIS link (misToken present)', () => {
 
   it('filters the MIS response to the requested academic year', async () => {
     mockMisTeacherSubjects([
-      { subject_id: 5, subject_name: 'Applied Mathematics II', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', academic_year_id: 1, academic_year_is_current: 0 },
-      { subject_id: 9, subject_name: 'Advanced Database', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', academic_year_id: 2, academic_year_is_current: 1 },
+      { subject_id: 5, subject_name: 'Applied Mathematics II', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', teacher_id: 't1', academic_year_id: 1, academic_year_is_current: 0 },
+      { subject_id: 9, subject_name: 'Advanced Database', class_group_id: 'cls-y2c', class_group_name: 'Year 2C', teacher_id: 't1', academic_year_id: 2, academic_year_is_current: 1 },
     ]);
 
     const forYear1 = await listAvailableSubjects(db, {

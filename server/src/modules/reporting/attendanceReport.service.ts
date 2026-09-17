@@ -144,10 +144,13 @@ interface TeacherAssignmentRow {
 }
 
 /** Live "who teaches what" for one teacher, straight from the MIS's
- *  `TeacherSubjectAssignment` table (`GET /academics/teachers/:id/subjects`)
+ *  `TeacherSubjectAssignment` table via `GET /academics/teacher-assignments`
  *  — the same authoritative source the MIS's own "Assigned Subjects"
- *  dashboard tile reads, and the same endpoint academicsSync.service.ts
- *  already cross-checks against.
+ *  dashboard tile reads, and the same endpoint academicsSync.service.ts's
+ *  roster sync already confirms works (it filters this same table by
+ *  `academic_year_id` school-wide, then narrows to one teacher client-side;
+ *  there is no `/academics/teachers/:id/subjects` per-teacher path on the
+ *  real MIS, which is what this used to call and unconditionally 500'd on).
  *
  *  Earlier this fell back to the local `class_subject_assignments` roster
  *  cache (which only refreshes on a manual sync and can go stale) unioned
@@ -156,22 +159,41 @@ interface TeacherAssignmentRow {
  *  it" (an admin correction, a substitute, or a stale account link all
  *  falsify it), so a teacher could see subjects that were never actually
  *  theirs. Going straight to the MIS live removes that guesswork entirely —
- *  no cache to go stale, no proxy column to misread. */
+ *  no cache to go stale, no proxy column to misread.
+ *
+ *  Best-effort like that same roster-sync lookup: an older MIS or a
+ *  permissions hiccup returns no assignments rather than 500ing the whole
+ *  "By Subject" report. */
 async function fetchTeacherAssignments(
   misToken: string, userId: string, academicYearId?: number
 ): Promise<TeacherAssignmentRow[]> {
-  const raw = await misGetList(misToken, `/academics/teachers/${userId}/subjects`);
-  const relevant = academicYearId != null
-    ? raw.filter((a) => Number(a.academic_year_id) === academicYearId)
-    : raw.filter((a) => Number(a.academic_year_is_current) === 1);
+  let raw: any[];
+  try {
+    raw = await misGetList(misToken, '/academics/teacher-assignments', {
+      academic_year_id: academicYearId != null ? String(academicYearId) : undefined,
+    });
+  } catch (err) {
+    console.error('Attendance report: could not load teacher-assignments from MIS:', (err as Error).message);
+    return [];
+  }
+  const relevant = raw.filter((a) => {
+    const teacherId = a.user_id ?? a.teacher_id;
+    if (teacherId == null || String(teacherId) !== String(userId)) return false;
+    return academicYearId != null
+      ? Number(a.academic_year_id) === academicYearId
+      : Number(a.academic_year_is_current) === 1;
+  });
   return relevant
-    .filter((a) => a.subject_id != null && a.class_group_id != null)
-    .map((a) => ({
-      subjectId: Number(a.subject_id),
-      subjectName: a.subject_name || `Subject ${a.subject_id}`,
-      classId: String(a.class_group_id),
-      className: a.class_group_name || String(a.class_group_id),
-    }));
+    .filter((a) => a.subject_id != null && (a.class_group_id ?? a.class_id) != null)
+    .map((a) => {
+      const classId = a.class_group_id ?? a.class_id;
+      return {
+        subjectId: Number(a.subject_id),
+        subjectName: a.subject_name || `Subject ${a.subject_id}`,
+        classId: String(classId),
+        className: a.class_group_name || a.class_name || String(classId),
+      };
+    });
 }
 
 /** Which classes teach `subjectId` this term — every class for an admin (or
