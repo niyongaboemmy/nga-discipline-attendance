@@ -5,18 +5,29 @@ import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { HeroBanner } from '../components/common/HeroBanner';
 import { attendanceReportApi, type OwnSubjectSummary } from '../api/attendanceReport';
-import { rateColor } from '../utils/attendanceComment';
+import { rateColor, COMMENT_META, type AttendanceCommentTier } from '../utils/attendanceComment';
 import { TodayAgenda } from '../components/dashboard/TodayAgenda';
 import {
   Users, UserCheck, UserX, TrendingUp, TrendingDown, FileText, AlertCircle, Inbox,
-  Gavel, Award, BookOpen, Activity, ChevronRight, Sun,
+  Gavel, Award, BookOpen, Activity, ChevronRight, Sun, GraduationCap, AlertTriangle,
 } from 'lucide-react';
 
 interface OverviewData {
+  /** A class teacher (the MIS's own UserGrade assignment) gets everything on
+   *  this page scoped to their own class; everyone else (a subject-only
+   *  teacher, an admin) sees the whole school, same as before. */
+  scope: { isClassTeacher: false } | { isClassTeacher: true; classId: string; className: string; classIds: string[] };
   overallRate: number;
+  overallComment: AttendanceCommentTier;
+  /** Students below the at-risk bar this term -- only computed when scoped
+   *  to a single class teacher (null otherwise, not "0"). */
+  atRiskCount: number | null;
   totalStudentsTracked: number;
   today: { total: number; present: number; absent: number; late: number; excused: number };
   classes: Array<{ classId: string; className: string; rate: number; totalCount: number }>;
+  /** The A.1.2 (subject-session) counterpart to the homeroom numbers above,
+   *  same scope. `rate` is null when nothing's been recorded yet. */
+  subjectsSummary: { rate: number | null; total: number; subjectCount: number; studentsTracked: number };
   trends: Array<{ date: string; rate: number }>;
   recentActivity: Array<{ student_name: string; class_name: string; status: string; updated_at: string }>;
 }
@@ -79,56 +90,118 @@ const Feed: React.FC<{ items: OverviewData['recentActivity'] }> = ({ items }) =>
   );
 };
 
+/** A one-line verdict for the class teacher's own class -- the "judgement"
+ *  a head teacher actually wants at a glance, not just a bare percentage. */
+function judgement(stats: OverviewData): string {
+  if (stats.atRiskCount) {
+    return `${stats.atRiskCount} student${stats.atRiskCount === 1 ? '' : 's'} below 80% attendance this term — worth a look.`;
+  }
+  if (stats.overallComment === 'Excellent' || stats.overallComment === 'Good') {
+    return 'Homeroom attendance is healthy — no students currently at risk.';
+  }
+  return 'Homeroom attendance needs attention this term.';
+}
+
 // ---- Teacher / Admin ----
 const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | null }> = ({ stats, conduct }) => {
   const presentShare = stats.today.total ? Math.round((stats.today.present / stats.today.total) * 100) : 0;
   const absentShare = stats.today.total ? Math.round((stats.today.absent / stats.today.total) * 100) : 0;
   const rateTrend = stats.trends.length >= 2 ? stats.trends[stats.trends.length - 1].rate - stats.trends[stats.trends.length - 2].rate : 0;
+  const isClassTeacher = stats.scope.isClassTeacher;
 
   return (
     <>
       <TodayAgenda />
       <div className="grid grid-stats mb-6">
-        <StatCard label="Total Students" value={stats.totalStudentsTracked} accent="var(--primary)" icon={<Users size={18} />} tag="Term" sub="Tracked this term" />
+        <StatCard
+          label="Total Students" value={stats.totalStudentsTracked} accent="var(--primary)" icon={<Users size={18} />}
+          tag="Term" sub={isClassTeacher ? `In ${stats.scope.className}` : 'Tracked this term'}
+        />
         <StatCard label="Present Today" value={stats.today.present} accent="var(--success)" icon={<UserCheck size={18} />} tag="Today" trend={{ dir: 'up', text: `${presentShare}% of total` }} />
         <StatCard label="Absent Today" value={stats.today.absent} accent="var(--danger)" icon={<UserX size={18} />} tag="Today" trend={{ dir: 'down', text: `${absentShare}% of total` }} />
-        <StatCard label="Attendance Rate" value={`${stats.overallRate}%`} accent="var(--info)" icon={<TrendingUp size={18} />} tag="Overall" trend={{ dir: rateTrend >= 0 ? 'up' : 'down', text: `${rateTrend >= 0 ? '+' : ''}${rateTrend}% vs prev` }} />
+        <StatCard
+          label="Homeroom Rate" value={`${stats.overallRate}%`} accent={COMMENT_META[stats.overallComment].color} icon={<TrendingUp size={18} />}
+          tag={stats.overallComment} trend={{ dir: rateTrend >= 0 ? 'up' : 'down', text: `${rateTrend >= 0 ? '+' : ''}${rateTrend}% vs prev` }}
+        />
       </div>
 
       <div className="grid grid-main">
-        <section className="card">
-          <div className="card-header">
-            <div className="flex items-center gap-3">
-              <span className="section-icon"><BookOpen size={16} /></span>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="section-title">Class Performance</span>
-                  <span className="count-badge">{stats.classes.length} Active</span>
+        {isClassTeacher ? (
+          <section className="card">
+            <div className="card-header">
+              <div className="flex items-center gap-3">
+                <span className="section-icon"><GraduationCap size={16} /></span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="section-title">{stats.scope.className}</span>
+                    <span className={`badge ${stats.atRiskCount ? 'badge-warning' : 'badge-success'}`}>
+                      {stats.atRiskCount ? <AlertTriangle size={11} /> : COMMENT_META[stats.overallComment].icon} {stats.overallComment}
+                    </span>
+                  </div>
+                  <div className="card-subtitle">{judgement(stats)}</div>
                 </div>
-                <div className="card-subtitle">Sessions recorded and attendance rates</div>
               </div>
+              <Link to="/attendance/report" className="btn btn-ghost btn-sm">View report <ChevronRight size={14} /></Link>
             </div>
-            <Link to="/attendance/records" className="btn btn-ghost btn-sm">View All <ChevronRight size={14} /></Link>
-          </div>
-          <div className="card-body">
-            {stats.classes.length === 0 ? (
-              <div className="empty-state"><Inbox size={24} /><span className="text-sm">No attendance recorded yet</span></div>
-            ) : stats.classes.map((c) => (
-              <div key={c.classId} className="list-item">
-                <div style={{ minWidth: 0 }}>
-                  <span className="code-chip">{c.classId}</span>
-                  <div className="font-semibold mt-2">{c.className}</div>
-                  <div className="text-xs text-secondary mt-1">{c.totalCount} sessions recorded</div>
+            <div className="card-body flex gap-4 flex-wrap">
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold flex items-center gap-2"><Sun size={14} /> Homeroom</span>
+                  <span className="text-sm font-semibold" style={{ color: rateColor(stats.overallRate) }}>{stats.overallRate}%</span>
                 </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="progress" style={{ width: '110px' }}><div className={`progress-fill ${rateClass(c.rate)}`} style={{ width: `${c.rate}%` }} /></div>
-                  <span className="text-sm font-semibold">{c.rate}%</span>
-                  <Link to="/attendance/mark" className="btn btn-primary btn-sm">Mark now <ChevronRight size={14} /></Link>
+                <div className="progress"><div className={`progress-fill ${rateClass(stats.overallRate)}`} style={{ width: `${stats.overallRate}%` }} /></div>
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold flex items-center gap-2"><BookOpen size={14} /> Subjects</span>
+                  <span className="text-sm font-semibold" style={{ color: stats.subjectsSummary.rate != null ? rateColor(stats.subjectsSummary.rate) : 'var(--text-tertiary)' }}>
+                    {stats.subjectsSummary.rate != null ? `${stats.subjectsSummary.rate}%` : '—'}
+                  </span>
+                </div>
+                {stats.subjectsSummary.rate != null ? (
+                  <div className="progress"><div className={`progress-fill ${rateClass(stats.subjectsSummary.rate)}`} style={{ width: `${stats.subjectsSummary.rate}%` }} /></div>
+                ) : (
+                  <div className="text-xs text-secondary">No subject sessions recorded yet</div>
+                )}
+              </div>
+              <Link to="/attendance/mark" className="btn btn-primary btn-sm" style={{ alignSelf: 'center' }}>Mark attendance <ChevronRight size={14} /></Link>
+            </div>
+          </section>
+        ) : (
+          <section className="card">
+            <div className="card-header">
+              <div className="flex items-center gap-3">
+                <span className="section-icon"><BookOpen size={16} /></span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="section-title">Class Performance</span>
+                    <span className="count-badge">{stats.classes.length} Active</span>
+                  </div>
+                  <div className="card-subtitle">Sessions recorded and attendance rates</div>
                 </div>
               </div>
-            ))}
-          </div>
-        </section>
+              <Link to="/attendance/records" className="btn btn-ghost btn-sm">View All <ChevronRight size={14} /></Link>
+            </div>
+            <div className="card-body">
+              {stats.classes.length === 0 ? (
+                <div className="empty-state"><Inbox size={24} /><span className="text-sm">No attendance recorded yet</span></div>
+              ) : stats.classes.map((c) => (
+                <div key={c.classId} className="list-item">
+                  <div style={{ minWidth: 0 }}>
+                    <span className="code-chip">{c.classId}</span>
+                    <div className="font-semibold mt-2">{c.className}</div>
+                    <div className="text-xs text-secondary mt-1">{c.totalCount} sessions recorded</div>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="progress" style={{ width: '110px' }}><div className={`progress-fill ${rateClass(c.rate)}`} style={{ width: `${c.rate}%` }} /></div>
+                    <span className="text-sm font-semibold">{c.rate}%</span>
+                    <Link to="/attendance/mark" className="btn btn-primary btn-sm">Mark now <ChevronRight size={14} /></Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="card">
           <div className="card-header">
@@ -330,7 +403,11 @@ export const Dashboard: React.FC = () => {
         events.sort((a, b) => (a.date < b.date ? 1 : -1));
         setRecentEvents(events.slice(0, 6));
       } else {
-        const res = await fetch('/api/reports/overview', { headers: authHeaders() });
+        // scope=me: personalize to the caller's own class if they're a
+        // class teacher -- opt-in because /reports (Reports.tsx) hits this
+        // same endpoint for its explicitly whole-school view and must not
+        // get silently narrowed.
+        const res = await fetch('/api/reports/overview?scope=me', { headers: authHeaders() });
         if (!res.ok) throw new Error('Could not load the overview.');
         const result = await res.json();
         if (!result.success) throw new Error(result.message || 'Server error.');
@@ -367,7 +444,10 @@ export const Dashboard: React.FC = () => {
               <>Welcome to your attendance and conduct overview.</>
             )
           ) : stats && stats.today.total > 0 ? (
-            <>You have <strong>{stats.today.present} of {stats.today.total}</strong> students present today · overall rate <strong>{stats.overallRate}%</strong></>
+            <>
+              You have <strong>{stats.today.present} of {stats.today.total}</strong> students present today
+              {stats.scope.isClassTeacher ? <> in <strong>{stats.scope.className}</strong></> : null} · homeroom rate <strong>{stats.overallRate}%</strong>
+            </>
           ) : (
             <>No attendance marked yet today — jump into <strong>Mark Attendance</strong> to get started. 🚀</>
           )}
