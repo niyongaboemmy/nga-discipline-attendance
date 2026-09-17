@@ -12,7 +12,7 @@ import {
   type SubjectOverview, type SubjectClassOverview,
 } from '../api/attendanceReport';
 import { isoDate } from '../utils/time';
-import { COMMENT_META, COMMENT_FILL, COMMENT_BADGE, rateColor } from '../utils/attendanceComment';
+import { COMMENT_META, COMMENT_FILL, COMMENT_BADGE, rateColor, TrendBadge } from '../utils/attendanceComment';
 import { ClassAnalytics } from '../components/charts/ClassAnalytics';
 import {
   Printer, Download, Users, TrendingUp, AlertTriangle, Search, ArrowUpDown, CalendarDays, Inbox,
@@ -435,7 +435,10 @@ export const AttendanceReport: React.FC = () => {
                       </span>
                     </span>
                     <span className="ar-listitem-bar"><span className="ar-listitem-bar-fill" style={{ width: `${s.averageRate}%`, background: rateColor(s.averageRate) }} /></span>
-                    <span className="ar-listitem-rate" style={{ color: rateColor(s.averageRate) }}>{s.averageRate}%</span>
+                    <span className="ar-listitem-rate-col">
+                      <span className="ar-listitem-rate" style={{ color: rateColor(s.averageRate) }}>{s.averageRate}%</span>
+                      <TrendBadge current={s.averageRate} previous={s.previousAverageRate} />
+                    </span>
                     <ChevronRight size={16} className="ar-listitem-chevron" />
                   </button>
                 ))}
@@ -458,7 +461,10 @@ export const AttendanceReport: React.FC = () => {
                     </span>
                   </span>
                   <span className="ar-listitem-bar"><span className="ar-listitem-bar-fill" style={{ width: `${c.averageRate}%`, background: rateColor(c.averageRate) }} /></span>
-                  <span className="ar-listitem-rate" style={{ color: rateColor(c.averageRate) }}>{c.averageRate}%</span>
+                  <span className="ar-listitem-rate-col">
+                    <span className="ar-listitem-rate" style={{ color: rateColor(c.averageRate) }}>{c.averageRate}%</span>
+                    <TrendBadge current={c.averageRate} previous={c.previousAverageRate} />
+                  </span>
                   <ChevronRight size={16} className="ar-listitem-chevron" />
                 </button>
               ))}

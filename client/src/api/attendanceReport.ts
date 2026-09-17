@@ -52,6 +52,10 @@ export interface SubjectOverview {
   studentsTracked: number;
   averageRate: number;
   atRiskCount: number;
+  /** Same classes' average rate for this subject last term -- null if
+   *  there's no previous term to compare against, or no attendance was
+   *  recorded for it then. */
+  previousAverageRate: number | null;
 }
 
 export interface SubjectClassOverview {
@@ -60,6 +64,7 @@ export interface SubjectClassOverview {
   teacherName: string | null;
   studentsTracked: number;
   averageRate: number;
+  previousAverageRate: number | null;
 }
 
 export const attendanceReportApi = {

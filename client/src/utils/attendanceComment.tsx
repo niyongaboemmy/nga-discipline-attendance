@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, ThumbsUp, AlertCircle, XCircle } from 'lucide-react';
+import { CheckCircle2, ThumbsUp, AlertCircle, XCircle, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 
 export type AttendanceCommentTier = 'Excellent' | 'Good' | 'Fair' | 'Poor';
 
@@ -30,4 +30,26 @@ export function rateColor(rate: number): string {
   if (rate >= 85) return COMMENT_META.Good.color;
   if (rate >= 75) return COMMENT_META.Fair.color;
   return COMMENT_META.Poor.color;
+}
+
+/** ↑/↓/– vs. a previous-period rate (e.g. last term) — `null` when there's
+ *  nothing to compare against, which renders nothing at all rather than a
+ *  misleading "no change". A one-point wobble reads as noise, not a trend,
+ *  so it's shown as flat too. */
+export function TrendBadge({ current, previous }: { current: number; previous: number | null }) {
+  if (previous == null) return null;
+  const delta = current - previous;
+  if (Math.abs(delta) < 1) {
+    return (
+      <span className="trend-badge is-flat" title={`Same as last term (${previous}%)`}>
+        <Minus size={11} /> flat
+      </span>
+    );
+  }
+  const up = delta > 0;
+  return (
+    <span className={`trend-badge ${up ? 'is-up' : 'is-down'}`} title={`${previous}% last term`}>
+      {up ? <ArrowUp size={11} /> : <ArrowDown size={11} />} {Math.abs(Math.round(delta))}pt{Math.abs(Math.round(delta)) === 1 ? '' : 's'}
+    </span>
+  );
 }
