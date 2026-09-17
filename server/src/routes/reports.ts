@@ -9,6 +9,43 @@ import { ATTENDANCE_WARN_THRESHOLD } from '../shared/attendancePolicy.js';
 
 const router = Router();
 
+/** A transparent, explainable projection -- ordinary least-squares slope
+ *  through the recent daily rates, extrapolated to the end of the current
+ *  term (or a fixed 14-day horizon when the term's end date isn't known).
+ *  Deliberately not a "smart"/ML model: a teacher needs to be able to see
+ *  *why* the number is what it is (it's just "the trend, continued"), not
+ *  trust a black box. Returns null when there's too little data to mean
+ *  anything (fewer than 3 days recorded). */
+function computeProjection(
+  trendStats: Array<{ date: string; rate: number }>,
+  termEndDate: string | null
+): { projectedRate: number; horizonDays: number; horizonLabel: string; direction: 'up' | 'down' | 'flat' } | null {
+  if (trendStats.length < 3) return null;
+
+  const n = trendStats.length;
+  const xs = trendStats.map((_, i) => i);
+  const ys = trendStats.map((t) => t.rate);
+  const meanX = xs.reduce((a, b) => a + b, 0) / n;
+  const meanY = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (xs[i] - meanX) * (ys[i] - meanY); den += (xs[i] - meanX) ** 2; }
+  const slope = den === 0 ? 0 : num / den;
+
+  const today = new Date();
+  let horizonDays = 14;
+  let horizonLabel = 'in the next 2 weeks';
+  if (termEndDate) {
+    const end = new Date(`${termEndDate}T00:00:00`);
+    const diffDays = Math.round((end.getTime() - today.getTime()) / 86400000);
+    if (diffDays > 0) { horizonDays = diffDays; horizonLabel = 'by end of term'; }
+  }
+
+  const lastValue = ys[n - 1];
+  const projectedRate = Math.max(0, Math.min(100, Math.round(lastValue + slope * horizonDays)));
+  const direction = Math.abs(slope) < 0.15 ? 'flat' : slope > 0 ? 'up' : 'down';
+  return { projectedRate, horizonDays, horizonLabel, direction };
+}
+
 router.use(authMiddleware);
 
 // Get overview analytics stats (Teacher & Admin only)
@@ -71,7 +108,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
     );
 
     // 3. Class-by-class attendance rates (for a class teacher this is just
-    // their own class, so the client renders it differently -- see `scope`)
+    // their own assigned class(es) -- see `scope`)
     const classRates = await db.all(
       `SELECT
          class_id,
@@ -110,7 +147,9 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
         )).filter((s) => s.total > 0 && Math.round((s.attended / s.total) * 100) < ATTENDANCE_WARN_THRESHOLD).length
       : null;
 
-    // 4. Daily attendance rate over the last 7 sessions (for trend charts)
+    // 4. Daily attendance rate over the last 14 sessions (for the trend
+    // chart and the projection below -- 7 was too thin a base to fit a
+    // trend line through).
     const trends = await db.all(
       `SELECT
          session_date as date,
@@ -120,7 +159,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
        WHERE 1=1${periodFilter}
        GROUP BY session_date
        ORDER BY session_date DESC
-       LIMIT 7`,
+       LIMIT 14`,
       ...periodParams
     );
 
@@ -128,6 +167,11 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
       date: t.date,
       rate: t.total > 0 ? Math.round((t.present / t.total) * 100) : 100,
     }));
+
+    const termEndRow = academicTermId != null
+      ? await db.get<{ end_date: string | null }>(`SELECT end_date FROM academic_terms WHERE id = ?`, academicTermId)
+      : undefined;
+    const projection = computeProjection(trendStats, termEndRow?.end_date ?? null);
 
     // 5. Recent activity log
     const recentActivity = await db.all(
@@ -166,8 +210,9 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
       success: true,
       data: {
         scope: isClassTeacher
-          ? { isClassTeacher: true, classId: scopedClassIds[0], className: myClasses[0].name, classIds: scopedClassIds }
+          ? { isClassTeacher: true, classIds: scopedClassIds, classNames: myClasses.map((c) => c.name) }
           : { isClassTeacher: false },
+        projection,
         overallRate,
         overallComment: attendanceComment(overallRate),
         atRiskCount,

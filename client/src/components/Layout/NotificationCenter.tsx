@@ -9,7 +9,10 @@ import {
 } from '../../api/notifications';
 import { relativeTime, isoDate } from '../../utils/time';
 
-const ICONS: Record<NotificationType, React.ReactNode> = {
+/** Exported so other surfaces (the Dashboard's alerts panel) can render
+ *  notifications with the same visual language as this dropdown, instead
+ *  of drifting into their own icon set over time. */
+export const NOTIFICATION_ICONS: Record<NotificationType, React.ReactNode> = {
   register_missing: <PenLine size={15} />,
   homeroom_missing: <Sun size={15} />,
   lesson_soon: <Clock3 size={15} />,
@@ -20,7 +23,9 @@ const ICONS: Record<NotificationType, React.ReactNode> = {
   system: <Info size={15} />,
 };
 
-const isUnread = (n: AppNotification) => !n.read || n.read === 0;
+export const isUnreadNotification = (n: AppNotification) => !n.read || n.read === 0;
+const isUnread = isUnreadNotification;
+const ICONS = NOTIFICATION_ICONS;
 
 interface Props {
   open: boolean;

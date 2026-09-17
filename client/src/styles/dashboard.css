@@ -1,0 +1,40 @@
+/* ==========================================================================
+   Dashboard — judgement banner, trend/projection readout, alerts panel.
+   ========================================================================== */
+
+.judgement-banner {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  margin-bottom: 20px;
+}
+.judgement-banner.is-success { border-color: color-mix(in srgb, var(--success) 35%, var(--border)); background: var(--success-light); }
+.judgement-banner.is-warning { border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); background: var(--warning-light); }
+.judgement-banner.is-danger  { border-color: color-mix(in srgb, var(--danger) 45%, var(--border));  background: var(--danger-light); }
+
+.judgement-icon {
+  display: grid; place-items: center; flex: none;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg-card);
+}
+.judgement-banner.is-success .judgement-icon { color: var(--success); }
+.judgement-banner.is-warning .judgement-icon { color: var(--warning); }
+.judgement-banner.is-danger  .judgement-icon { color: var(--danger); }
+
+.judgement-text { font-size: 14px; font-weight: 600; color: var(--text-primary); line-height: 1.4; }
+.judgement-projection {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-top: 6px;
+  font-size: 12px; font-weight: 600; color: var(--text-secondary);
+}
+.judgement-projection.is-up { color: var(--success); }
+.judgement-projection.is-down { color: var(--danger); }
+
+/* ---- Alerts panel (reuses the notification dropdown's visual language) --
+   .notif-item/.notif-sevbar/.notif-icon/.notif-text are already styled for
+   the bell dropdown in design-system.css; this just makes them work at
+   full card width, not in a fixed-height popover. */
+.dash-alerts-list { display: flex; flex-direction: column; }
+.dash-alerts-list .notif-item { width: 100%; }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -7,21 +7,30 @@ import { HeroBanner } from '../components/common/HeroBanner';
 import { attendanceReportApi, type OwnSubjectSummary } from '../api/attendanceReport';
 import { rateColor, COMMENT_META, type AttendanceCommentTier } from '../utils/attendanceComment';
 import { TodayAgenda } from '../components/dashboard/TodayAgenda';
+import { TrendLine, type TrendPoint } from '../components/charts/TrendLine';
+import { getNotifications, markNotificationRead, type AppNotification } from '../api/notifications';
+import { NOTIFICATION_ICONS, isUnreadNotification } from '../components/Layout/NotificationCenter';
+import { relativeTime } from '../utils/time';
 import {
-  Users, UserCheck, UserX, TrendingUp, TrendingDown, FileText, AlertCircle, Inbox,
-  Gavel, Award, BookOpen, Activity, ChevronRight, Sun, GraduationCap, AlertTriangle,
+  Users, UserCheck, UserX, TrendingUp, TrendingDown, Minus, FileText, AlertCircle, Inbox,
+  Gavel, Award, BookOpen, Activity, ChevronRight, Sun, GraduationCap, AlertTriangle, Bell,
+  CheckCircle2, ThumbsUp, Sparkles,
 } from 'lucide-react';
+
+interface Projection { projectedRate: number; horizonDays: number; horizonLabel: string; direction: 'up' | 'down' | 'flat'; }
 
 interface OverviewData {
   /** A class teacher (the MIS's own UserGrade assignment) gets everything on
-   *  this page scoped to their own class; everyone else (a subject-only
-   *  teacher, an admin) sees the whole school, same as before. */
-  scope: { isClassTeacher: false } | { isClassTeacher: true; classId: string; className: string; classIds: string[] };
+   *  this page scoped to their own assigned class(es) -- one or several;
+   *  everyone else (a subject-only teacher, an admin) sees the whole
+   *  school, same as before. */
+  scope: { isClassTeacher: false } | { isClassTeacher: true; classIds: string[]; classNames: string[] };
   overallRate: number;
   overallComment: AttendanceCommentTier;
   /** Students below the at-risk bar this term -- only computed when scoped
-   *  to a single class teacher (null otherwise, not "0"). */
+   *  to a class teacher (null otherwise, not "0"). */
   atRiskCount: number | null;
+  atRiskThreshold: number;
   totalStudentsTracked: number;
   today: { total: number; present: number; absent: number; late: number; excused: number };
   classes: Array<{ classId: string; className: string; rate: number; totalCount: number }>;
@@ -29,6 +38,9 @@ interface OverviewData {
    *  same scope. `rate` is null when nothing's been recorded yet. */
   subjectsSummary: { rate: number | null; total: number; subjectCount: number; studentsTracked: number };
   trends: Array<{ date: string; rate: number }>;
+  /** A simple linear projection from the recent trend -- null when there's
+   *  too little data (fewer than 3 days recorded) to mean anything. */
+  projection: Projection | null;
   recentActivity: Array<{ student_name: string; class_name: string; status: string; updated_at: string }>;
 }
 /** One real session, flattened out of `/api/attendance/me`'s day-by-day
@@ -90,17 +102,121 @@ const Feed: React.FC<{ items: OverviewData['recentActivity'] }> = ({ items }) =>
   );
 };
 
-/** A one-line verdict for the class teacher's own class -- the "judgement"
- *  a head teacher actually wants at a glance, not just a bare percentage. */
-function judgement(stats: OverviewData): string {
-  if (stats.atRiskCount) {
-    return `${stats.atRiskCount} student${stats.atRiskCount === 1 ? '' : 's'} below 80% attendance this term — worth a look.`;
+/** A one-line verdict -- the judgement a head teacher actually wants at a
+ *  glance, not just a bare percentage -- folding in the trend projection
+ *  when it says something the current numbers alone don't. */
+function judgement(stats: OverviewData): { text: string; severity: 'success' | 'warning' | 'danger' } {
+  const base = stats.atRiskCount
+    ? {
+        text: `${stats.atRiskCount} student${stats.atRiskCount === 1 ? '' : 's'} below ${stats.atRiskThreshold}% attendance this term — worth a look.`,
+        severity: 'warning' as const,
+      }
+    : stats.overallComment === 'Excellent' || stats.overallComment === 'Good'
+      ? { text: 'Attendance is healthy — no students currently at risk.', severity: 'success' as const }
+      : { text: 'Attendance needs attention this term.', severity: 'warning' as const };
+
+  const p = stats.projection;
+  if (!p || p.direction === 'flat') return base;
+  // A downward trend upgrades the severity even if nobody has crossed the
+  // at-risk line yet -- that's the whole point of a projection: seeing it
+  // coming, not just reacting once it's already true.
+  if (p.direction === 'down' && p.projectedRate < stats.overallRate - 3) {
+    return {
+      text: `${base.text} Trending down — projected ${p.projectedRate}% ${p.horizonLabel} if this continues.`,
+      severity: p.projectedRate < stats.atRiskThreshold ? 'danger' : 'warning',
+    };
   }
-  if (stats.overallComment === 'Excellent' || stats.overallComment === 'Good') {
-    return 'Homeroom attendance is healthy — no students currently at risk.';
+  if (p.direction === 'up' && p.projectedRate > stats.overallRate + 3 && base.severity === 'success') {
+    return { text: `${base.text} Trending up — projected ${p.projectedRate}% ${p.horizonLabel}.`, severity: 'success' };
   }
-  return 'Homeroom attendance needs attention this term.';
+  return base;
 }
+
+/** The judgement, made visually first-class instead of a small subtitle
+ *  buried under a stat card -- this is the one thing a teacher should be
+ *  able to read without scrolling. */
+const JudgementBanner: React.FC<{ stats: OverviewData }> = ({ stats }) => {
+  const { text, severity } = judgement(stats);
+  const icon = severity === 'danger' ? <AlertTriangle size={18} />
+    : severity === 'warning' ? <AlertCircle size={18} />
+    : stats.overallComment === 'Excellent' ? <Sparkles size={18} /> : <ThumbsUp size={18} />;
+  return (
+    <div className={`judgement-banner is-${severity}`}>
+      <span className="judgement-icon">{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="judgement-text">{text}</div>
+        {stats.projection && (
+          <div className={`judgement-projection is-${stats.projection.direction}`}>
+            {stats.projection.direction === 'up' ? <TrendingUp size={13} /> : stats.projection.direction === 'down' ? <TrendingDown size={13} /> : <Minus size={13} />}
+            Projected {stats.projection.projectedRate}% {stats.projection.horizonLabel}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/** Recent, relevant alerts -- pulled straight from the same notification
+ *  system behind the bell icon (no new alert type invented here), so this
+ *  and the dropdown never disagree about what counts as unread. */
+const AlertsPanel: React.FC = () => {
+  const [items, setItems] = useState<AppNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    getNotifications().then(setItems).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const unread = items.filter(isUnreadNotification);
+  const shown = unread.slice(0, 5);
+
+  const open = (n: AppNotification) => {
+    if (isUnreadNotification(n)) {
+      setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: 1 } : x)));
+      markNotificationRead(n.id).catch(() => {});
+    }
+    if (n.link) window.location.assign(n.link);
+  };
+
+  return (
+    <section className="card">
+      <div className="card-header">
+        <div className="flex items-center gap-3">
+          <span className="section-icon"><Bell size={16} /></span>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="section-title">Alerts</span>
+              {unread.length > 0 && <span className="count-badge">{unread.length} new</span>}
+            </div>
+            <div className="card-subtitle">Things that need your attention</div>
+          </div>
+        </div>
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {loading ? (
+          <div style={{ padding: 24 }}><LoadingSpinner /></div>
+        ) : shown.length === 0 ? (
+          <div className="empty-state"><CheckCircle2 size={22} /><span className="text-sm">You're all caught up</span></div>
+        ) : (
+          <div className="dash-alerts-list">
+            {shown.map((n) => (
+              <button key={n.id} className={`notif-item${isUnreadNotification(n) ? ' is-unread' : ''}`} onClick={() => open(n)}>
+                <span className={`notif-sevbar is-${n.severity || 'info'}`} />
+                <span className="notif-icon">{NOTIFICATION_ICONS[n.type] ?? <AlertCircle size={15} />}</span>
+                <span className="notif-text">
+                  <span className="notif-title">{n.title}</span>
+                  <span className="notif-body">{n.message}</span>
+                  <span className="notif-time">{relativeTime(n.created_at)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
 
 // ---- Teacher / Admin ----
 const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | null }> = ({ stats, conduct }) => {
@@ -108,14 +224,24 @@ const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | n
   const absentShare = stats.today.total ? Math.round((stats.today.absent / stats.today.total) * 100) : 0;
   const rateTrend = stats.trends.length >= 2 ? stats.trends[stats.trends.length - 1].rate - stats.trends[stats.trends.length - 2].rate : 0;
   const isClassTeacher = stats.scope.isClassTeacher;
+  const classCount = stats.classes.length;
+
+  const trendPoints: TrendPoint[] = stats.trends.map((t) => ({
+    label: new Date(`${t.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    longLabel: new Date(`${t.date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
+    value: t.rate,
+  }));
 
   return (
     <>
       <TodayAgenda />
+      <JudgementBanner stats={stats} />
+
       <div className="grid grid-stats mb-6">
         <StatCard
           label="Total Students" value={stats.totalStudentsTracked} accent="var(--primary)" icon={<Users size={18} />}
-          tag="Term" sub={isClassTeacher ? `In ${stats.scope.className}` : 'Tracked this term'}
+          tag="Term"
+          sub={isClassTeacher ? (classCount === 1 ? `In ${stats.scope.classNames[0]}` : `Across ${classCount} classes`) : 'Tracked this term'}
         />
         <StatCard label="Present Today" value={stats.today.present} accent="var(--success)" icon={<UserCheck size={18} />} tag="Today" trend={{ dir: 'up', text: `${presentShare}% of total` }} />
         <StatCard label="Absent Today" value={stats.today.absent} accent="var(--danger)" icon={<UserX size={18} />} tag="Today" trend={{ dir: 'down', text: `${absentShare}% of total` }} />
@@ -126,64 +252,52 @@ const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | n
       </div>
 
       <div className="grid grid-main">
-        {isClassTeacher ? (
+        <div className="flex flex-col gap-6">
+          <section className="card">
+            <div className="card-header">
+              <div className="flex items-center gap-3">
+                <span className="section-icon"><Sun size={16} /></span>
+                <div>
+                  <div className="section-title">Attendance trend</div>
+                  <div className="card-subtitle">Homeroom rate over the last {stats.trends.length} recorded day{stats.trends.length === 1 ? '' : 's'}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-2 text-sm">
+                  <BookOpen size={14} className="text-secondary" />
+                  <span className="font-semibold" style={{ color: stats.subjectsSummary.rate != null ? rateColor(stats.subjectsSummary.rate) : 'var(--text-tertiary)' }}>
+                    {stats.subjectsSummary.rate != null ? `${stats.subjectsSummary.rate}% subjects` : 'No subjects yet'}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="card-body">
+              {trendPoints.length >= 2 ? (
+                <TrendLine title="Homeroom attendance rate" points={trendPoints} valueLabel="Rate" />
+              ) : (
+                <div className="empty-state" style={{ padding: '24px 0' }}><Inbox size={22} /><span className="text-sm">Not enough days recorded yet for a trend.</span></div>
+              )}
+            </div>
+          </section>
+
           <section className="card">
             <div className="card-header">
               <div className="flex items-center gap-3">
                 <span className="section-icon"><GraduationCap size={16} /></span>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="section-title">{stats.scope.className}</span>
-                    <span className={`badge ${stats.atRiskCount ? 'badge-warning' : 'badge-success'}`}>
-                      {stats.atRiskCount ? <AlertTriangle size={11} /> : COMMENT_META[stats.overallComment].icon} {stats.overallComment}
-                    </span>
+                    <span className="section-title">{isClassTeacher ? 'My Classes' : 'Class Performance'}</span>
+                    <span className="count-badge">{classCount}{isClassTeacher ? '' : ' Active'}</span>
                   </div>
-                  <div className="card-subtitle">{judgement(stats)}</div>
+                  <div className="card-subtitle">{isClassTeacher ? `Your assigned class${classCount === 1 ? '' : 'es'}` : 'Sessions recorded and attendance rates'}</div>
                 </div>
               </div>
-              <Link to="/attendance/report" className="btn btn-ghost btn-sm">View report <ChevronRight size={14} /></Link>
-            </div>
-            <div className="card-body flex gap-4 flex-wrap">
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold flex items-center gap-2"><Sun size={14} /> Homeroom</span>
-                  <span className="text-sm font-semibold" style={{ color: rateColor(stats.overallRate) }}>{stats.overallRate}%</span>
-                </div>
-                <div className="progress"><div className={`progress-fill ${rateClass(stats.overallRate)}`} style={{ width: `${stats.overallRate}%` }} /></div>
-              </div>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold flex items-center gap-2"><BookOpen size={14} /> Subjects</span>
-                  <span className="text-sm font-semibold" style={{ color: stats.subjectsSummary.rate != null ? rateColor(stats.subjectsSummary.rate) : 'var(--text-tertiary)' }}>
-                    {stats.subjectsSummary.rate != null ? `${stats.subjectsSummary.rate}%` : '—'}
-                  </span>
-                </div>
-                {stats.subjectsSummary.rate != null ? (
-                  <div className="progress"><div className={`progress-fill ${rateClass(stats.subjectsSummary.rate)}`} style={{ width: `${stats.subjectsSummary.rate}%` }} /></div>
-                ) : (
-                  <div className="text-xs text-secondary">No subject sessions recorded yet</div>
-                )}
-              </div>
-              <Link to="/attendance/mark" className="btn btn-primary btn-sm" style={{ alignSelf: 'center' }}>Mark attendance <ChevronRight size={14} /></Link>
-            </div>
-          </section>
-        ) : (
-          <section className="card">
-            <div className="card-header">
-              <div className="flex items-center gap-3">
-                <span className="section-icon"><BookOpen size={16} /></span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="section-title">Class Performance</span>
-                    <span className="count-badge">{stats.classes.length} Active</span>
-                  </div>
-                  <div className="card-subtitle">Sessions recorded and attendance rates</div>
-                </div>
-              </div>
-              <Link to="/attendance/records" className="btn btn-ghost btn-sm">View All <ChevronRight size={14} /></Link>
+              <Link to={isClassTeacher ? '/attendance/report' : '/attendance/records'} className="btn btn-ghost btn-sm">
+                {isClassTeacher ? 'View report' : 'View All'} <ChevronRight size={14} />
+              </Link>
             </div>
             <div className="card-body">
-              {stats.classes.length === 0 ? (
+              {classCount === 0 ? (
                 <div className="empty-state"><Inbox size={24} /><span className="text-sm">No attendance recorded yet</span></div>
               ) : stats.classes.map((c) => (
                 <div key={c.classId} className="list-item">
@@ -201,17 +315,21 @@ const StaffDashboard: React.FC<{ stats: OverviewData; conduct: ConductTotals | n
               ))}
             </div>
           </section>
-        )}
+        </div>
 
-        <section className="card">
-          <div className="card-header">
-            <div className="flex items-center gap-3">
-              <span className="section-icon"><Activity size={16} /></span>
-              <span className="section-title">Recent Activity</span>
+        <div className="flex flex-col gap-6">
+          <AlertsPanel />
+
+          <section className="card">
+            <div className="card-header">
+              <div className="flex items-center gap-3">
+                <span className="section-icon"><Activity size={16} /></span>
+                <span className="section-title">Recent Activity</span>
+              </div>
             </div>
-          </div>
-          <div className="card-body"><Feed items={stats.recentActivity} /></div>
-        </section>
+            <div className="card-body"><Feed items={stats.recentActivity} /></div>
+          </section>
+        </div>
       </div>
 
       {conduct && (
@@ -446,7 +564,7 @@ export const Dashboard: React.FC = () => {
           ) : stats && stats.today.total > 0 ? (
             <>
               You have <strong>{stats.today.present} of {stats.today.total}</strong> students present today
-              {stats.scope.isClassTeacher ? <> in <strong>{stats.scope.className}</strong></> : null} · homeroom rate <strong>{stats.overallRate}%</strong>
+              {stats.scope.isClassTeacher ? <> in <strong>{stats.scope.classNames.join(', ')}</strong></> : null} · homeroom rate <strong>{stats.overallRate}%</strong>
             </>
           ) : (
             <>No attendance marked yet today — jump into <strong>Mark Attendance</strong> to get started. 🚀</>
