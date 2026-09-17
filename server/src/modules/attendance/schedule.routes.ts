@@ -3,7 +3,7 @@ import { getDb } from '../../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
 import { resolveLiveAcademicPeriod } from '../../utils/academicPeriod.js';
-import { misGetOrNullObject, misGetListOrNull } from '../../services/misClient.js';
+import { misGetOrNullObject, misGetListOrNull, fetchClassTeacherClasses } from '../../services/misClient.js';
 import {
   schoolDateString,
   schoolMinutesOfDay,
@@ -106,34 +106,6 @@ async function fetchTimetable(
     .filter((s: Slot) => s.classId);
 
   return { slots, source: 'mis' };
-}
-
-/** Class groups where `userId` is the officially assigned Class Teacher for
- *  the given academic year — the MIS's `UserGrade` assignment, not merely
- *  "teaches a lesson in that class". The morning register is that teacher's
- *  responsibility alone, so this is what gates whether a homeroom entry is
- *  generated for them at all (co-teachers who happen to have the first
- *  period in a class, or admins with no such assignment, get none). */
-async function fetchClassTeacherClasses(
-  misToken: string,
-  userId: string,
-  academicYearId: number | undefined
-): Promise<{ id: string; name: string }[]> {
-  const rows = await misGetListOrNull(misToken, `/users/${userId}/grades`);
-  const out: { id: string; name: string }[] = [];
-  const seen = new Set<string>();
-  for (const r of rows ?? []) {
-    if (r?.class_group_id == null) continue;
-    const matchesYear = academicYearId != null
-      ? Number(r.academic_year_id) === academicYearId
-      : !!r.academic_year_is_current;
-    const id = String(r.class_group_id);
-    if (matchesYear && !seen.has(id)) {
-      seen.add(id);
-      out.push({ id, name: r.class_group_name || 'Class' });
-    }
-  }
-  return out;
 }
 
 interface Agg {

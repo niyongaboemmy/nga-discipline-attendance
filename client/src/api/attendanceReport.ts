@@ -65,6 +65,13 @@ export interface SubjectClassOverview {
 export const attendanceReportApi = {
   classes: () => apiGet<ReportableClass[]>('/api/reporting/attendance/classes'),
 
+  /** Class(es) the requesting user is the officially assigned Class Teacher
+   *  for -- empty for anyone else (a subject-only teacher, an admin with no
+   *  personal class). Lets the "By Class" report skip its own picker for a
+   *  class teacher instead of making them find their own class in a list of
+   *  every class in the school. */
+  myClasses: () => apiGet<{ id: string; name: string }[]>('/api/reporting/attendance/my-classes'),
+
   sections: (classId: string) =>
     apiGet<ClassSection[]>(`/api/reporting/attendance/classes/${encodeURIComponent(classId)}/sections`),
 

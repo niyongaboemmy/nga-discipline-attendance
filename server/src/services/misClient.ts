@@ -81,6 +81,35 @@ export async function misGetOrNullObject(
   }
 }
 
+/** Class groups where `userId` is the officially assigned Class Teacher for
+ *  the given academic year — the MIS's `UserGrade` assignment, not merely
+ *  "teaches a lesson in that class". Shared by the calendar-driven homeroom
+ *  gate (a co-teacher who happens to have the first period in a class, or an
+ *  admin with no such assignment, gets no homeroom entry) and the
+ *  attendance report (a class teacher shouldn't have to pick their own
+ *  class out of a list of every class in the school). */
+export async function fetchClassTeacherClasses(
+  misToken: string,
+  userId: string,
+  academicYearId: number | undefined
+): Promise<{ id: string; name: string }[]> {
+  const rows = await misGetListOrNull(misToken, `/users/${userId}/grades`);
+  const out: { id: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const r of rows ?? []) {
+    if (r?.class_group_id == null) continue;
+    const matchesYear = academicYearId != null
+      ? Number(r.academic_year_id) === academicYearId
+      : !!r.academic_year_is_current;
+    const id = String(r.class_group_id);
+    if (matchesYear && !seen.has(id)) {
+      seen.add(id);
+      out.push({ id, name: r.class_group_name || 'Class' });
+    }
+  }
+  return out;
+}
+
 export function sendMisError(res: Response, path: string, error: unknown) {
   if (error instanceof MisRequestError) {
     return res.status(error.status).json({ success: false, message: error.message });

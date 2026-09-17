@@ -3,6 +3,7 @@ import { getDb } from '../../database.js';
 import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../../utils/academicPeriod.js';
+import { fetchClassTeacherClasses } from '../../services/misClient.js';
 import {
   getAttendanceSummary, getDisciplineSummary, getCombinedReport, compareTerms, getAnnualReport,
 } from './reporting.service.js';
@@ -144,6 +145,22 @@ router.get('/attendance/classes', async (req: any, res: Response) => {
   } catch (error) {
     console.error('Error listing reportable classes:', error);
     return res.status(500).json({ success: false, message: 'Error listing classes.' });
+  }
+});
+
+// Which class(es), if any, the requesting user is the officially assigned
+// Class Teacher for -- so the report can skip straight to their own class
+// instead of making them pick it out of every class in the school.
+router.get('/attendance/my-classes', async (req: any, res: Response) => {
+  const authReq = req as AuthenticatedRequest;
+  const { academicYearId } = resolveAcademicPeriod(authReq);
+  if (!authReq.user?.misToken) return res.json({ success: true, data: [] });
+  try {
+    const data = await fetchClassTeacherClasses(authReq.user.misToken, authReq.user.id, academicYearId);
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching class-teacher assignments:', error);
+    return res.status(500).json({ success: false, message: 'Error fetching your class assignment.' });
   }
 });
 

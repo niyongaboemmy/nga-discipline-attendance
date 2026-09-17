@@ -129,6 +129,23 @@ export const AttendanceReport: React.FC = () => {
   }, []);
   useEffect(() => { loadClasses(); }, [loadClasses]);
 
+  // A class teacher (the MIS's own "Class Teacher" assignment, not merely
+  // teaching a lesson in a class) shouldn't have to find their own class in
+  // a list of every class in the school -- null while unresolved, [] once
+  // confirmed this user isn't one.
+  const [myClasses, setMyClasses] = useState<{ id: string; name: string }[] | null>(null);
+  useEffect(() => {
+    attendanceReportApi.myClasses()
+      .then((r) => setMyClasses(r.data ?? []))
+      .catch(() => setMyClasses([]));
+  }, []);
+  const isClassTeacher = (myClasses?.length ?? 0) > 0;
+  const lockedClass = myClasses && myClasses.length === 1 ? myClasses[0] : null;
+  useEffect(() => {
+    if (mode === 'class' && !classId && lockedClass) patch({ classId: lockedClass.id, section: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, classId, lockedClass?.id]);
+
   useEffect(() => {
     if (!classId) { setSections([]); return; }
     const want = pendingSectionKey ?? params.get('section');
@@ -276,7 +293,12 @@ export const AttendanceReport: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const classOptions = classes.map((c) => ({ value: c.classId, label: c.className }));
+  // A class teacher picks from just their own class(es), not every class in
+  // the school -- relevant only when they have more than one (the single-
+  // class case is locked entirely, see `lockedClass`).
+  const classOptions = isClassTeacher
+    ? (myClasses ?? []).map((c) => ({ value: c.id, label: c.name }))
+    : classes.map((c) => ({ value: c.classId, label: c.className }));
   const currentClassName = subjectClasses.find((c) => c.classId === classId)?.className || classes.find((c) => c.classId === classId)?.className;
 
   return (
@@ -310,14 +332,19 @@ export const AttendanceReport: React.FC = () => {
             <>
               <div className="ar-picker-inline">
                 <span className="ar-filter-label sr-only">Class</span>
-                <SearchableSelect
-                  options={classOptions}
-                  value={classId}
-                  onChange={(v) => patch({ classId: v, section: null })}
-                  placeholder={loadingClasses ? 'Loading classes…' : 'Select a class…'}
-                  disabled={loadingClasses}
-                  aria-label="Class"
-                />
+                {lockedClass ? (
+                  // A class teacher has exactly one class -- nothing to pick.
+                  <span className="ar-locked-class"><GraduationCap size={14} /> {lockedClass.name}</span>
+                ) : (
+                  <SearchableSelect
+                    options={classOptions}
+                    value={classId}
+                    onChange={(v) => patch({ classId: v, section: null })}
+                    placeholder={loadingClasses ? 'Loading classes…' : 'Select a class…'}
+                    disabled={loadingClasses}
+                    aria-label="Class"
+                  />
+                )}
               </div>
               {sections.length > 0 && (
                 <div className="ar-subjects">
@@ -440,14 +467,17 @@ export const AttendanceReport: React.FC = () => {
         </div>
       )}
 
-      {/* ---- By Class, nothing picked yet: the classes themselves are the picker ---- */}
+      {/* ---- By Class, nothing picked yet: the classes themselves are the
+          picker. A class teacher with exactly one class never sees this --
+          the effect above sends them straight to it; one with several sees
+          only those, not every class in the school. */}
       {mode === 'class' && !classId && (
         <div className="card ar-landing no-print">
           {error ? (
             <ErrorState message={error} onRetry={retry} />
-          ) : loadingClasses ? (
+          ) : loadingClasses || myClasses === null ? (
             <div style={{ padding: '32px 0' }}><LoadingSpinner /></div>
-          ) : classes.length === 0 ? (
+          ) : (isClassTeacher ? myClasses.length === 0 : classes.length === 0) ? (
             <div className="empty-state"><Inbox size={26} /><span className="text-sm">No classes to report on this term.</span></div>
           ) : (
             <>
@@ -459,7 +489,7 @@ export const AttendanceReport: React.FC = () => {
                 </div>
               </div>
               <div className="ar-class-grid">
-                {classes.map((c) => (
+                {(isClassTeacher ? myClasses.map((c) => ({ classId: c.id, className: c.name })) : classes).map((c) => (
                   <button key={c.classId} className="ar-class-tile" onClick={() => patch({ classId: c.classId, section: null })}>
                     <span className="ar-class-tile-icon"><GraduationCap size={18} /></span>
                     <span className="ar-class-tile-name">{c.className}</span>
