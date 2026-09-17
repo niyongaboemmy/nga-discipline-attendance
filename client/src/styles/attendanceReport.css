@@ -98,26 +98,33 @@ span.ar-crumb { padding-left: 4px; }
 }
 @media (max-width: 900px) { .ar-meta-grid { grid-template-columns: repeat(2, 1fr); } }
 
-/* ---- Toolbar: mode · date range · class + register ---- */
-.ar-toolbar { margin-bottom: 20px; }
+/* ---- Toolbar: mode · what to report on · date range — one compact,
+   wrapping row instead of two separately-padded ones, so it stays out of
+   the way of the report below it. */
+.ar-toolbar { margin-bottom: 14px; }
 .ar-toolbar-row {
-  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px;
-  padding: 12px 16px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+  padding: 8px 14px;
 }
-.ar-toolbar-row.is-picker { border-top: 1px solid var(--border); align-items: flex-start; justify-content: flex-start; }
-.ar-range { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.ar-range { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-left: auto; }
 .ar-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.ar-dates { display: flex; align-items: center; gap: 8px; }
-.ar-date { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-tertiary); }
-.ar-date .input { width: 150px; height: 32px; }
-.ar-picker { display: flex; flex-direction: column; gap: 6px; min-width: 240px; }
-.ar-picker .ar-subjects { border-top: none; padding-top: 0; }
+.ar-dates { display: flex; align-items: center; gap: 4px; }
+.ar-date { display: inline-flex; }
+.ar-date .input { width: 128px; height: 28px; font-size: 12.5px; }
+.ar-date-sep { color: var(--text-tertiary); font-size: 12px; }
+.ar-picker-inline { display: inline-flex; min-width: 190px; flex: none; }
+.ar-picker-inline .ss-control { height: 30px; }
+.ar-subjects { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ar-toolbar-row .ar-breadcrumb { margin: 0; }
+@media (max-width: 900px) {
+  .ar-range { margin-left: 0; width: 100%; }
+}
 @media (max-width: 720px) {
-  .ar-toolbar-row { padding: 12px; }
-  .ar-dates { width: 100%; }
+  .ar-toolbar-row { padding: 8px 12px; }
+  .ar-dates { flex: 1; }
   .ar-date { flex: 1; }
   .ar-date .input { width: 100%; }
-  .ar-picker { min-width: 0; width: 100%; }
+  .ar-picker-inline { min-width: 0; width: 100%; }
 }
 
 /* ---- Landing: the classes are the picker ---- */

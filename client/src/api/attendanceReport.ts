@@ -35,6 +35,7 @@ export interface ClassSectionReport {
   dateColumns: string[];
   students: StudentAttendanceRow[];
   classAverageRate: number;
+  atRiskThreshold: number;
 }
 
 export interface ClassSectionReportQuery {

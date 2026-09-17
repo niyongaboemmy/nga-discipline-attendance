@@ -1,5 +1,5 @@
 import { Database } from 'sqlite';
-import { attendanceRate } from '../../shared/attendancePolicy.js';
+import { attendanceRate, ATTENDANCE_WARN_THRESHOLD } from '../../shared/attendancePolicy.js';
 import { misGetList } from '../../services/misClient.js';
 
 /**
@@ -126,7 +126,7 @@ function aggregateStudentRates(rows: Array<{ student_id: string; status: string 
   }
   const rates = [...byStudent.values()].map((s) => attendanceRate(s.present + s.late + s.excused, s.total));
   const averageRate = rates.length ? Math.round(rates.reduce((a, b) => a + b, 0) / rates.length) : 100;
-  const atRiskCount = rates.filter((r) => r < 80).length;
+  const atRiskCount = rates.filter((r) => r < ATTENDANCE_WARN_THRESHOLD).length;
   return { studentsTracked: byStudent.size, averageRate, atRiskCount };
 }
 
@@ -384,6 +384,10 @@ export interface ClassSectionReport {
   dateColumns: string[];
   students: StudentAttendanceRow[];
   classAverageRate: number;
+  /** Below this rate, a student is flagged "at risk" -- the same
+   *  ATTENDANCE_WARN_THRESHOLD used everywhere else, sent along so the
+   *  client never has to hardcode its own copy of this number. */
+  atRiskThreshold: number;
 }
 
 export interface ClassSectionReportParams {
@@ -498,6 +502,7 @@ export async function getClassSectionReport(db: Database, p: ClassSectionReportP
     dateColumns,
     students,
     classAverageRate,
+    atRiskThreshold: ATTENDANCE_WARN_THRESHOLD,
   };
 }
 
@@ -518,6 +523,7 @@ export async function getOwnSectionReport(
       subjectId: p.sessionType === 'subject' ? p.subjectId ?? null : null,
       subjectName: null, teacherName: null, academicTermId: p.academicTermId ?? null,
       dateColumns: [], students: [], classAverageRate: 100,
+      atRiskThreshold: ATTENDANCE_WARN_THRESHOLD,
     };
   }
   const full = await getClassSectionReport(db, { ...p, classId });

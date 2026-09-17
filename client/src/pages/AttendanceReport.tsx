@@ -250,7 +250,14 @@ export const AttendanceReport: React.FC = () => {
     else { setSortKey(key); setSortDir(1); }
   };
 
-  const atRisk = useMemo(() => report?.students.filter((s) => s.rate < 80).length ?? 0, [report]);
+  // Read the server's threshold rather than hardcoding our own copy of it --
+  // ATTENDANCE_WARN_THRESHOLD is admin-configurable via env var, and a
+  // client-side constant would silently drift from it.
+  const atRiskThreshold = report?.atRiskThreshold ?? 80;
+  const atRisk = useMemo(
+    () => report?.students.filter((s) => s.rate < atRiskThreshold).length ?? 0,
+    [report, atRiskThreshold]
+  );
 
   const exportCSV = () => {
     if (!report) return;
@@ -285,7 +292,9 @@ export const AttendanceReport: React.FC = () => {
         </div>
       </div>
 
-      {/* ---- One toolbar: what to report on, and over which dates ---- */}
+      {/* ---- One compact toolbar row: mode, what to report on, and over
+          which dates — all inline so the filter bar stays out of the way
+          of the actual report below it. */}
       <div className="card ar-toolbar no-print">
         <div className="ar-toolbar-row">
           <div className="ar-mode-tabs" role="tablist" aria-label="Report mode">
@@ -296,42 +305,23 @@ export const AttendanceReport: React.FC = () => {
               <BookOpen size={14} /> By Subject
             </button>
           </div>
-          <div className="ar-range">
-            <div className="ar-presets" role="group" aria-label="Date range">
-              {([['2w', 'Last 2 weeks'], ['30d', 'Last 30 days'], ...(termFrom ? [['term', 'Full term']] : [])] as Array<[Preset, string]>).map(([p, label]) => (
-                <button key={p} className={`rp-chip${preset === p ? ' is-on' : ''}`} aria-pressed={preset === p} onClick={() => applyPreset(p)}>{label}</button>
-              ))}
-            </div>
-            <div className="ar-dates">
-              <label className="ar-date">
-                <span>From</span>
-                <input type="date" className="input" value={fromDate} onChange={(e) => patch({ from: e.target.value })} max={toDate} />
-              </label>
-              <label className="ar-date">
-                <span>To</span>
-                <input type="date" className="input" value={toDate} onChange={(e) => patch({ to: e.target.value })} min={fromDate} max={isoDate()} />
-              </label>
-            </div>
-          </div>
-        </div>
 
-        {mode === 'class' && classId ? (
-          <div className="ar-toolbar-row is-picker">
-            <div className="ar-picker">
-              <span className="ar-filter-label">Class</span>
-              <SearchableSelect
-                options={classOptions}
-                value={classId}
-                onChange={(v) => patch({ classId: v, section: null })}
-                placeholder={loadingClasses ? 'Loading classes…' : 'Select a class…'}
-                disabled={loadingClasses}
-                aria-label="Class"
-              />
-            </div>
-            {sections.length > 0 && (
-              <div className="ar-picker" style={{ flex: 1 }}>
-                <span className="ar-filter-label">Register</span>
+          {mode === 'class' && classId && (
+            <>
+              <div className="ar-picker-inline">
+                <span className="ar-filter-label sr-only">Class</span>
+                <SearchableSelect
+                  options={classOptions}
+                  value={classId}
+                  onChange={(v) => patch({ classId: v, section: null })}
+                  placeholder={loadingClasses ? 'Loading classes…' : 'Select a class…'}
+                  disabled={loadingClasses}
+                  aria-label="Class"
+                />
+              </div>
+              {sections.length > 0 && (
                 <div className="ar-subjects">
+                  <span className="ar-filter-label sr-only">Register</span>
                   {sections.map((sec) => {
                     const key = sec.kind === 'homeroom' ? 'homeroom' : String(sec.subjectId);
                     return (
@@ -347,12 +337,12 @@ export const AttendanceReport: React.FC = () => {
                     );
                   })}
                 </div>
-              </div>
-            )}
-          </div>
-        ) : mode === 'subject' ? (
-          <div className="ar-toolbar-row is-picker">
-            <div className="ar-breadcrumb" style={{ margin: 0 }}>
+              )}
+            </>
+          )}
+
+          {mode === 'subject' && (
+            <div className="ar-breadcrumb">
               <button className={`ar-crumb${selectedSubjectId == null ? ' is-current' : ''}`} onClick={resetToSubjects}>
                 <BookOpen size={13} /> Subjects
               </button>
@@ -371,8 +361,27 @@ export const AttendanceReport: React.FC = () => {
                 </>
               )}
             </div>
+          )}
+
+          <div className="ar-range">
+            <div className="ar-presets" role="group" aria-label="Date range">
+              {([['2w', 'Last 2 weeks'], ['30d', 'Last 30 days'], ...(termFrom ? [['term', 'Full term']] : [])] as Array<[Preset, string]>).map(([p, label]) => (
+                <button key={p} className={`rp-chip${preset === p ? ' is-on' : ''}`} aria-pressed={preset === p} onClick={() => applyPreset(p)}>{label}</button>
+              ))}
+            </div>
+            <div className="ar-dates">
+              <label className="ar-date">
+                <span className="sr-only">From</span>
+                <input type="date" className="input" value={fromDate} onChange={(e) => patch({ from: e.target.value })} max={toDate} />
+              </label>
+              <span className="ar-date-sep" aria-hidden="true">–</span>
+              <label className="ar-date">
+                <span className="sr-only">To</span>
+                <input type="date" className="input" value={toDate} onChange={(e) => patch({ to: e.target.value })} min={fromDate} max={isoDate()} />
+              </label>
+            </div>
           </div>
-        ) : null}
+        </div>
       </div>
 
       {/* ---- By Subject: drill-down lists ---- */}
@@ -492,7 +501,7 @@ export const AttendanceReport: React.FC = () => {
                 <span className="stat-label">Days recorded</span>
               </div>
               <div className="stat-card" style={{ ['--accent-color' as string]: atRisk > 0 ? 'var(--danger)' : 'var(--success)' }}>
-                <div className="flex items-center justify-between"><span className="stat-icon"><AlertTriangle size={18} /></span><span className="stat-tag">below 80%</span></div>
+                <div className="flex items-center justify-between"><span className="stat-icon"><AlertTriangle size={18} /></span><span className="stat-tag">below {atRiskThreshold}%</span></div>
                 <div className="stat-value">{atRisk}</div>
                 <span className="stat-label">At risk</span>
               </div>
