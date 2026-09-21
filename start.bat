@@ -35,13 +35,12 @@ if not exist "client\.env" (
 findstr /C:"PASTE_DEV_SECRET_FROM_MIS_SYSTEMS_PAGE" "server\.env" >nul 2>&1
 if not errorlevel 1 (
     echo.
-    echo   [X] server\.env still has a placeholder SSO secret, so signing in
-    echo       will fail. Ask the team lead for the Tendo dev SSO secret,
-    echo       then put it in server\.env as:
-    echo           SSO_CLIENT_SECRET=...
+    echo   [warn] server\.env still has a placeholder SSO secret.
+    echo          Everything will start, but SIGNING IN WILL FAIL until
+    echo          you ask your team lead for the Tendo dev SSO secret
+    echo          and put it in server\.env as:
+    echo              SSO_CLIENT_SECRET=...
     echo.
-    pause
-    exit /b 1
 )
 echo   - Configuration present
 echo   - Note: the database is a local SQLite file, created on first run.
