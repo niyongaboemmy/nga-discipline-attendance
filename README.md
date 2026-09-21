@@ -1,5 +1,7 @@
 # NGA Attendance System (SSO Integrated)
 
+> **Setting this up on your machine?** Start with **[LOCAL_SETUP.md](LOCAL_SETUP.md)** — it covers the whole local stack, including the Central MIS sign-in every module depends on.
+
 This is the attendance management system for NGA Central MIS. It integrates using standard OAuth2 Single Sign-On (SSO) with the NGA MIS login portal.
 
 ---
