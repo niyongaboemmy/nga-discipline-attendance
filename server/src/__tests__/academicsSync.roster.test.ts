@@ -114,6 +114,72 @@ describe('syncRosterSchedule — teacher-assignment cross-check', () => {
     expect(await getDb().all(`SELECT * FROM class_subject_assignments`)).toHaveLength(0);
   });
 
+  it('evicts a cached slot the MIS no longer returns (deleted / disabled subject or calendar)', async () => {
+    const kept = {
+      subject_id: 5, subject_name: 'Web Development', user_id: 7,
+      academic_term_id: 1, day_of_week: 1, start_time: '08:00',
+    };
+    const retired = {
+      subject_id: 6, subject_name: 'Old Subject', user_id: 7,
+      academic_term_id: 1, day_of_week: 2, start_time: '10:00',
+    };
+    const assignments = [
+      { user_id: 7, subject_id: 5, class_group_id: 10 },
+      { user_id: 7, subject_id: 6, class_group_id: 10 },
+    ];
+    mockMisFetch({
+      classGroups: [{ class_group_id: 10, name: 'L3 Class A' }],
+      slotsByClass: { 10: [kept, retired] },
+      assignments,
+    });
+    const { getDb } = await import('../database.js');
+    await syncRosterSchedule(getDb(), 'mis-tkn');
+    expect(await getDb().all(`SELECT * FROM class_subject_assignments`)).toHaveLength(2);
+
+    // The MIS soft-deletes the slot (or disables its subject): /calendar/slots
+    // simply stops listing it, while the teacher assignment still exists.
+    mockMisFetch({
+      classGroups: [{ class_group_id: 10, name: 'L3 Class A' }],
+      slotsByClass: { 10: [kept] },
+      assignments,
+    });
+    await syncRosterSchedule(getDb(), 'mis-tkn');
+    const rows = await getDb().all(`SELECT subject_id FROM class_subject_assignments`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].subject_id).toBe(5);
+  });
+
+  it('keeps cached rows for a class whose timetable fetch failed', async () => {
+    const slot = {
+      subject_id: 5, subject_name: 'Web Development', user_id: 7,
+      academic_term_id: 1, day_of_week: 1, start_time: '08:00',
+    };
+    const assignments = [{ user_id: 7, subject_id: 5, class_group_id: 10 }];
+    mockMisFetch({
+      classGroups: [{ class_group_id: 10, name: 'L3 Class A' }],
+      slotsByClass: { 10: [slot] },
+      assignments,
+    });
+    const { getDb } = await import('../database.js');
+    await syncRosterSchedule(getDb(), 'mis-tkn');
+    expect(await getDb().all(`SELECT * FROM class_subject_assignments`)).toHaveLength(1);
+
+    // A 500 from /calendar/slots is not "no timetable" -- nothing is evicted.
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      const json = (data: unknown) => new Response(JSON.stringify({ data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+      if (u.includes('/academics/subjects')) return json([]);
+      if (u.includes('/academics/teacher-assignments')) return json(assignments);
+      if (u.includes('/academics/class-groups')) return json([{ class_group_id: 10, name: 'L3 Class A' }]);
+      if (u.includes('/calendar/slots')) return new Response('error', { status: 500 });
+      return json([]);
+    }));
+    await syncRosterSchedule(getDb(), 'mis-tkn');
+    expect(await getDb().all(`SELECT * FROM class_subject_assignments`)).toHaveLength(1);
+  });
+
   it('falls back to trusting the timetable when the assignments lookup itself fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
       const u = String(url);

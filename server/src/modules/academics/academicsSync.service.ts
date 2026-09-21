@@ -164,12 +164,16 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
   //
   // Real route is /calendar/slots (see calendarController.ts's
   // getCalendarSlots), keyed by class_group_id -- not the guessed /schedule.
+  //
+  // A failed fetch is `null`, not `[]`: an empty list is a real answer ("this
+  // class has no timetable any more") that evicts the cache below, whereas a
+  // failure must leave the cached rows alone.
   const scheduleLists = await Promise.all(
     classesWithIds.map((e) =>
       fetchMisList('/calendar/slots', misToken, { class_group_id: String(e.classId) })
         .catch((err) => {
           console.error(`Roster sync: failed to fetch schedule for class ${e.classId}:`, (err as Error).message);
-          return [] as any[];
+          return null;
         })
     )
   );
@@ -177,6 +181,17 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
   for (let i = 0; i < classesWithIds.length; i++) {
     const { classId, className } = classesWithIds[i];
     const entries = scheduleLists[i];
+    if (entries === null) continue;
+
+    // Every (term, day, period, subject) the MIS still lists for this class.
+    // The upsert below only ever adds or overwrites, so a slot the MIS has
+    // since deleted (soft-deleted, moved, or on a subject/calendar that was
+    // disabled -- /calendar/slots no longer returns any of those) stayed in
+    // this cache forever and kept feeding the "scheduled" register list and
+    // the delivery-rate report. Anything not seen this pass is evicted.
+    const seen = new Set<string>();
+    const cacheKey = (termId: unknown, day: unknown, period: unknown, subjectId: unknown) =>
+      `${termId ?? ''}|${day ?? ''}|${period ?? ''}|${subjectId}`;
 
     for (const entry of entries) {
       const subjectId = pick(entry, 'subject_id', 'subjectId');
@@ -206,6 +221,8 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
         );
         continue;
       }
+
+      seen.add(cacheKey(academicTermId, dayOfWeek, period, subjectId));
 
       const subjectName = pick(entry, 'subject_name', 'subjectName') ?? `Subject ${subjectId}`;
       if (!subjectIds.has(Number(subjectId))) {
@@ -237,6 +254,19 @@ export async function syncRosterSchedule(db: Database, misToken: string): Promis
         period
       );
       assignmentCount++;
+    }
+
+    const cached = await db.all<{ subject_id: number; academic_term_id: number | null; day_of_week: number | null; period: string | null }[]>(
+      `SELECT subject_id, academic_term_id, day_of_week, period FROM class_subject_assignments WHERE class_id = ?`,
+      String(classId)
+    );
+    for (const row of cached) {
+      if (seen.has(cacheKey(row.academic_term_id, row.day_of_week, row.period, row.subject_id))) continue;
+      await db.run(
+        `DELETE FROM class_subject_assignments
+          WHERE class_id = ? AND subject_id = ? AND academic_term_id IS ? AND day_of_week IS ? AND period IS ?`,
+        String(classId), Number(row.subject_id), row.academic_term_id, row.day_of_week, row.period
+      );
     }
   }
 
