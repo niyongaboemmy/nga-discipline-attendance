@@ -31,9 +31,11 @@ cp client/.env.example client/.env
 cp server/.env.example server/.env
 ```
 
-Then fill in `SSO_CLIENT_SECRET` in `server/.env` (issued by the MIS admin — ask the
-maintainer) and pick any long random `JWT_SECRET`. You sign in with your NGA MIS
-account; the SQLite database is created automatically on first run.
+The copied defaults already work against a Central MIS running on your own
+machine, which `start.bat` sets up for you (see [LOCAL_SETUP.md](LOCAL_SETUP.md)).
+Only a deployment needs real values here: `SSO_CLIENT_SECRET` issued by the MIS
+admin, and a long random `JWT_SECRET`. The SQLite database is created
+automatically on first run.
 
 #### Frontend Client Configuration (`client/.env`):
 ```ini
