@@ -47,20 +47,15 @@ command -v node >/dev/null 2>&1 || die "Node.js is not installed, or not on your
     "Install the LTS build from https://nodejs.org/ and run this again."
 say "Node $(node -v)"
 
+# Creating .env only when it is missing never repairs one, and an .env written
+# during an earlier setup keeps pointing wherever it pointed then - for most
+# people the production MIS, so sign-in redirects there and fails. The script
+# fills in a missing file and, in one that exists, replaces only the settings
+# that wire the modules on this machine together (URLs, SSO client id/secret).
+# Your own keys are left alone and the old file is kept as .env.bak.
 echo "[2/5] Checking configuration..."
-[ -f "server/.env" ] || { cp "server/.env.example" "server/.env" && say "Created server/.env"; }
-[ -f "client/.env" ] || { cp "client/.env.example" "client/.env" && say "Created client/.env"; }
+node scripts/sync-local-env.cjs server client \n    || die "Could not write server/.env or client/.env - see the error above."
 # These files are git-ignored: your local settings can never be pushed.
-# An .env from an earlier setup pointed sign-in at the production MIS; sign-in
-# now goes through the local MIS below, so say so instead of failing at login.
-if grep -qE '^NGA_MIS_BASE_URL=https://api\.amashuri\.com|PASTE_DEV_SECRET_FROM_MIS_SYSTEMS_PAGE' "server/.env" 2>/dev/null \
-   || grep -q '^VITE_MIS_LOGIN_URL=https://mis\.amashuri\.com' "client/.env" 2>/dev/null; then
-    warn "Your .env files point at the production MIS (an older setup)." \
-         "Tendo now signs in through a Central MIS on this machine, so" \
-         "SIGNING IN WILL FAIL until they are updated. Easiest fix: move" \
-         "any keys you added out of server/.env and client/.env," \
-         "delete both files, and run ./start.sh again."
-fi
 say "Configuration present"
 
 say "Note: the database is a local SQLite file, created on first run."

@@ -22,33 +22,22 @@ if errorlevel 1 (
 for /f "tokens=*" %%V in ('node -v') do echo   - Node %%V
 
 :: -------------------------------------------------------- 2. .env from template
+:: Creating .env only when it is missing never repairs one, and an .env written
+:: during an earlier setup keeps pointing wherever it pointed then - for most
+:: people the production MIS, so sign-in redirects there and fails. The script
+:: fills in a missing file and, in one that exists, replaces only the settings
+:: that wire the modules on this machine together (URLs, SSO client id/secret).
+:: Your own keys are left alone and the old file is kept as .env.bak.
 echo [2/5] Checking configuration...
-if not exist "server\.env" (
-    copy "server\.env.example" "server\.env" >nul
-    echo   - Created server\.env
-)
-if not exist "client\.env" (
-    copy "client\.env.example" "client\.env" >nul
-    echo   - Created client\.env
+node scripts\sync-local-env.cjs server client
+if errorlevel 1 (
+    echo.
+    echo   [X] Could not write server\.env or client\.env - see the error above.
+    echo.
+    pause
+    exit /b 1
 )
 :: These files are git-ignored: your local settings can never be pushed.
-:: An .env from an earlier setup pointed sign-in at the production MIS and
-:: needed a secret pasted in. Sign-in now goes through the local MIS below, so
-:: that file can never work again - say so rather than fail at the login page.
-set "STALE_ENV="
-findstr /R /C:"^NGA_MIS_BASE_URL=https://api.amashuri.com" /C:"PASTE_DEV_SECRET_FROM_MIS_SYSTEMS_PAGE" "server\.env" >nul 2>&1
-if not errorlevel 1 set "STALE_ENV=1"
-findstr /R /C:"^VITE_MIS_LOGIN_URL=https://mis.amashuri.com" "client\.env" >nul 2>&1
-if not errorlevel 1 set "STALE_ENV=1"
-if defined STALE_ENV (
-    echo.
-    echo   [warn] Your .env files point at the production MIS ^(an older setup^).
-    echo          Tendo now signs in through a Central MIS on this machine, so
-    echo          SIGNING IN WILL FAIL until they are updated. Easiest fix: move
-    echo          any keys you added out of server\.env and client\.env,
-    echo          delete both files, and run start.bat again.
-    echo.
-)
 echo   - Configuration present
 echo   - Note: the database is a local SQLite file, created on first run.
 
