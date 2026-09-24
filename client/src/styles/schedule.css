@@ -563,17 +563,26 @@
 /* The box's own height comes purely from `top`/`bottom` both being set on
    a `position: fixed` element, which CSS guarantees resolves to a
    definite height (fills exactly between those two edges) — no vh/dvh
-   unit involved. Header and footer size to their own content and stack
-   normally; the student list's height is the explicit calculation
-   `calc(100% - <measured head height> - <measured foot height>)`, with
-   --dh-head/--dh-foot set from RegisterDrawer's ResizeObserver in JS
-   (see the effect measuring topbarRef/footRef) so it's exact even as
-   that content changes (toolbar hidden at a short height, editbar
-   appearing, text wrapping, ...). */
+   unit involved, and no viewport-unit jump when mobile browser chrome
+   slides away.
+
+   Inside it, a plain flex column does the distribution — no JS
+   measurement, so there is no frame where the list is sized against a
+   stale header/footer height:
+     .drawer-topbar  flex: 0 1 auto  — natural height, may shrink last
+     .drawer-body    flex: 1 1 0     — takes exactly what's left, scrolls
+     .drawer-foot    flex: 0 0 auto  — never shrinks, always visible
+   Because the body's flex-basis is 0, the header and footer claim their
+   content height first and the list gets the remainder, however small.
+   If even that remainder is gone (a very short window), the only item
+   with any shrink left is the topbar, which scrolls internally — the
+   footer's actions can never be pushed off-screen. */
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0;
   width: min(560px, 100vw);
   max-width: 100vw;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-card);
   border-left: 1px solid var(--border);
   box-shadow: var(--shadow-popover);
@@ -593,6 +602,12 @@
 
 .drawer-topbar {
   background: var(--bg-card);
+  /* Last to give ground: only shrinks when there is no room left at all,
+     and scrolls itself rather than clipping the list or the footer. */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .drawer-head {
@@ -658,11 +673,14 @@
 .drawer-markall-btn.is-late:hover    { border-color: var(--status-late);    color: var(--status-late); }
 .drawer-markall-btn.is-excused:hover { border-color: var(--status-excused); color: var(--status-excused); }
 
-/* The one dynamic row (grid 1fr on .drawer) — gets exactly the space left
-   over after the header and footer take what they need, on any screen
-   size, and scrolls internally rather than growing further. */
+/* The one dynamic row — gets exactly the space left over after the header
+   and footer take what they need, on any screen size, and scrolls
+   internally rather than growing further. `min-height: 0` is what lets a
+   flex item shrink below its content height; without it the list would
+   push the footer out of the drawer. */
 .drawer-body {
-  height: calc(100% - var(--dh-head, 0px) - var(--dh-foot, 0px));
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -771,12 +789,20 @@
 .drawer-seg-btn.is-active.is-excused { background: var(--status-excused-bg); color: var(--status-excused); }
 
 .drawer-foot {
+  /* Never shrinks, never scrolls away: it is the last row of the flex
+     column and keeps its full content height at every window height. */
+  flex: 0 0 auto;
   padding: 8px 14px;
+  /* Home-indicator / gesture bar on iOS, and any other bottom inset. */
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
   background: var(--bg-card);
+  /* Lifts it off the list so the last row reads as scrolled-under. */
+  box-shadow: 0 -1px 0 var(--border), 0 -6px 12px -10px rgba(15, 23, 42, 0.5);
 }
-.drawer-foot-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.drawer-foot-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.drawer-foot > :first-child { flex: 1 1 150px; min-width: 0; }
 .drawer-tally { font-size: 12px; color: var(--text-secondary); display: flex; gap: 8px; flex-wrap: wrap; }
 .drawer-tally .is-zero { color: var(--text-tertiary); opacity: 0.6; }
 .drawer-kbd-hint { position: relative; }
@@ -791,7 +817,18 @@
   .drawer-markall-btn { height: 26px; padding: 0 8px; }
   .drawer-row { padding: 7px 12px; gap: 4px; }
   .drawer-seg-btn { width: 28px; height: 25px; }
-  .drawer-foot { padding: 6px 12px; }
+  .drawer-foot { padding: 6px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Very narrow: the footer stacks — the tally on its own line, the actions
+   full width underneath, with the primary action taking the slack so it
+   is never squeezed to an icon. */
+@media (max-width: 400px) {
+  .drawer-foot { flex-direction: column; align-items: stretch; gap: 6px; }
+  .drawer-foot > :first-child { flex: none; }
+  .drawer-foot .cal-bar { max-width: none !important; }
+  .drawer-foot-actions { justify-content: stretch; }
+  .drawer-foot-actions .btn-primary { flex: 1; justify-content: center; }
 }
 
 /* Short screens (height, not width) — a laptop window resized short, a
@@ -811,11 +848,19 @@
   .drawer-row .dr-name .s { display: none; }
 }
 
-/* Saved → next-lesson state */
+/* Saved → next-lesson state: same flex row as the list it replaces, so it
+   fills the drawer under the header and scrolls if the window is too
+   short for the confirmation to fit. */
 .drawer-saved {
-  height: calc(100% - var(--dh-head, 0px));
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; padding: 40px 24px; gap: 4px;
+}
+@media (max-height: 560px) {
+  .drawer-saved { padding: 20px 24px; justify-content: flex-start; }
+  .drawer-saved-icon { width: 40px; height: 40px; }
 }
 .drawer-saved-icon {
   width: 52px; height: 52px; border-radius: 50%;
