@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X, Save, CheckCircle2, XCircle, Clock, ShieldCheck, Users, MapPin, CalendarDays,
   Sun, BookOpen, Undo2, ExternalLink, Search, History, Pencil, ArrowRight, Command,
@@ -114,10 +115,19 @@ export const RegisterDrawer: React.FC<{
 
   // Prevent the page behind the drawer from scrolling — the register's
   // student list is the only thing meant to scroll while the drawer is open.
+  // Pad out the scrollbar's width so the page doesn't shift sideways as it
+  // disappears (same treatment as the shared Dialog).
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
+    const { body, documentElement } = document;
+    const prevOverflow = body.style.overflow;
+    const prevPadding = body.style.paddingRight;
+    const gap = window.innerWidth - documentElement.clientWidth;
+    body.style.overflow = 'hidden';
+    if (gap > 0) body.style.paddingRight = `${gap}px`;
+    return () => {
+      body.style.overflow = prevOverflow;
+      body.style.paddingRight = prevPadding;
+    };
   }, []);
 
   // Which rows differ from what's on the server (drives the "you changed N" hint
@@ -220,216 +230,231 @@ export const RegisterDrawer: React.FC<{
 
   return (
     <>
-      <div className="drawer-scrim" onClick={requestClose} />
-      <aside
-        className="drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Register — ${session.subjectName || 'Homeroom'} ${session.className}`}
-        style={session.color ? ({ ['--spine' as string]: session.color }) : undefined}
-      >
-        <div className="drawer-topbar">
-          <div className="drawer-head">
-            <span className="dh-spine" />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="drawer-title">
-                {session.kind === 'homeroom'
-                  ? <><Sun size={16} style={{ verticalAlign: '-3px', color: 'var(--warning)' }} /> Morning check</>
-                  : <><BookOpen size={16} style={{ verticalAlign: '-3px' }} /> {session.subjectName || 'Lesson'}</>}
+      {/* Rendered into <body>, never in place. `position: fixed` is only
+          measured against the viewport while no ancestor establishes a
+          containing block for it, and any transform/filter/backdrop-filter/
+          contain on an ancestor does exactly that — `.app-content` carries a
+          page-reveal animation, so the drawer nested inside it was being
+          sized against the scrolling content column instead: it started
+          below the navbar and its `bottom: 0` landed at the bottom of the
+          page, pushing the footer past the fold on a short window. Out here
+          the flex column always measures the real viewport. The shared
+          Dialog portals for the same reason. */}
+      {createPortal(
+        <>
+          <div className="drawer-scrim" onClick={requestClose} />
+          <aside
+            className="drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Register — ${session.subjectName || 'Homeroom'} ${session.className}`}
+            style={session.color ? ({ ['--spine' as string]: session.color }) : undefined}
+          >
+            <div className="drawer-topbar">
+              <div className="drawer-head">
+                <span className="dh-spine" />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="drawer-title">
+                    {session.kind === 'homeroom'
+                      ? <><Sun size={16} style={{ verticalAlign: '-3px', color: 'var(--warning)' }} /> Morning check</>
+                      : <><BookOpen size={16} style={{ verticalAlign: '-3px' }} /> {session.subjectName || 'Lesson'}</>}
+                  </div>
+                  <div className="drawer-meta">
+                    <span><Users size={12} /> {session.className}</span>
+                    <span><CalendarDays size={12} /> {new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+                    {session.startTime && <span><Clock size={12} /> {session.startTime}{session.endTime ? `–${session.endTime}` : ''}</span>}
+                    {session.room && <span><MapPin size={12} /> {session.room}</span>}
+                  </div>
+                </div>
+                <button className="icon-btn" onClick={requestClose} aria-label="Close"><X size={18} /></button>
               </div>
-              <div className="drawer-meta">
-                <span><Users size={12} /> {session.className}</span>
-                <span><CalendarDays size={12} /> {new Date(date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                {session.startTime && <span><Clock size={12} /> {session.startTime}{session.endTime ? `–${session.endTime}` : ''}</span>}
-                {session.room && <span><MapPin size={12} /> {session.room}</span>}
-              </div>
-            </div>
-            <button className="icon-btn" onClick={requestClose} aria-label="Close"><X size={18} /></button>
-          </div>
 
-          {isEditing && !savedView && (
-            <div className={`drawer-editbar ${existing!.markedByMe ? 'is-mine' : 'is-other'}`}>
-              <Pencil size={14} />
-              <span>
-                Editing a register of <strong>{existing!.count}</strong>
-                {existing!.markedByName ? <>, last marked by <strong>{existing!.markedByMe ? 'you' : existing!.markedByName}</strong></> : null}
-                {existing!.lastMarkedAt ? <> {fmtWhen(existing!.lastMarkedAt)}</> : null}.
-                {dirty ? <> You’ve changed <strong>{changedIds.size}</strong>.</> : <> Change a status to update it.</>}
-              </span>
-              {dirty && (
-                <button className="btn btn-ghost btn-sm" onClick={discard}>
-                  <History size={13} /> Discard
-                </button>
+              {isEditing && !savedView && (
+                <div className={`drawer-editbar ${existing!.markedByMe ? 'is-mine' : 'is-other'}`}>
+                  <Pencil size={14} />
+                  <span>
+                    Editing a register of <strong>{existing!.count}</strong>
+                    {existing!.markedByName ? <>, last marked by <strong>{existing!.markedByMe ? 'you' : existing!.markedByName}</strong></> : null}
+                    {existing!.lastMarkedAt ? <> {fmtWhen(existing!.lastMarkedAt)}</> : null}.
+                    {dirty ? <> You’ve changed <strong>{changedIds.size}</strong>.</> : <> Change a status to update it.</>}
+                  </span>
+                  {dirty && (
+                    <button className="btn btn-ghost btn-sm" onClick={discard}>
+                      <History size={13} /> Discard
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!savedView && canMark && !loading && !error && students.length > 0 && (
+                <div className="drawer-toolbar">
+                  <div className="drawer-search">
+                    <Search size={14} className="field-icon" />
+                    <input
+                      className="input"
+                      placeholder="Find a student…"
+                      value={query}
+                      aria-label="Find a student"
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                    {query && <button className="drawer-search-clear" onClick={() => setQuery('')} aria-label="Clear"><X size={12} /></button>}
+                  </div>
+                  <div className="drawer-markall">
+                    <span className="drawer-markall-lbl">All</span>
+                    {STATUSES.map((s) => (
+                      <button key={s.key} className={`drawer-markall-btn is-${s.key}`} onClick={() => markAll(s.key)} title={`Mark everyone ${s.label.toLowerCase()}`}>
+                        {s.icon}<span className="hide-mobile">{s.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-          )}
 
-          {!savedView && canMark && !loading && !error && students.length > 0 && (
-            <div className="drawer-toolbar">
-              <div className="drawer-search">
-                <Search size={14} className="field-icon" />
-                <input
-                  className="input"
-                  placeholder="Find a student…"
-                  value={query}
-                  aria-label="Find a student"
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-                {query && <button className="drawer-search-clear" onClick={() => setQuery('')} aria-label="Clear"><X size={12} /></button>}
+            {savedView ? (
+              <div className="drawer-saved">
+                <div className="drawer-saved-icon"><CheckCircle2 size={26} /></div>
+                <div className="drawer-saved-title">Register saved</div>
+                <div className="drawer-saved-sub">
+                  {savedView.present} present
+                  {savedView.absent ? ` · ${savedView.absent} absent` : ''}
+                  {savedView.late ? ` · ${savedView.late} late` : ''}
+                  {savedView.excused ? ` · ${savedView.excused} excused` : ''}
+                </div>
+                <div className="flex gap-2 mt-3" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+                  {next && onOpenNext && (
+                    <button className="btn btn-primary" onClick={() => onOpenNext({ session: next.session, date: next.date })}>
+                      Next: {next.label} <ArrowRight size={15} />
+                    </button>
+                  )}
+                  <button className="btn btn-outline" onClick={onClose}>Done</button>
+                </div>
               </div>
-              <div className="drawer-markall">
-                <span className="drawer-markall-lbl">All</span>
-                {STATUSES.map((s) => (
-                  <button key={s.key} className={`drawer-markall-btn is-${s.key}`} onClick={() => markAll(s.key)} title={`Mark everyone ${s.label.toLowerCase()}`}>
-                    {s.icon}<span className="hide-mobile">{s.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {savedView ? (
-          <div className="drawer-saved">
-            <div className="drawer-saved-icon"><CheckCircle2 size={26} /></div>
-            <div className="drawer-saved-title">Register saved</div>
-            <div className="drawer-saved-sub">
-              {savedView.present} present
-              {savedView.absent ? ` · ${savedView.absent} absent` : ''}
-              {savedView.late ? ` · ${savedView.late} late` : ''}
-              {savedView.excused ? ` · ${savedView.excused} excused` : ''}
-            </div>
-            <div className="flex gap-2 mt-3" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-              {next && onOpenNext && (
-                <button className="btn btn-primary" onClick={() => onOpenNext({ session: next.session, date: next.date })}>
-                  Next: {next.label} <ArrowRight size={15} />
-                </button>
-              )}
-              <button className="btn btn-outline" onClick={onClose}>Done</button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="drawer-body" ref={bodyRef}>
-              {loading ? (
-                <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {[0, 1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="cal-skel" style={{ height: 46 }} />)}
-                </div>
-              ) : error ? (
-                <div className="cal-empty" style={{ margin: 16 }}>
-                  <XCircle size={26} />
-                  <span className="text-sm">{error}</span>
-                  <button className="btn btn-outline btn-sm mt-2" onClick={load}>Try again</button>
-                </div>
-              ) : students.length === 0 ? (
-                <div className="cal-empty" style={{ margin: 16 }}>
-                  <Users size={26} />
-                  <span className="text-sm">No students in this class for the selected year.</span>
-                </div>
-              ) : visible.length === 0 ? (
-                <div className="cal-empty" style={{ margin: 16 }}>
-                  <Search size={22} />
-                  <span className="text-sm">No student matches “{query}”.</span>
-                  <button className="btn btn-outline btn-sm mt-2" onClick={() => setQuery('')}>Clear search</button>
-                </div>
-              ) : (
-                visible.map((s, idx) => {
-                  const r = rows[s.id];
-                  const changed = changedIds.has(s.id);
-                  const isException = r && r.status !== 'present';
-                  return (
-                    <div
-                      key={s.id}
-                      className={`drawer-row${isException ? ' is-exception' : ''}${changed ? ' is-changed' : ''}`}
-                      data-row={idx}
-                      tabIndex={canMark ? 0 : -1}
-                      onKeyDown={(e) => canMark && onRowKey(e, idx)}
-                      aria-label={`${s.name}, ${r?.status ?? 'present'}. Press 1–4 to change.`}
-                    >
-                      <div className="drawer-row-main">
-                        <div className="avatar avatar-sm avatar-square">{initials(s.name)}</div>
-                        <div className="dr-name">
-                          <div className="n">{s.name}{changed && <span className="dr-dot" aria-hidden="true" />}</div>
-                          <div className="s mono">
-                            {server[s.id] ? `was ${server[s.id].status}` : s.id}
+            ) : (
+              <>
+                <div className="drawer-body" ref={bodyRef}>
+                  {loading ? (
+                    <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {[0, 1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="cal-skel" style={{ height: 46 }} />)}
+                    </div>
+                  ) : error ? (
+                    <div className="cal-empty" style={{ margin: 16 }}>
+                      <XCircle size={26} />
+                      <span className="text-sm">{error}</span>
+                      <button className="btn btn-outline btn-sm mt-2" onClick={load}>Try again</button>
+                    </div>
+                  ) : students.length === 0 ? (
+                    <div className="cal-empty" style={{ margin: 16 }}>
+                      <Users size={26} />
+                      <span className="text-sm">No students in this class for the selected year.</span>
+                    </div>
+                  ) : visible.length === 0 ? (
+                    <div className="cal-empty" style={{ margin: 16 }}>
+                      <Search size={22} />
+                      <span className="text-sm">No student matches “{query}”.</span>
+                      <button className="btn btn-outline btn-sm mt-2" onClick={() => setQuery('')}>Clear search</button>
+                    </div>
+                  ) : (
+                    visible.map((s, idx) => {
+                      const r = rows[s.id];
+                      const changed = changedIds.has(s.id);
+                      const isException = r && r.status !== 'present';
+                      return (
+                        <div
+                          key={s.id}
+                          className={`drawer-row${isException ? ' is-exception' : ''}${changed ? ' is-changed' : ''}`}
+                          data-row={idx}
+                          tabIndex={canMark ? 0 : -1}
+                          onKeyDown={(e) => canMark && onRowKey(e, idx)}
+                          aria-label={`${s.name}, ${r?.status ?? 'present'}. Press 1–4 to change.`}
+                        >
+                          <div className="drawer-row-main">
+                            <div className="avatar avatar-sm avatar-square">{initials(s.name)}</div>
+                            <div className="dr-name">
+                              <div className="n">{s.name}{changed && <span className="dr-dot" aria-hidden="true" />}</div>
+                              <div className="s mono">
+                                {server[s.id] ? `was ${server[s.id].status}` : s.id}
+                              </div>
+                            </div>
+                            <div className="drawer-seg" role="group" aria-label={`Status for ${s.name}`}>
+                              {STATUSES.map((st) => (
+                                <button
+                                  key={st.key}
+                                  className={`drawer-seg-btn is-${st.key}${r?.status === st.key ? ' is-active' : ''}`}
+                                  aria-pressed={r?.status === st.key}
+                                  aria-label={st.label}
+                                  data-tooltip={st.label}
+                                  disabled={!canMark}
+                                  onClick={() => setStatus(s.id, st.key)}
+                                >
+                                  {st.icon}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                        <div className="drawer-seg" role="group" aria-label={`Status for ${s.name}`}>
-                          {STATUSES.map((st) => (
-                            <button
-                              key={st.key}
-                              className={`drawer-seg-btn is-${st.key}${r?.status === st.key ? ' is-active' : ''}`}
-                              aria-pressed={r?.status === st.key}
-                              aria-label={st.label}
-                              data-tooltip={st.label}
+                          {isException && (
+                            <input
+                              className="input drawer-note"
+                              placeholder={r?.status === 'late' ? 'Minutes late / reason…' : 'Reason (optional)…'}
+                              value={r?.notes ?? ''}
+                              aria-label={`Note for ${s.name}`}
                               disabled={!canMark}
-                              onClick={() => setStatus(s.id, st.key)}
-                            >
-                              {st.icon}
-                            </button>
+                              onChange={(e) => setNote(s.id, e.target.value)}
+                            />
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="drawer-foot">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {students.length > 0 && (
+                      <>
+                        <div className="cal-bar" style={{ maxWidth: 240, marginBottom: 6 }}>
+                          {tally.filter((t) => t.n > 0).map((t) => (
+                            <span key={t.key} className={`is-${t.key}`} style={{ width: `${(t.n / total) * 100}%` }} />
                           ))}
                         </div>
-                      </div>
-                      {isException && (
-                        <input
-                          className="input drawer-note"
-                          placeholder={r?.status === 'late' ? 'Minutes late / reason…' : 'Reason (optional)…'}
-                          value={r?.notes ?? ''}
-                          aria-label={`Note for ${s.name}`}
-                          disabled={!canMark}
-                          onChange={(e) => setNote(s.id, e.target.value)}
-                        />
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="drawer-foot">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {students.length > 0 && (
-                  <>
-                    <div className="cal-bar" style={{ maxWidth: 240, marginBottom: 6 }}>
-                      {tally.filter((t) => t.n > 0).map((t) => (
-                        <span key={t.key} className={`is-${t.key}`} style={{ width: `${(t.n / total) * 100}%` }} />
-                      ))}
-                    </div>
-                    <div className="drawer-tally">
-                      {tally.map((t) => <span key={t.key} className={t.n === 0 ? 'is-zero' : ''}>{t.n} {t.label.toLowerCase()}</span>)}
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="drawer-foot-actions">
-                {canMark && students.length > 0 && (
-                  <span
-                    className="icon-btn drawer-kbd-hint hide-mobile"
-                    data-tooltip="Focus a row, press 1–4 to mark · ⌘↵ to save"
-                    tabIndex={0}
-                    aria-label="Keyboard shortcuts: focus a row, press 1 to 4 to mark, Cmd+Enter to save"
-                  >
-                    <Command size={13} />
-                  </span>
-                )}
-                {dirty && !isEditing && (
-                  <button className="btn btn-ghost btn-sm" onClick={discard} title="Reset everyone to Present">
-                    <Undo2 size={13} /> Reset
-                  </button>
-                )}
-                <button className="btn btn-ghost btn-sm hide-mobile" onClick={() => navigate(session.deepLink)}>
-                  <ExternalLink size={13} /> Full page
-                </button>
-                {canMark && (
-                  <button className="btn btn-primary" disabled={saveDisabled} onClick={attemptSave}>
-                    <Save size={15} /> {saving ? 'Saving…' : isEditing ? `Update${dirty ? ` (${changedIds.size})` : ''}` : 'Save register'}
-                  </button>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </aside>
+                        <div className="drawer-tally">
+                          {tally.map((t) => <span key={t.key} className={t.n === 0 ? 'is-zero' : ''}>{t.n} {t.label.toLowerCase()}</span>)}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="drawer-foot-actions">
+                    {canMark && students.length > 0 && (
+                      <span
+                        className="icon-btn drawer-kbd-hint hide-mobile"
+                        data-tooltip="Focus a row, press 1–4 to mark · ⌘↵ to save"
+                        tabIndex={0}
+                        aria-label="Keyboard shortcuts: focus a row, press 1 to 4 to mark, Cmd+Enter to save"
+                      >
+                        <Command size={13} />
+                      </span>
+                    )}
+                    {dirty && !isEditing && (
+                      <button className="btn btn-ghost btn-sm" onClick={discard} title="Reset everyone to Present">
+                        <Undo2 size={13} /> Reset
+                      </button>
+                    )}
+                    <button className="btn btn-ghost btn-sm hide-mobile" onClick={() => navigate(session.deepLink)}>
+                      <ExternalLink size={13} /> Full page
+                    </button>
+                    {canMark && (
+                      <button className="btn btn-primary" disabled={saveDisabled} onClick={attemptSave}>
+                        <Save size={15} /> {saving ? 'Saving…' : isEditing ? `Update${dirty ? ` (${changedIds.size})` : ''}` : 'Save register'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </aside>
+        </>,
+        document.body
+      )}
 
       <ConfirmDialog
         open={confirmOverwrite}
