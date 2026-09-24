@@ -248,6 +248,8 @@ export async function initDatabase(filenameOverride?: string) {
   await migrateNotificationDedupe(db);
   await migrateNotificationsSchema(db);
   await migrateStaffType(db);
+  await migrateDataMigrationLedger(db);
+  await purgeAttendanceForCorrectedDates(db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
   // and the admin MIS sync (routes/admin.ts); all operational records start empty.
@@ -733,4 +735,111 @@ export function getDb() {
     throw new Error('Database not initialized. Call initDatabase first.');
   }
   return db;
+}
+
+/**
+ * A ledger for *data* migrations, as opposed to the schema ones above.
+ *
+ * Every function in this file runs on every boot, which is harmless when the
+ * work is "add this column if it's missing" — it simply does nothing the
+ * second time. A one-off data correction has no such natural guard: left
+ * ungated it would re-apply on every restart, silently undoing work done
+ * since. Each one records its key here the moment it succeeds, inside the
+ * same transaction as its writes, and never runs again.
+ */
+async function migrateDataMigrationLedger(db: Database) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS data_migrations (
+      key TEXT PRIMARY KEY,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      details TEXT
+    );
+  `);
+}
+
+/** Registers to remove, as stored in `attendance_records.session_date`.
+ *  Term 1 of the 2026-2027 academic year. */
+const CORRECTED_ATTENDANCE_DATES = [
+  '2026-09-11', // Friday
+  '2026-09-14', // Monday
+  '2026-09-15', // Tuesday
+  '2026-09-16', // Wednesday
+];
+const CORRECTED_ATTENDANCE_KEY = 'purge-attendance-2026-09-11-14-15-16';
+
+/**
+ * One-off data migration: drop every attendance record taken on the four
+ * dates above so those days read as never recorded and can be taken again
+ * from scratch.
+ *
+ * Scope is deliberate:
+ *  - `attendance_records` — the registers themselves.
+ *  - `attendance_record_history` — the per-row edit trail for the same days.
+ *    It has to go with them: the drawer reads this table to show "was
+ *    <status>" against a student, so history left behind would annotate the
+ *    fresh registers with marks from the ones being removed.
+ *  - Nothing else. `excuse_requests` are students' own submissions and
+ *    `discipline_records` are a separate register of fact; neither is
+ *    attendance, and neither is invalidated by re-taking it.
+ *
+ * The deletion is itself recorded in `audit_log` with the per-date counts, so
+ * the fact that these days were cleared — and how much was in them — survives
+ * the removal of the rows.
+ *
+ * After this runs, the four days appear as outstanding registers on the
+ * calendar (overdue, since they are in the past). That is the intended end
+ * state: there is no attendance for them any more.
+ */
+async function purgeAttendanceForCorrectedDates(db: Database) {
+  const applied = await db.get(`SELECT 1 FROM data_migrations WHERE key = ?`, CORRECTED_ATTENDANCE_KEY);
+  if (applied) return;
+
+  const slots = CORRECTED_ATTENDANCE_DATES.map(() => '?').join(',');
+  // date() normalises in case any row was ever written with a time component;
+  // the full scan it costs is irrelevant for something that runs once.
+  const where = `date(session_date) IN (${slots})`;
+
+  await db.run('BEGIN IMMEDIATE');
+  try {
+    const perDate = await db.all(
+      `SELECT date(session_date) AS d, COUNT(*) AS n FROM attendance_records WHERE ${where} GROUP BY d ORDER BY d`,
+      ...CORRECTED_ATTENDANCE_DATES
+    );
+    const counts: Record<string, number> = {};
+    for (const date of CORRECTED_ATTENDANCE_DATES) counts[date] = 0;
+    for (const row of perDate as { d: string; n: number }[]) counts[row.d] = row.n;
+
+    const records = await db.run(`DELETE FROM attendance_records WHERE ${where}`, ...CORRECTED_ATTENDANCE_DATES);
+    const history = await db.run(
+      `DELETE FROM attendance_record_history WHERE ${where}`,
+      ...CORRECTED_ATTENDANCE_DATES
+    );
+
+    const details = JSON.stringify({
+      dates: CORRECTED_ATTENDANCE_DATES,
+      recordsDeleted: records.changes ?? 0,
+      historyRowsDeleted: history.changes ?? 0,
+      perDate: counts,
+    });
+
+    await db.run(
+      `INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, details)
+       VALUES ('system', 'Data migration', 'attendance.purge_dates', 'attendance_records', ?, ?)`,
+      CORRECTED_ATTENDANCE_KEY, details
+    );
+    await db.run(
+      `INSERT INTO data_migrations (key, details) VALUES (?, ?)`,
+      CORRECTED_ATTENDANCE_KEY, details
+    );
+    await db.run('COMMIT');
+
+    console.log(
+      `[migration] ${CORRECTED_ATTENDANCE_KEY}: removed ${records.changes ?? 0} attendance record(s) ` +
+      `and ${history.changes ?? 0} history row(s) — ` +
+      CORRECTED_ATTENDANCE_DATES.map((d) => `${d}: ${counts[d]}`).join(', ')
+    );
+  } catch (err) {
+    await db.run('ROLLBACK');
+    throw err;
+  }
 }
