@@ -528,4 +528,4 @@ router.get('/schedule/homeroom-classes', authorizePermission('ATTENDANCE_MARK'),
 });
 
 export default router;
-export { fetchTimetable, buildDaySessions, loadAttendance };
+export { fetchTimetable, buildDaySessions, loadAttendance, deepLink };

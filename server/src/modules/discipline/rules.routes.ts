@@ -12,6 +12,9 @@ import * as rulesRepo from './rules.repository.js';
 import { generateStructuredContent, isAnyProviderConfigured } from '../../services/aiProviders/index.js';
 import type { JSONSchema } from '../../services/aiProviders/index.js';
 import { getStudentTermBalance, listTermBalances } from './ledger.service.js';
+import { accessScope, allowedStudents, classGroupOfStudent, shadowListLeak, studentTarget } from '../../access/policy.js';
+import { sanctionDenied, sanctionForbidden } from '../../access/sanctions.js';
+import { notifyStaff } from '../../access/notify.js';
 
 /**
  * Discipline rules catalog (B.1), permission-gated point adjustment (B.2),
@@ -372,6 +375,10 @@ router.post('/adjust', authorizePermission('DISCIPLINE_ADJUST'), validateBody(ad
   if (!SANCTIONS.includes(effectiveSanction as any)) {
     return res.status(400).json({ success: false, message: `Invalid sanction '${effectiveSanction}'.` });
   }
+  // Access control v2: the sanction ladder (access/sanctions.ts).
+  const deniedCap = await sanctionDenied(req, effectiveSanction, [body.studentId]);
+  if (deniedCap) return sanctionForbidden(res, deniedCap);
+
   const { academicYearId, academicTermId } = resolveAcademicPeriod(authReq);
 
   try {
@@ -410,11 +417,14 @@ router.post('/adjust', authorizePermission('DISCIPLINE_ADJUST'), validateBody(ad
     // incidents logged through the rules-catalog adjust flow would silently
     // never reach staff/admins the way legacy-logged ones do.
     if (rule.type === 'demerit' && rule.severity === 'major') {
-      await db.run(
-        `INSERT INTO notifications (user_id, type, title, message) VALUES ('all', 'system', ?, ?)`,
-        `Major incident: ${body.studentName}`,
-        `A major demerit (${rule.category}) was logged for ${body.studentName}: ${rule.title}.`
-      );
+      await notifyStaff(db, {
+        kind: 'major_incident',
+        type: 'system',
+        title: `Major incident: ${body.studentName}`,
+        message: `A major demerit (${rule.category}) was logged for ${body.studentName}: ${rule.title}.`,
+        cap: 'DISCIPLINE_REVIEW',
+        target: async () => studentTarget(body.studentId, await classGroupOfStudent(req, body.studentId)),
+      });
     }
 
     return res.status(201).json({ success: true, data: inserted, message: 'Discipline adjustment recorded.' });
@@ -459,7 +469,18 @@ router.get('/stats', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
   try {
-    const balances = await listTermBalances(db, academicTermId);
+    let balances = await listTermBalances(db, academicTermId);
+    // Access control v2 (enforce): only students in the caller's scope, and
+    // the aggregates are computed over those students only.
+    const v2 = await accessScope(req, 'DISCIPLINE_VIEW_ALL', 'detail');
+    if (!v2.unrestricted) {
+      const ok = v2.scope
+        ? await allowedStudents(req, v2.snapshot, 'DISCIPLINE_VIEW_ALL', 'detail', balances.map((b) => String(b.studentId)))
+        : new Set<string>();
+      balances = balances.filter((b) => ok.has(String(b.studentId)));
+    } else {
+      shadowListLeak(req, 'DISCIPLINE_VIEW_ALL', 'detail', balances.map((b) => ({ studentId: b.studentId })));
+    }
     const atRisk = balances.filter((b) => b.balance < 70);
     return res.json({
       success: true,

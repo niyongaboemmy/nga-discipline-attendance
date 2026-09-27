@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, homeRouteForRole } from '../context/AuthContext';
 import { AlertCircle, ArrowLeft } from 'lucide-react';
+import { consumeSsoState } from '../utils/ssoState';
 import './Login.css';
 import './SSOCallback.css';
 
@@ -28,6 +29,18 @@ export const SSOCallback: React.FC = () => {
       // Avoid a double exchange under React Strict Mode.
       if (hasExchanged.current) return;
       hasExchanged.current = true;
+
+      // OAuth `state` (CSRF) check. Runs after the Strict Mode guard so the
+      // stored value is consumed exactly once.
+      const stateCheck = consumeSsoState(params.get('state'));
+      if (!stateCheck.ok) {
+        setError('This sign-in link did not come from a sign-in started in this browser tab. Please sign in again.');
+        setLoading(false);
+        return;
+      }
+      if (stateCheck.reason !== 'match') {
+        console.warn(`SSO callback: state not verified (${stateCheck.reason}); continuing.`);
+      }
 
       try {
         const response = await fetch('/api/sso/exchange', {

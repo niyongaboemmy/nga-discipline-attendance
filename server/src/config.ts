@@ -20,6 +20,10 @@ export const config = {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean),
+  // Public base URL of this app's SPA, for absolute links handed to other apps
+  // (the MIS Home page). Falls back to the first CORS origin, which is the
+  // deployed client in every environment we run.
+  appPublicUrl: (process.env.APP_PUBLIC_URL || '').trim().replace(/\/+$/, ''),
   // Bootstrap administrators. The NGA Central MIS is permission-based and grants
   // no app-specific role, so these allowlists let the app owner(s) hold 'admin'
   // here regardless of their MIS permissions. Match is case-insensitive on the
@@ -30,6 +34,10 @@ export const config = {
   adminEmails: (process.env.ADMIN_EMAILS || '')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 };
+
+if (!config.appPublicUrl) {
+  config.appPublicUrl = (config.corsOrigins[0] || 'http://localhost:3000').replace(/\/+$/, '');
+}
 
 // Fail fast in production rather than signing tokens with a publicly-known secret.
 // The default is fine for local development.

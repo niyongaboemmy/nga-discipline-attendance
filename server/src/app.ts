@@ -18,6 +18,8 @@ import disciplineRulesRoutes from './modules/discipline/rules.routes.js';
 import subjectAttendanceRoutes from './modules/attendance/subjectAttendance.routes.js';
 import scheduleRoutes from './modules/attendance/schedule.routes.js';
 import reportingRoutes from './modules/reporting/reporting.routes.js';
+import accessRoutes from './routes/access.js';
+import integrationRoutes, { integrationErrorHandler } from './modules/integration/integration.routes.js';
 
 /** The Express app, with no side effects (no DB init, no `listen`) — so
  *  tests can import it directly against an in-memory DB via supertest.
@@ -51,6 +53,12 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/roles-permissions', rolesPermissionsRoutes);
 app.use('/api/settings', settingsRoutes);
+// Access control v2: the user's MIS access snapshot (see access/snapshot.ts).
+app.use('/api/access', accessRoutes);
+
+// Server-to-server calls from the NGA Central MIS (the Home page), made with
+// the user's own MIS token -- see middleware/misBearerAuth.ts.
+app.use('/api/integration', integrationRoutes, integrationErrorHandler);
 
 // MIS roster proxy — classes, students, staff and timetables are read from the
 // NGA Central MIS using the signed-in user's MIS token (see routes/mis.ts).

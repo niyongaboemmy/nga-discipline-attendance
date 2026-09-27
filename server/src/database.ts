@@ -250,6 +250,7 @@ export async function initDatabase(filenameOverride?: string) {
   await migrateStaffType(db);
   await migrateDataMigrationLedger(db);
   await purgeAttendanceForCorrectedDates(db);
+  await migrateAccessShadowDiffs(db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
   // and the admin MIS sync (routes/admin.ts); all operational records start empty.
@@ -728,6 +729,33 @@ async function migrateStaffType(db: Database) {
     );
   }
   await db.run(`CREATE INDEX IF NOT EXISTS idx_staff_attendance_type ON staff_attendance(staff_type, date)`);
+}
+
+/**
+ * Access control v2 (shadow mode): one row per distinct disagreement between
+ * the legacy permission check and the v2 decision (user, capability, route,
+ * legacy verdict, v2 verdict), with a hit counter. Written only when
+ * ACCESS_V2_MODE=shadow; reviewed before switching to enforce. Additive.
+ */
+async function migrateAccessShadowDiffs(db: Database) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS access_shadow_diffs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      app TEXT NOT NULL DEFAULT 'da',
+      user_id TEXT NOT NULL,
+      capability TEXT NOT NULL,
+      route TEXT NOT NULL,
+      legacy_allowed INTEGER NOT NULL,
+      v2_allowed INTEGER NOT NULL,
+      v2_depth TEXT,
+      sample_target TEXT,
+      hits INTEGER NOT NULL DEFAULT 1,
+      first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, capability, route, legacy_allowed, v2_allowed)
+    );
+    CREATE INDEX IF NOT EXISTS idx_access_shadow_diffs_last_seen ON access_shadow_diffs(last_seen);
+  `);
 }
 
 export function getDb() {

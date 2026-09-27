@@ -12,6 +12,11 @@ import { notifyExcuseDecision, notifyStudentMarked, generateForUser } from '../m
 import { isFutureSchoolDate } from '../shared/schoolTime.js';
 import { ensureSubjectCached } from '../modules/academics/academicsSync.service.js';
 import {
+  accessCheck, accessMode, accessScope, allowedStudents, classGroupOfStudent, requireAccess,
+  scopeToSql, shadowListLeak, studentTarget,
+} from '../access/policy.js';
+import { notifyStaff } from '../access/notify.js';
+import {
   ATTENDANCE_STATUSES,
   ATTENDED_SQL_CASE,
   ATTENDANCE_WARN_THRESHOLD,
@@ -20,6 +25,28 @@ import {
 } from '../shared/attendancePolicy.js';
 
 const router = Router();
+
+const intOrNull = (v: unknown) => {
+  const n = Number(v);
+  return v !== null && v !== undefined && v !== '' && Number.isInteger(n) ? n : null;
+};
+
+/** Access control v2 target of a register: its class group (+ subject for a
+ *  subject register), from the body (POST /mark) or the query (GET). */
+const registerTarget = (src: any) => ({
+  classGroupId: intOrNull(src?.classId),
+  subjectId: src?.sessionType === 'subject' ? intOrNull(src?.subjectId) : null,
+});
+const markAccess = (from: 'body' | 'query') =>
+  requireAccess('ATTENDANCE_MARK', (req: any) => registerTarget(req[from]));
+
+/** v2 target of an excuse: the student + their class group. */
+async function excuseTarget(req: any, excuseId: unknown) {
+  const ex = await getDb().get('SELECT student_id, class_id FROM excuse_requests WHERE id = ?', excuseId);
+  if (!ex) return null;
+  const classGroupId = intOrNull(ex.class_id) ?? (await classGroupOfStudent(req, String(ex.student_id)));
+  return studentTarget(ex.student_id, classGroupId);
+}
 
 /** Recognised session labels. Free text here meant `"Morning"` and `"morning"`
  *  became two separate registers (remediation A5). */
@@ -57,7 +84,7 @@ router.use(authMiddleware);
 // existing register in place instead of stacking duplicate rows. Every value
 // it overwrites is written to attendance_record_history in the same
 // transaction (A13), and one summary row lands in audit_log.
-router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSchema), async (req: any, res: Response) => {
+router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSchema), markAccess('body'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const { classId, className, date, period, records, sessionType } = req.body;
   const subjectId: number | null = req.body.subjectId ?? null;
@@ -221,7 +248,7 @@ async function notifyStudentsMarked(
  * every student defaulted back to Present. This returns the stored rows plus
  * who marked it and when.
  */
-router.get('/session', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+router.get('/session', authorizePermission('ATTENDANCE_MARK'), markAccess('query'), async (req: any, res: Response) => {
   const { classId, date } = req.query;
   const period = String(req.query.period || 'Morning');
   const sessionType = String(req.query.sessionType || 'homeroom');
@@ -444,7 +471,7 @@ router.get('/coverage', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: 
  * overwritten. This lets the client warn first — it reports what's already
  * recorded rather than deciding anything itself.
  */
-router.get('/session-status', authorizePermission('ATTENDANCE_MARK'), async (req: any, res: Response) => {
+router.get('/session-status', authorizePermission('ATTENDANCE_MARK'), markAccess('query'), async (req: any, res: Response) => {
   const { classId, date, period = 'Morning', sessionType = 'homeroom' } = req.query;
   const subjectId = req.query.subjectId ? Number(req.query.subjectId) : null;
 
@@ -504,6 +531,15 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
     params.push(`%${search}%`, `%${search}%`);
   }
 
+  // Access control v2 (enforce): only registers in the caller's scope --
+  // their class groups, (subject, class) pairs, or individual students.
+  const v2 = await accessScope(req, 'ATTENDANCE_VIEW_ALL', 'detail');
+  if (!v2.unrestricted) {
+    const f = scopeToSql(v2.scope, { classId: 'ar.class_id', subjectId: 'ar.subject_id', studentId: 'ar.student_id' });
+    where += ` AND ${f.sql}`;
+    params.push(...f.params);
+  }
+
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
@@ -518,6 +554,9 @@ router.get('/records', authorizePermission('ATTENDANCE_VIEW_ALL'), async (req: a
         LIMIT ? OFFSET ?`,
       ...params, limit, offset
     );
+    shadowListLeak(req, 'ATTENDANCE_VIEW_ALL', 'detail', records.map((r: any) => ({
+      studentId: r.student_id, classGroupId: intOrNull(r.class_id), subjectId: r.session_type === 'subject' ? r.subject_id : null,
+    })));
     return res.json({
       success: true,
       data: records,
@@ -966,7 +1005,21 @@ router.get('/excuses', authorizePermission('EXCUSES_REVIEW'), async (req: any, r
   query += " ORDER BY (status = 'pending') DESC, created_at DESC";
 
   try {
-    const excuses = await db.all(query, ...params);
+    let excuses = await db.all(query, ...params);
+
+    // Access control v2: reviewers see the excuses of students in their scope
+    // (enforce); shadow only counts what would be hidden.
+    const v2 = await accessScope(req, 'EXCUSES_REVIEW');
+    if (!v2.unrestricted) {
+      const known = new Map<string, number | null>();
+      for (const ex of excuses) if (intOrNull(ex.class_id) != null) known.set(String(ex.student_id), intOrNull(ex.class_id));
+      const ok = v2.scope
+        ? await allowedStudents(req, v2.snapshot, 'EXCUSES_REVIEW', null, [...new Set(excuses.map((e: any) => String(e.student_id)))], known)
+        : new Set<string>();
+      excuses = excuses.filter((ex: any) => ok.has(String(ex.student_id)));
+    } else {
+      shadowListLeak(req, 'EXCUSES_REVIEW', null, excuses.map((ex: any) => ({ studentId: ex.student_id, classGroupId: intOrNull(ex.class_id) })));
+    }
 
     // Remediation A10: the reviewer needs context — is the student actually
     // marked absent that day, and how many excuses have they filed before?
@@ -1038,7 +1091,8 @@ async function applyExcuseDecision(
 }
 
 // Approve or reject an excuse request (Teacher/Admin only)
-router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'), async (req: any, res: Response) => {
+router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'),
+  requireAccess('EXCUSES_REVIEW', (req: any) => () => excuseTarget(req, req.params.id)), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const id = req.params.id;
   const { status } = req.body as { status?: string };
@@ -1105,6 +1159,23 @@ router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: a
   }
 
   const db = getDb();
+
+  // Access control v2: every excuse in the batch must be one this reviewer
+  // may decide (enforce); shadow records disagreements only.
+  if (accessMode() !== 'off') {
+    const denied: unknown[] = [];
+    for (const rawId of ids) {
+      if (!(await accessCheck(req, 'EXCUSES_REVIEW', () => excuseTarget(req, rawId)))) denied.push(rawId);
+    }
+    if (denied.length > 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Some of these excuses are for students outside your responsibility.',
+        data: { denied },
+      });
+    }
+  }
+
   let processed = 0;
   let reconciled = 0;
   try {
@@ -1195,12 +1266,18 @@ async function triggerLowAttendanceCheck(
         { kind: 'absence' }
       );
 
-      await db.run(
-        `INSERT INTO notifications (user_id, type, title, message, dedupe_key) VALUES ('all', 'low_attendance', ?, ?, ?)`,
-        `Attendance drop: ${student.student_name}`,
-        `${student.student_name}'s attendance in ${className} has dropped to ${percentage}%.`,
-        `${dedupeKey}:staff`
-      );
+      // Staff alert: 'all' (legacy) or, under access v2 enforce, the holders
+      // of ATTENDANCE_VIEW_ALL (detail) at this student's class group.
+      await notifyStaff(db, {
+        kind: 'attendance_drop',
+        type: 'low_attendance',
+        title: `Attendance drop: ${student.student_name}`,
+        message: `${student.student_name}'s attendance in ${className} has dropped to ${percentage}%.`,
+        dedupeKey: `${dedupeKey}:staff`,
+        cap: 'ATTENDANCE_VIEW_ALL',
+        minDepth: 'detail',
+        target: async () => studentTarget(student.student_id, intOrNull(classId)),
+      });
     }
   } catch (err) {
     console.error('Error in triggerLowAttendanceCheck:', err);

@@ -40,6 +40,14 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'DISCIPLINE_DELETE', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Permanently remove a discipline record logged in error.' },
   { key: 'DISCIPLINE_ADJUST', category: PERMISSION_CATEGORIES.DISCIPLINE, description: "Add or reduce a student's points against a specific discipline rule." },
   { key: 'DISCIPLINE_RULES_MANAGE', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Create, edit, and retire discipline rules in the rules catalog.' },
+  // Sanction ladder (access control v2, plan §10). Legacy routes never checked
+  // these -- any DISCIPLINE_LOG / DISCIPLINE_REVIEW holder could set any
+  // sanction -- so they are seeded to Admin only and nothing changes until the
+  // v2 engine enforces them (ACCESS_V2_MODE=enforce).
+  { key: 'DISCIPLINE_SANCTION_MINOR', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Apply a minor sanction (warning, parent contact).' },
+  { key: 'DISCIPLINE_SANCTION_MAJOR', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Apply a major sanction (detention, community service, counselling).' },
+  { key: 'DISCIPLINE_SUSPEND_RECOMMEND', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Recommend a suspension for approval.' },
+  { key: 'DISCIPLINE_SUSPEND_APPROVE', category: PERMISSION_CATEGORIES.DISCIPLINE, description: 'Approve (apply) a suspension.' },
 
   { key: 'STAFF_ATTENDANCE_CLOCK', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'Clock yourself in/out as staff.' },
   { key: 'STAFF_ATTENDANCE_VIEW_OWN', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'View your own staff attendance log.' },
@@ -105,6 +113,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', s
     'EXCUSES_SUBMIT', 'EXCUSES_VIEW_OWN', 'EXCUSES_REVIEW',
     'DISCIPLINE_LOG', 'DISCIPLINE_VIEW_ALL', 'DISCIPLINE_VIEW_OWN', 'DISCIPLINE_REVIEW',
     'DISCIPLINE_EDIT', 'DISCIPLINE_DELETE', 'DISCIPLINE_ADJUST', 'DISCIPLINE_RULES_MANAGE',
+    'DISCIPLINE_SANCTION_MINOR', 'DISCIPLINE_SANCTION_MAJOR',
+    'DISCIPLINE_SUSPEND_RECOMMEND', 'DISCIPLINE_SUSPEND_APPROVE',
     'STAFF_ATTENDANCE_CLOCK', 'STAFF_ATTENDANCE_VIEW_OWN', 'STAFF_ATTENDANCE_VIEW_ALL',
     'REPORTS_VIEW',
     'USERS_VIEW', 'USERS_MANAGE', 'AUDIT_VIEW',

@@ -72,7 +72,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
  *  session), which the caller turns into a 401 — distinct from a user who
  *  exists but holds no permissions (an 'unassigned' user, role_id NULL),
  *  who gets an empty set and the usual 403s. */
-async function resolvePermissions(
+export async function resolvePermissions(
   userId: string
 ): Promise<{ roleId?: number; roleName?: string; roleLevel?: RoleLevel; permissions: Set<string> } | null> {
   const db = getDb();

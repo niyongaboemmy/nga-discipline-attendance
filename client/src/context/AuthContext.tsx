@@ -1,4 +1,5 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
+import { beginSsoState } from '../utils/ssoState';
 
 export type Role = 'teacher' | 'admin' | 'student' | 'unassigned';
 
@@ -128,7 +129,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const redirectUri = `${window.location.origin}/sso/callback`;
 
     // Construct MIS redirect URL
-    const target = `${loginUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+    // `state` is the OAuth CSRF token: the MIS echoes it back to /sso/callback,
+    // which checks it against the copy kept in this tab's sessionStorage.
+    const state = beginSsoState();
+    const target = `${loginUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
     
     // Redirect user to the MIS SSO page
     window.location.href = target;

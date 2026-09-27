@@ -12,6 +12,7 @@ import {
   listAvailableSubjects, listSubjectClasses, listOwnSections, getOwnSectionReport,
   getOwnSubjectsOverview,
 } from './attendanceReport.service.js';
+import { accessScope, allowedStudents, shadowListLeak } from '../../access/policy.js';
 
 /** C: termly / annual / combined / comparison reporting. Mounted at /api/reporting. */
 const router = Router();
@@ -190,6 +191,28 @@ router.get('/attendance/class/:classId', async (req: any, res: Response) => {
     const data = await getClassSectionReport(db, {
       classId: req.params.classId, academicTermId, sessionType, subjectId, fromDate, toDate,
     });
+
+    // Access control v2: student rows need ATTENDANCE_VIEW_ALL (detail) for
+    // that student in this class (and subject). Enforce filters the rows and
+    // recomputes the average over what is left; shadow counts what would go.
+    const classGroupId = Number.isInteger(Number(req.params.classId)) ? Number(req.params.classId) : null;
+    const v2 = await accessScope(req, 'ATTENDANCE_VIEW_ALL', 'detail');
+    if (!v2.unrestricted) {
+      const ids = data.students.map((s) => s.studentId);
+      const ok = v2.scope
+        ? await allowedStudents(req, v2.snapshot, 'ATTENDANCE_VIEW_ALL', 'detail', ids, new Map(ids.map((id) => [id, classGroupId])), sessionType === 'subject' ? subjectId ?? null : null)
+        : new Set<string>();
+      if (ok.size !== ids.length) {
+        data.students = data.students.filter((s) => ok.has(s.studentId));
+        data.classAverageRate = data.students.length
+          ? Math.round(data.students.reduce((sum, s) => sum + s.rate, 0) / data.students.length)
+          : 100;
+      }
+    } else {
+      shadowListLeak(req, 'ATTENDANCE_VIEW_ALL', 'detail', data.students.map((s) => ({
+        studentId: s.studentId, classGroupId, subjectId: sessionType === 'subject' ? subjectId : null,
+      })));
+    }
     return res.json({ success: true, data });
   } catch (error) {
     console.error('Error generating class section report:', error);

@@ -88,4 +88,9 @@ jobs:
 
             pm2 restart discipline-attendance --update-env || pm2 start server/dist/index.js --name discipline-attendance --update-env
             pm2 save
+
+            # Access control v2: publish this app's capability manifest to MIS
+            # (server/src/access/manifest.ts). Idempotent, and NEVER fails the
+            # deploy -- a MIS without access v2, or a network blip, just logs.
+            (cd server && timeout 30 node dist/access/publishCli.js) || echo "WARN: access manifest publish failed (non-fatal)"
             sudo /usr/sbin/nginx -t && sudo systemctl reload nginx

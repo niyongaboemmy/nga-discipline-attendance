@@ -6,6 +6,7 @@ import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 import { fetchClassTeacherClasses } from '../services/misClient.js';
 import { attendanceComment } from '../modules/reporting/attendanceReport.service.js';
 import { ATTENDANCE_WARN_THRESHOLD } from '../shared/attendancePolicy.js';
+import { accessScope, allowedStudents, shadowListLeak } from '../access/policy.js';
 
 const router = Router();
 
@@ -250,7 +251,7 @@ router.get('/class/:id', authorizePermission('REPORTS_VIEW'), async (req: any, r
   const periodParams = academicTermId != null ? [academicTermId] : [];
 
   try {
-    const stats = await db.all(
+    let stats = await db.all(
       `SELECT
          student_id, student_name,
          COUNT(*) as total,
@@ -264,6 +265,21 @@ router.get('/class/:id', authorizePermission('REPORTS_VIEW'), async (req: any, r
        ORDER BY student_name ASC`,
       classId, ...periodParams
     );
+
+    // Access control v2: per-student rows need ATTENDANCE_VIEW_ALL at detail
+    // for the student (class group = this class). Enforce filters; shadow
+    // counts what would be hidden.
+    const classGroupId = Number.isInteger(Number(classId)) ? Number(classId) : null;
+    const v2 = await accessScope(req, 'ATTENDANCE_VIEW_ALL', 'detail');
+    if (!v2.unrestricted) {
+      const ids = stats.map((r: any) => String(r.student_id));
+      const ok = v2.scope
+        ? await allowedStudents(req, v2.snapshot, 'ATTENDANCE_VIEW_ALL', 'detail', ids, new Map(ids.map((id: string) => [id, classGroupId])))
+        : new Set<string>();
+      stats = stats.filter((r: any) => ok.has(String(r.student_id)));
+    } else {
+      shadowListLeak(req, 'ATTENDANCE_VIEW_ALL', 'detail', stats.map((r: any) => ({ studentId: r.student_id, classGroupId })));
+    }
 
     return res.json({
       success: true,

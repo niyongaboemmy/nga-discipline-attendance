@@ -19,10 +19,39 @@ import { notifyUserExternal } from '../utils/notifier.js';
 import { resolveAcademicPeriod, resolveAcademicPeriodForDate } from '../utils/academicPeriod.js';
 import { getRule } from '../modules/discipline/rules.repository.js';
 import { getStudentTermBalance } from '../modules/discipline/ledger.service.js';
+import {
+  accessMode, classGroupOfStudent, requireAccess, shadowListLeak, studentScopeFilter, studentTarget,
+} from '../access/policy.js';
+import { sanctionDenied, sanctionForbidden } from '../access/sanctions.js';
+import { notifyStaff } from '../access/notify.js';
 
 const router = Router();
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Access control v2 target of a discipline record: its student + class group. */
+async function recordTarget(req: any, recordId: unknown) {
+  const rec = await getDb().get('SELECT student_id FROM discipline_records WHERE id = ? AND deleted_at IS NULL', recordId);
+  if (!rec) return null;
+  return studentTarget(rec.student_id, await classGroupOfStudent(req, String(rec.student_id)));
+}
+
+/** Staff escalation about a student: 'all' (legacy) or, under access v2
+ *  enforce, the DISCIPLINE_REVIEW holders at the student's class group. */
+function notifyDisciplineStaff(
+  req: any,
+  n: { kind: string; studentId: string; title: string; message: string; dedupeKey?: string }
+) {
+  return notifyStaff(getDb(), {
+    kind: n.kind,
+    type: 'system',
+    title: n.title,
+    message: n.message,
+    dedupeKey: n.dedupeKey ?? null,
+    cap: 'DISCIPLINE_REVIEW',
+    target: async () => studentTarget(n.studentId, await classGroupOfStudent(req, n.studentId)),
+  });
+}
 
 /**
  * Remediation D1 — nothing stopped the same incident being logged twice (each
@@ -78,7 +107,7 @@ router.use(authMiddleware);
  * shown anywhere and never cleared. It now reads the same term-scoped,
  * dismissed-excluding ledger balance the student and staff actually see.
  */
-async function triggerConductCheck(studentId: string, studentName: string, academicTermId?: number) {
+async function triggerConductCheck(studentId: string, studentName: string, academicTermId?: number, req: any = null) {
   const db = getDb();
   try {
     const balance = await getStudentTermBalance(db, studentId, undefined, academicTermId);
@@ -89,12 +118,13 @@ async function triggerConductCheck(studentId: string, studentName: string, acade
     const alreadyFlagged = await db.get(`SELECT 1 FROM notifications WHERE dedupe_key = ?`, dedupeKey);
     if (alreadyFlagged) return;
 
-    await db.run(
-      `INSERT INTO notifications (user_id, type, title, message, dedupe_key) VALUES ('all', 'system', ?, ?, ?)`,
-      `Conduct follow-up: ${studentName}`,
-      `${studentName} has accumulated ${balance.demeritPoints} demerit points this term and may need a disciplinary follow-up.`,
-      dedupeKey
-    );
+    await notifyDisciplineStaff(req, {
+      kind: 'conduct_followup',
+      studentId,
+      title: `Conduct follow-up: ${studentName}`,
+      message: `${studentName} has accumulated ${balance.demeritPoints} demerit points this term and may need a disciplinary follow-up.`,
+      dedupeKey,
+    });
   } catch (err) {
     console.error('Error in triggerConductCheck:', err);
   }
@@ -191,6 +221,10 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
     return res.status(400).json({ success: false, message: `Invalid sanction '${sanction}'.` });
   }
 
+  // Access control v2: the sanction ladder (access/sanctions.ts).
+  const deniedCap = await sanctionDenied(req, effectiveSanction, [String(studentId)]);
+  if (deniedCap) return sanctionForbidden(res, deniedCap);
+
   const db = getDb();
   const actor = authReq.user!;
   // Remediation X3: file under the term the incident date falls in.
@@ -259,11 +293,12 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
 
     // Escalate major demerits to staff/admins.
     if (type === 'demerit' && resolvedSeverity === 'major') {
-      await db.run(
-        `INSERT INTO notifications (user_id, type, title, message) VALUES ('all', 'system', ?, ?)`,
-        `Major incident: ${studentName}`,
-        `A major demerit (${resolvedCategory}) was logged for ${studentName}: ${title}.`
-      );
+      await notifyDisciplineStaff(req, {
+        kind: 'major_incident',
+        studentId: String(studentId),
+        title: `Major incident: ${studentName}`,
+        message: `A major demerit (${resolvedCategory}) was logged for ${studentName}: ${title}.`,
+      });
     }
 
     // Notify the student externally (respects their preferences) and check
@@ -274,7 +309,7 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
       type === 'merit' ? `Merit awarded: ${title}` : `Conduct notice: ${title}`,
       `${type === 'merit' ? 'You received a merit' : 'A demerit was recorded'} (${resolvedCategory}, ${points} pts) on ${incidentDate}.`
     );
-    if (type === 'demerit') await triggerConductCheck(studentId, studentName, academicTermId);
+    if (type === 'demerit') await triggerConductCheck(studentId, studentName, academicTermId, req);
 
     return res.json({ success: true, data: inserted, message: 'Discipline record saved successfully.' });
   } catch (error: any) {
@@ -353,6 +388,9 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
     return res.status(400).json({ success: false, message: `Invalid sanction '${sanction}'.` });
   }
 
+  const bulkDeniedCap = await sanctionDenied(req, effectiveSanction, uniqueStudents.map((u) => u.studentId));
+  if (bulkDeniedCap) return sanctionForbidden(res, bulkDeniedCap);
+
   const db = getDb();
   const actor = authReq.user!;
   const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(
@@ -420,7 +458,7 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
 
     // Run conduct checks outside the transaction.
     if (type === 'demerit') {
-      for (const s of notify) await triggerConductCheck(s.studentId, s.studentName, academicTermId);
+      for (const s of notify) await triggerConductCheck(s.studentId, s.studentName, academicTermId, req);
     }
 
     return res.json({
@@ -466,11 +504,18 @@ router.get('/', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   try {
+    // Access control v2 (enforce): only students in the caller's scope.
+    const v2 = await studentScopeFilter(req, 'DISCIPLINE_VIEW_ALL', 'detail', async () =>
+      (await db.all(`SELECT DISTINCT student_id FROM discipline_records${where}`, ...params)).map((r: any) => String(r.student_id))
+    );
+    if (v2) { where += ` AND ${v2.sql}`; params.push(...v2.params); }
+
     const totalRow = await db.get(`SELECT COUNT(*) as count FROM discipline_records${where}`, ...params);
     const records = await db.all(
       `SELECT * FROM discipline_records${where} ORDER BY incident_date DESC, created_at DESC LIMIT ? OFFSET ?`,
       ...params, limit, offset
     );
+    shadowListLeak(req, 'DISCIPLINE_VIEW_ALL', 'detail', records.map((r: any) => ({ studentId: r.student_id })));
 
     return res.json({ success: true, data: records, total: totalRow.count });
   } catch (error) {
@@ -483,11 +528,22 @@ router.get('/', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res
 router.get('/overview', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res: Response) => {
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
-  const periodFilter = ' AND deleted_at IS NULL'
+  let periodFilter = ' AND deleted_at IS NULL'
     + (academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '');
-  const periodParams = academicTermId != null ? [academicTermId] : [];
+  const periodParams: any[] = academicTermId != null ? [academicTermId] : [];
 
   try {
+    // Access control v2 (enforce): every figure below covers only students in
+    // the caller's scope. Shadow counts the students v2 would leave out.
+    const v2 = await studentScopeFilter(req, 'DISCIPLINE_VIEW_ALL', 'detail', async () =>
+      (await db.all(`SELECT DISTINCT student_id FROM discipline_records WHERE 1=1${periodFilter}`, ...periodParams)).map((r: any) => String(r.student_id))
+    );
+    if (v2) { periodFilter += ` AND ${v2.sql}`; periodParams.push(...v2.params); }
+    if (accessMode() === 'shadow') {
+      const seen = await db.all(`SELECT DISTINCT student_id FROM discipline_records WHERE 1=1${periodFilter}`, ...periodParams);
+      shadowListLeak(req, 'DISCIPLINE_VIEW_ALL', 'detail', seen.map((r: any) => ({ studentId: r.student_id })));
+    }
+
     const totals = await db.get(
       `SELECT
          COUNT(*) as total,
@@ -640,7 +696,8 @@ router.get('/student/:id', selfOrPermission('id', 'DISCIPLINE_VIEW_ALL'), async 
 });
 
 // Full detail for one record — every field plus its change history (D3).
-router.get('/:id(\\d+)', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req: any, res: Response) => {
+router.get('/:id(\\d+)', authorizePermission('DISCIPLINE_VIEW_ALL'),
+  requireAccess('DISCIPLINE_VIEW_ALL', (req: any) => () => recordTarget(req, req.params.id), { minDepth: 'detail' }), async (req: any, res: Response) => {
   const db = getDb();
   try {
     const record = await db.get('SELECT * FROM discipline_records WHERE id = ? AND deleted_at IS NULL', req.params.id);
@@ -664,7 +721,8 @@ router.get('/:id(\\d+)', authorizePermission('DISCIPLINE_VIEW_ALL'), async (req:
 });
 
 // Update a record's review status / sanction (Teacher/Admin only)
-router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'), async (req: any, res: Response) => {
+router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'),
+  requireAccess('DISCIPLINE_REVIEW', (req: any) => () => recordTarget(req, req.params.id)), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const id = req.params.id;
   const { status, resolutionNote, sanction } = req.body;
@@ -687,6 +745,11 @@ router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'), async (req: 
     const existing = await db.get('SELECT * FROM discipline_records WHERE id = ? AND deleted_at IS NULL', id);
     if (!existing) {
       return res.status(404).json({ success: false, message: 'Discipline record not found.' });
+    }
+
+    if (sanction !== undefined && existing.type === 'demerit') {
+      const deniedCap = await sanctionDenied(req, sanction, [String(existing.student_id)], existing.sanction);
+      if (deniedCap) return sanctionForbidden(res, deniedCap);
     }
 
     await db.run(
@@ -719,7 +782,7 @@ router.put('/:id/status', authorizePermission('DISCIPLINE_REVIEW'), async (req: 
     // Remediation D4: dismissing (or un-dismissing) a demerit changes the
     // term balance, so re-run the escalation check against the new figure.
     if (existing.type === 'demerit' && existing.status !== status) {
-      await triggerConductCheck(existing.student_id, existing.student_name, existing.academic_term_id ?? undefined);
+      await triggerConductCheck(existing.student_id, existing.student_name, existing.academic_term_id ?? undefined, req);
     }
 
     return res.json({ success: true, data: updated, message: 'Record updated successfully.' });
@@ -786,6 +849,10 @@ router.put('/:id(\\d+)', async (req: any, res: Response) => {
     return res.status(400).json({ success: false, message: `Invalid sanction '${next.sanction}'.` });
   }
   if (next.type === 'merit') next.sanction = 'none';
+  if (next.type === 'demerit') {
+    const deniedCap = await sanctionDenied(req, next.sanction, [String(next.student_id)], existing.sanction);
+    if (deniedCap) return sanctionForbidden(res, deniedCap);
+  }
 
   // Re-derive points if the rule or severity/type changed.
   const ruleChanged = next.rule_id !== existing.rule_id;
@@ -852,7 +919,7 @@ router.put('/:id(\\d+)', async (req: any, res: Response) => {
   // Points may have moved in either direction; re-check the balance.
   const updated = await db.get('SELECT * FROM discipline_records WHERE id = ?', req.params.id);
   if (updated.type === 'demerit') {
-    await triggerConductCheck(updated.student_id, updated.student_name, updated.academic_term_id ?? undefined);
+    await triggerConductCheck(updated.student_id, updated.student_name, updated.academic_term_id ?? undefined, req);
   }
   return res.json({ success: true, data: updated, message: 'Record corrected.' });
 });
@@ -886,7 +953,7 @@ router.delete('/:id(\\d+)', authorizePermission('DISCIPLINE_DELETE'), async (req
   }
 
   if (existing.type === 'demerit') {
-    await triggerConductCheck(existing.student_id, existing.student_name, existing.academic_term_id ?? undefined);
+    await triggerConductCheck(existing.student_id, existing.student_name, existing.academic_term_id ?? undefined, req);
   }
   return res.json({ success: true, message: 'Record removed.' });
 });

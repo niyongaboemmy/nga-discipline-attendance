@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { getDb } from '../database.js';
 import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
+import { misUserIdOf, noteAccessVersion } from '../access/snapshot.js';
 
 const router = Router();
 
@@ -209,6 +210,9 @@ router.post('/exchange', async (req: Request, res: Response) => {
     }
 
     const { token: misToken, user: misUser, permissions } = result.data;
+    // Sign-in is a natural refresh point: drop a cached access snapshot if
+    // MIS says this user's access changed since it was fetched.
+    noteAccessVersion(Number(misUser?.user_id), result.data?.access_version);
 
     const id = String(misUser.user_id ?? misUser.id ?? misUser.uuid ?? misUser.email ?? 'MIS-USER');
     const name = misUser.name || misUser.username || 'Discipline User';
@@ -273,6 +277,14 @@ router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) =>
     });
     if (!response.ok) {
       return res.status(401).json({ success: false, message: 'MIS session has ended.' });
+    }
+    // Access control v2: MIS reports the user's access_version here; a change
+    // drops their cached snapshot so the next access check re-fetches it.
+    try {
+      const body = (await response.json()) as any;
+      noteAccessVersion(misUserIdOf((req as AuthenticatedRequest).user), body?.data?.access_version);
+    } catch {
+      // Not JSON / no version (older MIS): nothing to note.
     }
     return res.json({ success: true });
   } catch (error) {
