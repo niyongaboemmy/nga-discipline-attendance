@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { LayoutGrid, Search, X, ArrowRight } from 'lucide-react';
 import { authorizeSSO } from '../../api/systems';
 import type { System } from '../../api/systems';
-import { useToast } from '../../context/ToastContext';
+import { appLinkProps, useLaunchLinks } from '../../pwa/ngaLaunch';
 
 interface SystemsMenuProps {
   isOpen: boolean;
@@ -14,7 +14,6 @@ interface SystemsMenuProps {
  *  Central MIS / TaskMentor "Apps" grid, driven by the same live `System`
  *  list (fetched via /api/sso/systems, proxied from the MIS's /users/me). */
 export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, systems }) => {
-  const { error: toastError, info: toastInfo } = useToast();
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -29,48 +28,14 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
   // a matching static tile for it.
   const misHomeUrl = import.meta.env.VITE_MIS_HOME_URL as string | undefined;
 
+  // Tiles are real links so Chrome can open each app in its installed
+  // window (see src/pwa/ngaLaunch.ts). Called before the early return below:
+  // hooks must run on every render.
+  const { tileProps } = useLaunchLinks(filtered, isOpen, (clientId, redirectUri, state) =>
+    authorizeSSO(clientId, redirectUri, 'code', state),
+  );
+
   if (!isOpen) return null;
-
-  const handleSystemClick = async (system: System) => {
-    const callbacks = system.allowed_redirect_uris
-      ? system.allowed_redirect_uris.split(',').map((s) => s.trim())
-      : [];
-    const currentOrigin = window.location.origin;
-    const matchingCallback = callbacks.find((cb) => cb.startsWith(currentOrigin));
-    const redirectUri = matchingCallback || callbacks[0] || system.home_url;
-
-    if (!redirectUri) {
-      toastError('No callback or home URL configured for this system');
-      return;
-    }
-
-    const newWindow = window.open('about:blank', '_blank');
-    if (!newWindow) {
-      toastError('Popup blocked! Please allow popups for this site.');
-      return;
-    }
-
-    if (!system.client_id) {
-      newWindow.location.href = redirectUri;
-      return;
-    }
-
-    try {
-      toastInfo(`Opening ${system.name}...`);
-      const result = await authorizeSSO(system.client_id, redirectUri);
-      if (result?.code) {
-        const targetUrl = new URL(redirectUri);
-        targetUrl.searchParams.set('code', result.code);
-        if (result.state) targetUrl.searchParams.set('state', result.state);
-        newWindow.location.href = targetUrl.toString();
-      } else {
-        newWindow.location.href = redirectUri;
-      }
-    } catch {
-      newWindow.location.href = redirectUri;
-    }
-    onClose();
-  };
 
   return (
     <div className="menu systems-menu animate-fade-in">
@@ -100,13 +65,7 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
 
       <div className="systems-menu-grid">
         {misHomeUrl && (
-          <a
-            href={misHomeUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={onClose}
-            className="systems-menu-item"
-          >
+          <a {...appLinkProps(misHomeUrl, onClose)} title="Open NGA MIS" className="systems-menu-item">
             <span className="systems-menu-tile">
               <LayoutGrid size={16} />
               <span className="systems-menu-tile-arrow"><ArrowRight size={9} /></span>
@@ -116,9 +75,10 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
         )}
 
         {filtered.map((system) => (
-          <button
+          <a
             key={system.system_id}
-            onClick={() => handleSystemClick(system)}
+            {...tileProps(system, onClose)}
+            title={`Open ${system.name}`}
             className="systems-menu-item"
           >
             <span className="systems-menu-tile">
@@ -130,7 +90,7 @@ export const SystemsMenu: React.FC<SystemsMenuProps> = ({ isOpen, onClose, syste
               <span className="systems-menu-tile-arrow"><ArrowRight size={9} /></span>
             </span>
             <span className="systems-menu-label">{system.name}</span>
-          </button>
+          </a>
         ))}
       </div>
 
