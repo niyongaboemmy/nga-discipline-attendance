@@ -35,9 +35,6 @@
     ]
   },
   "related_applications": [
-    {
-      "platform": "webapp",
-      "url": "/site.webmanifest"
-    }
+    { "platform": "webapp", "url": "/site.webmanifest", "id": "https://tendo.amashuri.com/" }
   ]
 }
