@@ -73,6 +73,14 @@ export async function initDatabase(filenameOverride?: string) {
 
     /* Canonical identity + role store. Roles are owned by this backend so that
        administrators can (re)assign them; 'unassigned' is a first-class state. */
+    /* Single sign-out (nga_central_mis/docs/SINGLE_SIGN_OUT.md): when someone
+       signs out of NGA MIS, MIS tells us and we end every session of that
+       user issued before revoked_at (epoch ms). users.id is the MIS user id. */
+    CREATE TABLE IF NOT EXISTS session_revocations (
+      user_id TEXT PRIMARY KEY,
+      revoked_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

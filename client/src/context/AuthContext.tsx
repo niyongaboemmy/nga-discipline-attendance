@@ -118,8 +118,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
-    const intervalId = setInterval(verifyMisSession, 3 * 60 * 1000);
-    return () => clearInterval(intervalId);
+    // Single sign-out: check right away, whenever this tab comes back into
+    // view (e.g. after signing out of MIS in another tab), and every minute.
+    let lastCheck = 0;
+    const checkSoon = () => {
+      if (Date.now() - lastCheck < 5000) return; // focus + visibility fire together
+      lastCheck = Date.now();
+      void verifyMisSession();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkSoon();
+    };
+    checkSoon();
+    const intervalId = setInterval(checkSoon, 60 * 1000);
+    window.addEventListener('focus', checkSoon);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', checkSoon);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 

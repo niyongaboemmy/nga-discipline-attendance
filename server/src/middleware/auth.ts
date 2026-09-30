@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { getDb } from '../database.js';
+import { issuedBeforeRevocation } from '../utils/ssoLogout.js';
 
 export type Role = 'teacher' | 'admin' | 'student' | 'unassigned';
 export type RoleLevel = 'STUDENT' | 'TEACHER' | 'ADMIN';
@@ -46,6 +47,21 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       success: false,
       message: 'Invalid or expired authorization token.',
     });
+  }
+
+  // Single sign-out: this person signed out of NGA MIS after this token was
+  // issued (back-channel logout) -- the session is over everywhere.
+  try {
+    const revoked = await getDb().get('SELECT revoked_at FROM session_revocations WHERE user_id = ?', String(decoded.id));
+    if (issuedBeforeRevocation(decoded.iat, revoked?.revoked_at)) {
+      return res.status(401).json({
+        success: false,
+        code: 'SESSION_ENDED',
+        message: 'You signed out of NGA. Please sign in again.',
+      });
+    }
+  } catch {
+    /* never lock everyone out over a lookup failure */
   }
 
   const resolved = await resolvePermissions(decoded.id);

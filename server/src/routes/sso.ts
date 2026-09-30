@@ -1,4 +1,5 @@
-import { Router, Request, Response } from 'express';
+import express, { Router, Request, Response } from 'express';
+import { LogoutTokenError, verifyLogoutToken } from '../utils/ssoLogout.js';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { getDb } from '../database.js';
@@ -265,6 +266,32 @@ router.post('/exchange', async (req: Request, res: Response) => {
  * Deliberately fails CLOSED (401) on any MIS rejection, unlike /systems
  * below: a stale MIS session should end this one, not be shrugged off.
  */
+/**
+ * POST /api/sso/backchannel-logout -- OpenID Connect Back-Channel Logout.
+ * NGA MIS calls this (server to server) when a user signs out there; we end
+ * that user's Tendo sessions too (nga_central_mis/docs/SINGLE_SIGN_OUT.md).
+ */
+router.post('/backchannel-logout', express.urlencoded({ extended: false, limit: '20kb' }), async (req: Request, res: Response) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const misUserId = await verifyLogoutToken((req.body || {}).logout_token, {
+      misBaseUrl: config.ngaMisBaseUrl,
+      clientId: config.ssoClientId,
+    });
+    await getDb().run(
+      'INSERT INTO session_revocations (user_id, revoked_at) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET revoked_at = excluded.revoked_at',
+      misUserId,
+      Date.now(),
+    );
+    return res.status(200).json({ success: true });
+  } catch (error: any) {
+    if (error instanceof LogoutTokenError) {
+      return res.status(400).json({ error: 'invalid_request', error_description: error.message });
+    }
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
 router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) => {
   const misToken = (req as AuthenticatedRequest).user?.misToken;
   if (!misToken) {
