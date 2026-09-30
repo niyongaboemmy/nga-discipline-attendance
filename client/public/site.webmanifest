@@ -33,5 +33,11 @@
       "navigate-existing",
       "auto"
     ]
-  }
+  },
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "/site.webmanifest"
+    }
+  ]
 }
