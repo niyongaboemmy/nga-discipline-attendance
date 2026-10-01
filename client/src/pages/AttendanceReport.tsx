@@ -309,8 +309,8 @@ export const AttendanceReport: React.FC = () => {
           <p className="page-subtitle">A class register by subject and date range — analyse, print, or export.</p>
         </div>
         <div className="flex gap-2 flex-wrap" style={{ marginTop: '6px' }}>
-          <button className="btn btn-outline" onClick={exportCSV} disabled={!report}><Download size={16} /> Export CSV</button>
-          <button className="btn btn-primary" onClick={() => window.print()} disabled={!report}><Printer size={16} /> Print / Save PDF</button>
+          <button className="btn btn-outline" onClick={exportCSV} disabled={!report} data-track="tendo.attendance_report.export"><Download size={16} /> Export CSV</button>
+          <button className="btn btn-primary" onClick={() => window.print()} disabled={!report} data-track="tendo.attendance_report.print"><Printer size={16} /> Print / Save PDF</button>
         </div>
       </div>
 

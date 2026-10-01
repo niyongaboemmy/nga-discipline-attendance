@@ -20,6 +20,8 @@ import scheduleRoutes from './modules/attendance/schedule.routes.js';
 import reportingRoutes from './modules/reporting/reporting.routes.js';
 import accessRoutes from './routes/access.js';
 import integrationRoutes, { integrationErrorHandler } from './modules/integration/integration.routes.js';
+import { activityRouter } from './routes/activity.js';
+import { activityRelay } from './activity/relay.js';
 
 /** The Express app, with no side effects (no DB init, no `listen`) — so
  *  tests can import it directly against an in-memory DB via supertest.
@@ -27,10 +29,20 @@ import integrationRoutes, { integrationErrorHandler } from './modules/integratio
 export const app = express();
 
 app.disable('x-powered-by');
+// nginx on the same host proxies /api here: take the client IP from its
+// X-Forwarded-For (only when the hop is loopback), so req.ip is the real
+// visitor rather than 127.0.0.1 -- per-IP rate limits and usage analytics
+// both depend on it.
+app.set('trust proxy', 'loopback');
 app.use(cors({
   origin: config.corsOrigins,
   credentials: true,
 }));
+
+// Usage analytics relay -- before the global JSON parser: it has its own
+// 256 kB parser that also accepts the browser's text/plain beacons.
+app.use('/api/activity', activityRouter(activityRelay));
+
 app.use(express.json({ limit: '200kb' }));
 
 app.use((_req, res, next) => {

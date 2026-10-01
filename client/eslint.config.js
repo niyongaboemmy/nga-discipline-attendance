@@ -6,7 +6,8 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // Vendored from nga_central_mis (edited and linted at its source, never here).
+  globalIgnores(['dist', 'src/vendor/nga-activity']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

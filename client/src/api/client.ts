@@ -4,6 +4,7 @@
  * `{success, data}` envelope. New pages should use `apiGet`/`apiPost`/etc.
  * instead of calling `fetch` directly.
  */
+import { getDeviceId } from '../activity';
 
 export class ApiError extends Error {
   status: number;
@@ -25,12 +26,19 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** The shared NGA device id, so server-side analytics events link to this device. */
+function deviceHeader(): Record<string, string> {
+  const did = getDeviceId();
+  return did ? { 'X-NGA-Device': did } : {};
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
   const res = await fetch(path, {
     ...init,
     headers: {
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...authHeaders(),
+      ...deviceHeader(),
       ...(init.headers || {}),
     },
   });

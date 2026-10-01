@@ -11,6 +11,7 @@ import { validateBody, DATE_RE } from '../shared/validation.js';
 import { notifyExcuseDecision, notifyStudentMarked, generateForUser } from '../modules/attendance/notifier.service.js';
 import { isFutureSchoolDate } from '../shared/schoolTime.js';
 import { ensureSubjectCached } from '../modules/academics/academicsSync.service.js';
+import { trackKeyEvent } from '../activity/relay.js';
 import {
   accessCheck, accessMode, accessScope, allowedStudents, classGroupOfStudent, requireAccess,
   scopeToSql, shadowListLeak, studentTarget,
@@ -191,6 +192,16 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
     );
 
     await db.run('COMMIT');
+
+    // Usage analytics key event (ids/counts only).
+    trackKeyEvent(req, 'tendo.register.save', {
+      class_id: String(classId),
+      session_type: sessionType,
+      subject_id: subjectId,
+      students: records.length,
+      inserted: insertedCount,
+      updated: updatedCount,
+    });
 
     // Low-attendance evaluation runs in the background, scoped to this session
     // type so subject drops don't get conflated with homeroom drops.
@@ -1121,6 +1132,10 @@ router.put('/excuse/:id/status', authorizePermission('EXCUSES_REVIEW'),
       throw err;
     }
 
+    if (status === 'approved' && existing.status !== 'approved') {
+      trackKeyEvent(req, 'tendo.excuse.approve', { excuse_id: Number(existing.id), attendance_rows: reconciled, bulk: false });
+    }
+
     if (existing.student_id) {
       await notifyExcuseDecision(db, {
         studentId: String(existing.student_id),
@@ -1178,6 +1193,7 @@ router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: a
 
   let processed = 0;
   let reconciled = 0;
+  let newlyApproved = 0;
   try {
     await db.run('BEGIN TRANSACTION');
     try {
@@ -1186,6 +1202,7 @@ router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: a
         if (!existing || existing.status === status) continue;
         reconciled += await applyExcuseDecision(db, actor, existing, status, reviewerNote);
         processed += 1;
+        if (status === 'approved') newlyApproved += 1;
         if (existing.student_id) {
           await notifyExcuseDecision(db, {
             studentId: String(existing.student_id),
@@ -1199,6 +1216,9 @@ router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: a
     } catch (err) {
       await db.run('ROLLBACK');
       throw err;
+    }
+    if (newlyApproved > 0) {
+      trackKeyEvent(req, 'tendo.excuse.approve', { count: newlyApproved, attendance_rows: reconciled, bulk: true });
     }
     return res.json({
       success: true,

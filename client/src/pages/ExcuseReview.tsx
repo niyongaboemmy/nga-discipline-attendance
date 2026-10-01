@@ -132,7 +132,7 @@ export const ExcuseReview: React.FC = () => {
             <button className="btn btn-outline btn-sm" disabled={bulkBusy} onClick={() => setNoteModal({ ids: [...selected], status: 'rejected' })}>
               <X size={14} /> Reject all
             </button>
-            <button className="btn btn-primary btn-sm" disabled={bulkBusy || !can('EXCUSES_REVIEW')} onClick={() => runBulk([...selected], 'approved')}>
+            <button className="btn btn-primary btn-sm" disabled={bulkBusy || !can('EXCUSES_REVIEW')} onClick={() => runBulk([...selected], 'approved')} data-track="tendo.excuse.review_approve">
               <Check size={14} /> Approve all
             </button>
           </div>
@@ -213,6 +213,7 @@ export const ExcuseReview: React.FC = () => {
                               className="btn btn-primary btn-sm"
                               disabled={busyId === ex.id || !can('EXCUSES_REVIEW')}
                               onClick={() => review(ex, 'approved')}
+                              data-track="tendo.excuse.review_approve"
                             >
                               <Check size={14} /> Approve
                             </button>

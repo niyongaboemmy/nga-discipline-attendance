@@ -81,7 +81,7 @@ export const Reports: React.FC = () => {
           <h1 className="page-title">Reports</h1>
           <p className="page-subtitle">School-wide attendance performance.</p>
         </div>
-        <button className="btn btn-outline" onClick={exportCSV} disabled={!data}>
+        <button className="btn btn-outline" onClick={exportCSV} disabled={!data} data-track="tendo.reports.export">
           <Download size={16} /> Export CSV
         </button>
       </div>

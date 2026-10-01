@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { beginSsoState } from '../utils/ssoState';
+import { endActivity } from '../activity';
 
 export type Role = 'teacher' | 'admin' | 'student' | 'unassigned';
 
@@ -181,6 +182,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    // Close this tab's analytics session while the token can still sign it.
+    void endActivity();
+
     setToken(null);
     setUser(null);
     setPermissions([]);

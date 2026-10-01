@@ -24,6 +24,7 @@ import {
 } from '../access/policy.js';
 import { sanctionDenied, sanctionForbidden } from '../access/sanctions.js';
 import { notifyStaff } from '../access/notify.js';
+import { trackKeyEvent } from '../activity/relay.js';
 
 const router = Router();
 
@@ -271,6 +272,15 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
       resolvedRuleId
     );
 
+    // Usage analytics key event (ids only -- never the title or description).
+    trackKeyEvent(req, 'tendo.incident.create', {
+      record_id: result.lastID ?? null,
+      type,
+      rule_id: resolvedRuleId,
+      count: 1,
+      bulk: false,
+    });
+
     const inserted = await db.get('SELECT * FROM discipline_records WHERE id = ?', result.lastID);
 
     await recordAudit(db, actor, 'discipline.create', 'discipline_record', result.lastID ?? null, {
@@ -444,6 +454,14 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
     }, { required: true });
 
     await db.run('COMMIT');
+
+    trackKeyEvent(req, 'tendo.incident.create', {
+      type,
+      rule_id: resolvedRuleId,
+      count: insertedIds.length,
+      skipped,
+      bulk: true,
+    });
 
     // Remediation D6: notification fan-out runs after the commit, not inside
     // the critical transaction.

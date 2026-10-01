@@ -53,7 +53,7 @@ export const Login: React.FC = () => {
             <span>Sign in with your <strong>Discipline MIS</strong> account to continue.</span>
           </div>
 
-          <button className="btn btn-primary btn-lg btn-block" onClick={login}>
+          <button className="btn btn-primary btn-lg btn-block" onClick={login} data-track="tendo.login.start">
             Sign in with Discipline MIS <ArrowRight size={18} />
           </button>
 
