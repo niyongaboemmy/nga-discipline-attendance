@@ -760,6 +760,7 @@ export const MarkAttendance: React.FC = () => {
                   disabled={saving || !can('ATTENDANCE_MARK') || (isEditing && changedIds.size === 0)}
                   title={can('ATTENDANCE_MARK') ? undefined : "You don't have permission to mark attendance."}
                   onClick={() => handleSave(true)}
+                  data-track="tendo.register.submit"
                 >
                   <RotateCcw size={16} /> {isEditing ? 'Update & mark another' : 'Save & mark another'}
                 </button>
@@ -769,6 +770,7 @@ export const MarkAttendance: React.FC = () => {
                   disabled={saving || !can('ATTENDANCE_MARK') || (isEditing && changedIds.size === 0)}
                   title={can('ATTENDANCE_MARK') ? undefined : "You don't have permission to mark attendance."}
                   onClick={() => handleSave(false)}
+                  data-track="tendo.register.submit"
                 >
                   <Save size={16} /> {saving ? 'Saving…' : isEditing ? `Update register${changedIds.size ? ` (${changedIds.size})` : ''}` : 'Save & done'}
                 </button>

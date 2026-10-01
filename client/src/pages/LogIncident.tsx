@@ -407,6 +407,7 @@ export const LogIncident: React.FC = () => {
                 <button
                   type="submit"
                   className="btn btn-primary"
+                  data-track="tendo.incident.submit"
                   disabled={saving || (bulk ? bulkIds.length === 0 : !form.studentId) || !can('DISCIPLINE_LOG')}
                   title={can('DISCIPLINE_LOG') ? undefined : "You don't have permission to log discipline records."}
                 >

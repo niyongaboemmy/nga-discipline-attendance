@@ -109,9 +109,9 @@ export const StaffAttendance: React.FC = () => {
             </div>
           </div>
           {!clockStatus.clockedIn ? (
-            <button className="btn btn-primary" onClick={() => clock('/api/staff/clock-in')}><Play size={16} /> Clock in</button>
+            <button className="btn btn-primary" onClick={() => clock('/api/staff/clock-in')} data-track="tendo.staff.clock_in"><Play size={16} /> Clock in</button>
           ) : !clockStatus.clockedOut ? (
-            <button className="btn btn-danger" onClick={() => clock('/api/staff/clock-out')}><Square size={16} /> Clock out</button>
+            <button className="btn btn-danger" onClick={() => clock('/api/staff/clock-out')} data-track="tendo.staff.clock_out"><Square size={16} /> Clock out</button>
           ) : (
             <span className="badge badge-success">Duty completed today</span>
           )}

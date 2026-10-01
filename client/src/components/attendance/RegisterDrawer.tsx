@@ -443,7 +443,7 @@ export const RegisterDrawer: React.FC<{
                       <ExternalLink size={13} /> Full page
                     </button>
                     {canMark && (
-                      <button className="btn btn-primary" disabled={saveDisabled} onClick={attemptSave}>
+                      <button className="btn btn-primary" disabled={saveDisabled} onClick={attemptSave} data-track="tendo.register.submit">
                         <Save size={15} /> {saving ? 'Saving…' : isEditing ? `Update${dirty ? ` (${changedIds.size})` : ''}` : 'Save register'}
                       </button>
                     )}

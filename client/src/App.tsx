@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import { AcademicPeriodProvider } from './context/AcademicPeriodContext';
 import { ToastProvider } from './context/ToastContext';
 import { ProtectedRoute } from './components/common/ProtectedRoute';
+import { ActivityRouterTracker } from './vendor/nga-activity/react';
 
 // Import Pages
 import { Login } from './pages/Login';
@@ -40,6 +41,8 @@ export const App: React.FC = () => {
       <AcademicPeriodProvider>
       <ToastProvider>
       <BrowserRouter>
+        {/* Usage analytics: inside the router so public AND protected routes count. */}
+        <ActivityRouterTracker />
         <Routes>
           {/* Public Portal Routes */}
           <Route path="/" element={<Login />} />

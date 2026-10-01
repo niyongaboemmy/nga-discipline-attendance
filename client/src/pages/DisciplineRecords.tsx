@@ -147,7 +147,7 @@ export const DisciplineRecords: React.FC = () => {
           <h1 className="page-title">Discipline Records</h1>
           <p className="page-subtitle">Review conduct records, sanctions, and their status.</p>
         </div>
-        <button className="btn btn-outline" onClick={exportCSV} disabled={!records.length}>
+        <button className="btn btn-outline" onClick={exportCSV} disabled={!records.length} data-track="tendo.discipline_records.export">
           <Download size={16} /> Export CSV
         </button>
       </div>

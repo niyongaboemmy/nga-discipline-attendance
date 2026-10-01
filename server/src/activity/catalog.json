@@ -1,0 +1,54 @@
+{
+  "app": "tendo",
+  "version": "2026.10.01",
+  "features": [
+    { "key": "tendo.login", "label": "Sign-in page", "module": "Public", "patterns": ["/"], "public": true },
+    { "key": "tendo.sso_callback", "label": "Signing in (returning from MIS)", "module": "Public", "patterns": ["/sso/callback", "/callback"], "public": true },
+
+    { "key": "tendo.welcome", "label": "Welcome", "module": "Home", "patterns": ["/welcome"] },
+    { "key": "tendo.pending", "label": "Waiting for a role", "module": "Home", "patterns": ["/pending"] },
+    { "key": "tendo.dashboard", "label": "Dashboard", "module": "Home", "patterns": ["/dashboard"] },
+
+    { "key": "tendo.admin_console", "label": "Admin console", "module": "Administration", "patterns": ["/admin"] },
+    { "key": "tendo.roles_permissions", "label": "Roles & permissions", "module": "Administration", "patterns": ["/admin/roles"] },
+    { "key": "tendo.audit_log", "label": "Audit log", "module": "Administration", "patterns": ["/admin/audit"] },
+    { "key": "tendo.discipline_rules", "label": "Discipline rules", "module": "Administration", "patterns": ["/discipline/rules"] },
+
+    { "key": "tendo.attendance_calendar", "label": "Attendance calendar", "module": "Attendance", "patterns": ["/attendance", "/today", "/schedule"] },
+    { "key": "tendo.attendance_session", "label": "Lesson / session details", "module": "Attendance", "patterns": ["/attendance/session"] },
+    { "key": "tendo.attendance_mark", "label": "Take a register", "module": "Attendance", "patterns": ["/attendance/mark"] },
+    { "key": "tendo.attendance_history", "label": "Attendance history", "module": "Attendance", "patterns": ["/attendance/records"] },
+    { "key": "tendo.attendance_report", "label": "Attendance report", "module": "Attendance", "patterns": ["/attendance/report"] },
+    { "key": "tendo.staff_attendance", "label": "Staff attendance (clock in/out)", "module": "Attendance", "patterns": ["/staff/attendance"] },
+    { "key": "tendo.excuses", "label": "Leaves & excuses (student)", "module": "Attendance", "patterns": ["/excuses"] },
+    { "key": "tendo.excuse_new", "label": "New excuse request", "module": "Attendance", "patterns": ["/excuses/new"] },
+    { "key": "tendo.excuse_detail", "label": "Excuse request details", "module": "Attendance", "patterns": ["/excuses/:id"] },
+
+    { "key": "tendo.discipline_log", "label": "Log conduct record", "module": "Discipline", "patterns": ["/discipline/log"] },
+    { "key": "tendo.discipline_records", "label": "Discipline records", "module": "Discipline", "patterns": ["/discipline/records"] },
+    { "key": "tendo.excuse_review", "label": "Excuse review", "module": "Discipline", "patterns": ["/excuses/review"] },
+    { "key": "tendo.my_conduct", "label": "My conduct (student)", "module": "Discipline", "patterns": ["/discipline/me"] },
+
+    { "key": "tendo.reports", "label": "Reports", "module": "Insights", "patterns": ["/reports"] },
+    { "key": "tendo.student_report", "label": "Student report", "module": "Insights", "patterns": ["/reports/student/:id"] },
+    { "key": "tendo.directory", "label": "Directory", "module": "Insights", "patterns": ["/directory"] },
+
+    { "key": "tendo.settings", "label": "Settings", "module": "Account", "patterns": ["/settings"] },
+
+    { "key": "tendo.register.save", "label": "Register saved", "module": "Attendance", "event": true, "key_event": true },
+    { "key": "tendo.incident.create", "label": "Conduct record logged", "module": "Discipline", "event": true, "key_event": true },
+    { "key": "tendo.excuse.approve", "label": "Excuse approved", "module": "Discipline", "event": true, "key_event": true },
+
+    { "key": "tendo.login.start", "label": "Clicked \"Sign in with MIS\"", "module": "Public", "event": true },
+    { "key": "tendo.register.submit", "label": "Clicked save on a register", "module": "Attendance", "event": true },
+    { "key": "tendo.attendance_report.export", "label": "Exported the attendance report (CSV)", "module": "Attendance", "event": true },
+    { "key": "tendo.attendance_report.print", "label": "Printed the attendance report", "module": "Attendance", "event": true },
+    { "key": "tendo.staff.clock_in", "label": "Clicked clock in", "module": "Attendance", "event": true },
+    { "key": "tendo.staff.clock_out", "label": "Clicked clock out", "module": "Attendance", "event": true },
+    { "key": "tendo.excuse.submit", "label": "Clicked submit on an excuse request", "module": "Attendance", "event": true },
+    { "key": "tendo.incident.submit", "label": "Clicked save on a conduct record", "module": "Discipline", "event": true },
+    { "key": "tendo.excuse.review_approve", "label": "Clicked approve on an excuse", "module": "Discipline", "event": true },
+    { "key": "tendo.discipline_records.export", "label": "Exported discipline records (CSV)", "module": "Discipline", "event": true },
+    { "key": "tendo.reports.export", "label": "Exported the school report (CSV)", "module": "Insights", "event": true }
+  ]
+}
