@@ -1080,3 +1080,9 @@
 .agenda-card.is-clickable:focus-visible, .sc-session.is-clickable:focus-visible {
   outline: 2px solid var(--primary); outline-offset: 2px;
 }
+
+/* Office hours from the MIS (read-only lane; the register lives in the MIS). */
+.cal-week-oh .hr-label { color: var(--primary); }
+.cal-oh-pill { text-decoration: none; gap: 4px; max-width: 100%; overflow: hidden; white-space: nowrap; }
+.cal-oh-pill .truncate { overflow: hidden; text-overflow: ellipsis; }
+.oh-card { text-decoration: none; color: inherit; --spine: var(--primary); }

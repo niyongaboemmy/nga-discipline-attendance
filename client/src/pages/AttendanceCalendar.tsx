@@ -25,6 +25,7 @@ import {
   X,
   User,
   PartyPopper,
+  ExternalLink,
 } from "lucide-react";
 import { DashboardLayout } from "../components/Layout/DashboardLayout";
 import { ErrorState } from "../components/common/ErrorState";
@@ -49,6 +50,7 @@ import {
   type WeekResponse,
   type DayResponse,
   type CalendarSession,
+  type OfficeHoursEntry,
 } from "../api/schedule";
 import { ApiError } from "../api/client";
 import { isoDate, clock, DOW_LABEL } from "../utils/time";
@@ -512,6 +514,23 @@ const WeekView: React.FC<{
             </div>
           )}
 
+          {days.some((d) => (d.officeHours ?? []).length > 0) && (
+            <div className="cal-week-homeroom cal-week-oh">
+              <span className="hr-label">
+                <Clock size={11} /> OH
+              </span>
+              {days.map((d) => (
+                <div key={d.date} className="cal-hr-cell">
+                  {(d.officeHours ?? []).map((o) => (
+                    <a key={o.sessionId} className={`cal-hr-pill cal-oh-pill${o.state === "held" ? " is-recorded" : ""}`} href={o.link} title={`${o.title} · ${o.startTime}–${o.endTime}${o.room ? ` · ${o.room}` : ""}`}>
+                      <span>{clock(o.startTime)}</span> <span className="truncate">{ohLabel(o)}</span>
+                    </a>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="cal-week-body" style={{ ...style, height: bodyH }}>
             <div className="cal-hours">
               {hours.map((h) => (
@@ -658,6 +677,49 @@ const WeekView: React.FC<{
 /* -------------------------------------------------------------------------- */
 /* Day (agenda)                                                              */
 /* -------------------------------------------------------------------------- */
+/** Office hours from the MIS: shown here, registered there. */
+const ohLabel = (o: OfficeHoursEntry) =>
+  o.ownStatus
+    ? o.ownStatus.charAt(0) + o.ownStatus.slice(1).toLowerCase()
+    : o.state === "held"
+      ? `Register taken${o.expected ? ` · ${o.marked}/${o.expected}` : ""}`
+      : o.expected != null
+        ? `${o.expected} student${o.expected === 1 ? "" : "s"}`
+        : "Expected";
+
+const OfficeHoursList: React.FC<{ entries: OfficeHoursEntry[] }> = ({ entries }) =>
+  entries.length === 0 ? null : (
+    <>
+      <div className="agenda-group-label">Office hours</div>
+      {entries.map((o) => (
+        <a key={o.sessionId} className="agenda-card is-clickable oh-card" href={o.link} aria-label={`Office hours: ${o.title} at ${o.startTime} — open in the MIS`}>
+          <div className="agenda-time">
+            <span className="t-start">{clock(o.startTime)}</span>
+            <span className="t-end">{clock(o.endTime)}</span>
+          </div>
+          <span className="agenda-spine" />
+          <div className="agenda-body">
+            <div className="agenda-title">
+              <Clock size={14} className="agenda-icon-inline" /> {o.title}
+            </div>
+            <div className="agenda-meta flex flex-row items-center gap-2">
+              {o.room && (
+                <span className="flex flex-row items-center gap-1">
+                  <MapPin size={11} /> {o.room}
+                </span>
+              )}
+              <span>{ohLabel(o)}</span>
+            </div>
+          </div>
+          <div className="agenda-action">
+            <span className="text-xs">Open in MIS</span>
+            <ExternalLink size={14} className="agenda-chevron" />
+          </div>
+        </a>
+      ))}
+    </>
+  );
+
 const DayView: React.FC<{
   data: DayResponse;
   canMark: boolean;
@@ -696,7 +758,8 @@ const DayView: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.date, pg.done, pg.total]);
 
-  if (!data.timetableAvailable) {
+  const officeHours = data.officeHours ?? [];
+  if (!data.timetableAvailable && officeHours.length === 0) {
     return (
       <div className="cal-empty">
         <CalendarDays size={30} />
@@ -716,7 +779,7 @@ const DayView: React.FC<{
       </div>
     );
   }
-  if (data.sessions.length === 0) {
+  if (data.sessions.length === 0 && officeHours.length === 0) {
     return (
       <div className="cal-empty">
         <Sun size={30} />
@@ -923,6 +986,7 @@ const DayView: React.FC<{
           ))}
         </>
       )}
+      <OfficeHoursList entries={officeHours} />
     </div>
   );
 };

@@ -9,6 +9,8 @@ const DEFAULT_JWT_SECRET = 'local_dev_secret_change_in_production';
 export const config = {
   port: parseInt(process.env.PORT || '5171', 10),
   ngaMisBaseUrl: process.env.NGA_MIS_BASE_URL || 'https://ngamis.isengesho.com',
+  // The MIS web app, for deep links (e.g. an office-hours register).
+  ngaMisFrontendUrl: (process.env.NGA_MIS_FRONTEND_URL || 'https://mis.amashuri.com').replace(/\/+$/, ''),
   ssoClientId: process.env.SSO_CLIENT_ID || 'placeholder_client_id',
   ssoClientSecret: process.env.SSO_CLIENT_SECRET || 'placeholder_client_secret',
   jwtSecret: process.env.JWT_SECRET || DEFAULT_JWT_SECRET,

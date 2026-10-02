@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -60,14 +61,25 @@ export const LogIncident: React.FC = () => {
     sanctions: string[];
   } | null>(null);
 
+  // Prefill from a link (the MIS office-hours "Refer to discipline" button):
+  // ?class_id=&student_id=&title=&description=. Nothing is saved until the
+  // teacher reviews and submits.
+  const [params] = useSearchParams();
+  // Read once: the link only seeds the form on first load.
+  const [prefill] = useState(() => ({
+    classId: params.get('class_id') ?? '',
+    studentId: params.get('student_id') ?? '',
+    title: (params.get('title') ?? '').slice(0, 200),
+    description: (params.get('description') ?? '').slice(0, 2000),
+  }));
   const [type, setType] = useState<RecordType>('demerit');
   const [form, setForm] = useState({
     classId: '',
     studentId: '',
     category: FALLBACK_DEMERIT_CATEGORIES[0],
     severity: 'minor',
-    title: '',
-    description: '',
+    title: prefill.title,
+    description: prefill.description,
     incidentDate: today(),
     location: '',
     sanction: 'none',
@@ -127,11 +139,14 @@ export const LogIncident: React.FC = () => {
       try {
         const res = await apiGet<ClassData[]>('/api/mis/classes');
         setClasses(res.data || []);
-        if (res.data?.length) setForm((f) => ({ ...f, classId: res.data![0].id }));
+        if (res.data?.length) {
+          const wanted = res.data.find((c) => String(c.id) === prefill.classId);
+          setForm((f) => ({ ...f, classId: (wanted ?? res.data![0]).id }));
+        }
       } catch (err) { console.error('Error fetching classes:', err); }
       finally { setLoadingClasses(false); }
     })();
-  }, []);
+  }, [prefill.classId]);
 
   useEffect(() => {
     if (!form.classId) return;
@@ -140,12 +155,13 @@ export const LogIncident: React.FC = () => {
       try {
         const res = await apiGet<Student[]>(`/api/mis/students?class_id=${form.classId}`);
         setStudents(res.data || []);
-        setForm((f) => ({ ...f, studentId: res.data?.[0]?.id ?? '' }));
+        const wanted = res.data?.find((s) => String(s.id) === prefill.studentId);
+        setForm((f) => ({ ...f, studentId: wanted?.id ?? res.data?.[0]?.id ?? '' }));
         setBulkIds([]);
       } catch (err) { console.error('Error fetching students:', err); }
       finally { setLoadingStudents(false); }
     })();
-  }, [form.classId]);
+  }, [form.classId, prefill.studentId]);
 
   const update = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }));
 
