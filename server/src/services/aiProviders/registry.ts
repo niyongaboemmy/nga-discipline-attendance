@@ -3,15 +3,17 @@ import { geminiProvider } from "./geminiProvider.js";
 import { groqProvider } from "./groqProvider.js";
 import { glmProvider } from "./glmProvider.js";
 import { openaiProvider } from "./openaiProvider.js";
+import { deepseekProvider } from "./deepseekProvider.js";
 
 const ALL_PROVIDERS: Record<string, AIProvider> = {
   gemini: geminiProvider,
   groq: groqProvider,
   glm: glmProvider,
   openai: openaiProvider,
+  deepseek: deepseekProvider,
 };
 
-const DEFAULT_ORDER = "gemini,groq,glm";
+const DEFAULT_ORDER = "gemini,groq,deepseek,glm";
 
 /**
  * Providers to try, in order. Defaults to AI_PROVIDER_ORDER (comma-separated env var,
