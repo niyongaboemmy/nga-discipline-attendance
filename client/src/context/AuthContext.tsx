@@ -199,6 +199,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.location.href = '/';
   };
 
+  // NGA desktop app: it keeps the desktop and all four NGA apps on one theme.
+  // A switch made elsewhere arrives here (the MIS account is updated by the
+  // desktop). preventDefault tells the desktop this app applied it itself.
+  useEffect(() => {
+    const onDesktopTheme = (e: Event) => {
+      const next = (e as CustomEvent<{ theme?: string }>).detail?.theme;
+      if (next !== 'light' && next !== 'dark') return;
+      e.preventDefault();
+      setTheme(next);
+    };
+    window.addEventListener('nga:set-theme', onDesktopTheme);
+    return () => window.removeEventListener('nga:set-theme', onDesktopTheme);
+  }, []);
+
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
