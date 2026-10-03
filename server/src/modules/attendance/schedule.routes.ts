@@ -292,6 +292,8 @@ async function resolveHomeroomSlots(
   return slots.filter((s) => classTeacherOf.has(s.classId));
 }
 
+import { fetchOfficeHours } from './officeHours.js';
+
 const ATT_PERMS = ['ATTENDANCE_MARK', 'ATTENDANCE_VIEW_ALL', 'ATTENDANCE_VIEW_OWN', 'ATTENDANCE_CALENDAR_VIEW_OWN'];
 
 // GET /api/attendance/schedule/day?date=YYYY-MM-DD
@@ -333,6 +335,7 @@ router.get('/schedule/day', authorizePermission(...ATT_PERMS), async (req: any, 
     });
     const done = recordable.filter((s) => s.status === 'recorded').length;
 
+    const officeHours = await fetchOfficeHours(authReq.user?.misToken, date, date, isStudent);
     return res.json({
       success: true,
       data: {
@@ -340,6 +343,7 @@ router.get('/schedule/day', authorizePermission(...ATT_PERMS), async (req: any, 
         dayOfWeek: dow,
         timetableAvailable: source === 'mis' && slots.length > 0,
         sessions,
+        officeHours,
         progress: { done, total: recordable.length },
       },
     });
@@ -397,8 +401,11 @@ router.get('/schedule/week', authorizePermission(...ATT_PERMS), async (req: any,
       }));
       return { date, dayOfWeek: dow, sessions };
     });
+    const officeHours = await fetchOfficeHours(authReq.user?.misToken, weekStart, weekEnd, isStudent);
+    const byDate = new Map<string, typeof officeHours>();
+    for (const o of officeHours) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
 
-    return res.json({ success: true, data: { weekStart, weekEnd, days } });
+    return res.json({ success: true, data: { weekStart, weekEnd, days: days.map((d) => ({ ...d, officeHours: byDate.get(d.date) ?? [] })) } });
   } catch (error) {
     console.error('Error building schedule/week:', (error as Error).message);
     return res.status(502).json({ success: false, message: 'Could not load the week.' });

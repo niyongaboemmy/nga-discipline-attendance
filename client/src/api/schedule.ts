@@ -27,11 +27,28 @@ export interface DaySession {
   isMine: boolean;
 }
 
+/** An office-hours session from the MIS (read-only here; the MIS keeps the register). */
+export interface OfficeHoursEntry {
+  sessionId: number;
+  scheduleId: number;
+  date: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  room: string | null;
+  state: string;
+  expected: number | null;
+  marked: number | null;
+  ownStatus: string | null;
+  link: string;
+}
+
 export interface DayResponse {
   date: string;
   dayOfWeek: number;
   timetableAvailable: boolean;
   sessions: DaySession[];
+  officeHours?: OfficeHoursEntry[];
   progress: { done: number; total: number };
 }
 
@@ -47,6 +64,7 @@ export interface WeekDay {
   date: string;
   dayOfWeek: number;
   sessions: CalendarSession[];
+  officeHours?: OfficeHoursEntry[];
 }
 
 export interface WeekResponse {
