@@ -259,6 +259,7 @@ export async function initDatabase(filenameOverride?: string) {
   await migrateDataMigrationLedger(db);
   await purgeAttendanceForCorrectedDates(db);
   await migrateAccessShadowDiffs(db);
+  await migrateAppState(db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
   // and the admin MIS sync (routes/admin.ts); all operational records start empty.
@@ -763,6 +764,20 @@ async function migrateAccessShadowDiffs(db: Database) {
       UNIQUE(user_id, capability, route, legacy_allowed, v2_allowed)
     );
     CREATE INDEX IF NOT EXISTS idx_access_shadow_diffs_last_seen ON access_shadow_diffs(last_seen);
+  `);
+}
+
+/**
+ * Small key/value store for app-level state that must survive restarts
+ * (e.g. the early-warning push's last-success time). Additive.
+ */
+async function migrateAppState(db: Database) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS app_state (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 }
 
