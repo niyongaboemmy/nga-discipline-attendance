@@ -9,7 +9,7 @@ import {
   LayoutDashboard, PenLine, Users, CalendarDays, Sun, BookOpen, Search, X, Command, Sparkles,
   Pencil, History,
 } from 'lucide-react';
-import { apiGet, apiPost, ApiError } from '../api/client';
+import { apiGet, ApiError } from '../api/client';
 import { saveRegister } from '../offline/registers';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { AttendanceCoverage } from './AttendanceCoverage';
