@@ -43,3 +43,14 @@ table th,
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+/* Offline registers banner (src/offline/OfflineBanner.tsx) */
+.offline-banner { margin: 0.75rem 1rem 0; padding: 0.6rem 0.9rem; border-radius: 0.75rem; background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; font-size: 0.875rem; }
+.offline-banner__row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.15rem 0; }
+.offline-banner__row--error { color: #991b1b; }
+.offline-banner__btn { margin-left: auto; padding: 0.2rem 0.7rem; border-radius: 999px; border: 1px solid currentColor; background: transparent; color: inherit; font-weight: 600; font-size: 0.8rem; cursor: pointer; }
+.offline-banner__btn:disabled { opacity: 0.5; cursor: default; }
+[data-theme='dark'] .offline-banner, .dark .offline-banner { background: rgba(234, 88, 12, 0.12); border-color: rgba(251, 146, 60, 0.35); color: #fed7aa; }
+[data-theme='dark'] .offline-banner__row--error, .dark .offline-banner__row--error { color: #fecaca; }
+.offline-banner .spin { animation: offline-spin 1s linear infinite; }
+@keyframes offline-spin { to { transform: rotate(360deg); } }

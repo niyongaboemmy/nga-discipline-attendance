@@ -5,7 +5,8 @@ import {
   Sun, BookOpen, Undo2, ExternalLink, Search, History, Pencil, ArrowRight, Command,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { apiGet, apiPost, ApiError } from '../../api/client';
+import { apiGet, ApiError } from '../../api/client';
+import { saveRegister } from '../../offline/registers';
 import type { CalendarSession, AttStatus } from '../../api/schedule';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useToast } from '../../context/ToastContext';
@@ -190,7 +191,7 @@ export const RegisterDrawer: React.FC<{
   const doSave = useCallback(async () => {
     setSaving(true); setError(null);
     try {
-      await apiPost('/api/attendance/mark', {
+      const res = await saveRegister({
         classId: link.classId,
         className: session.className,
         date: link.date,
@@ -200,6 +201,12 @@ export const RegisterDrawer: React.FC<{
         subjectName: link.sessionType === 'subject' ? session.subjectName ?? undefined : undefined,
         records: Object.values(rows),
       });
+      if (res.queued) {
+        onSaved();
+        toast.success('Saved on this device', "No connection: it will be sent automatically when you're back online.");
+        onClose();
+        return;
+      }
       const t = STATUSES.reduce((acc, s) => {
         acc[s.key] = Object.values(rows).filter((r) => r.status === s.key).length;
         return acc;

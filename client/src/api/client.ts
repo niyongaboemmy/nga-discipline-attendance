@@ -5,6 +5,7 @@
  * instead of calling `fetch` directly.
  */
 import { getDeviceId } from '../activity';
+import { readCache, writeCache } from '../offline/outbox';
 
 export class ApiError extends Error {
   status: number;
@@ -14,11 +15,20 @@ export class ApiError extends Error {
   }
 }
 
+/** No connection at all (fetch itself failed): the request never reached the server. */
+export class OfflineError extends ApiError {
+  constructor() {
+    super("You're offline.", 0);
+  }
+}
+
 interface Envelope<T> {
   success: boolean;
   data?: T;
   message?: string;
   total?: number;
+  /** Served from this device's last copy because there's no connection (src/offline). */
+  offline?: { at: number };
 }
 
 function authHeaders(): Record<string, string> {
@@ -33,15 +43,26 @@ function deviceHeader(): Record<string, string> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
-  const res = await fetch(path, {
-    ...init,
-    headers: {
-      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-      ...authHeaders(),
-      ...deviceHeader(),
-      ...(init.headers || {}),
-    },
-  });
+  const isGet = (init.method || 'GET').toUpperCase() === 'GET';
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: {
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...authHeaders(),
+        ...deviceHeader(),
+        ...(init.headers || {}),
+      },
+    });
+  } catch {
+    // No connection: rosters and the timetable come from this device's last copy.
+    if (isGet) {
+      const cached = readCache<Envelope<T>>(localStorage, path);
+      if (cached) return { ...cached.body, offline: { at: cached.at } };
+    }
+    throw new OfflineError();
+  }
 
   // A 401 means the stored session is dead (expired, or its user row no
   // longer exists). Clear it and bounce to the login screen rather than
@@ -65,6 +86,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<Envelop
   if (!res.ok || body.success === false) {
     throw new ApiError(body.message || `Request failed (${res.status})`, res.status);
   }
+  if (isGet) writeCache(localStorage, path, body);
   return body;
 }
 

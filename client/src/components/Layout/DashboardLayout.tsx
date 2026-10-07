@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Navbar } from './Navbar';
 import { Sidebar } from './Sidebar';
 import { useAcademicPeriod } from '../../context/AcademicPeriodContext';
+import OfflineBanner from '../../offline/OfflineBanner';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -38,6 +39,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) =>
               </span>
             </div>
           )}
+          <OfflineBanner />
           <main className="app-content" key={academicPeriodVersion}>{children}</main>
         </div>
       </div>

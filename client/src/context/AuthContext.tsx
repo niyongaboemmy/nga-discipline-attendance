@@ -1,3 +1,4 @@
+import { clearCache } from '../offline/outbox';
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { beginSsoState } from '../utils/ssoState';
 import { endActivity } from '../activity';
@@ -184,6 +185,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     // Close this tab's analytics session while the token can still sign it.
     void endActivity();
+    // Shared computers: the cached rosters go (waiting registers stay for their owner).
+    clearCache(localStorage);
 
     setToken(null);
     setUser(null);

@@ -13,7 +13,12 @@
  * page, so they switch to the current release at once. Pages where someone
  * could be mid-task (a quiz, an editor, a chat) are never reloaded.
  */
-const VERSION = "app-shell-v2";
+const VERSION = "app-shell-v3";
+// v3: offline registers (src/offline). The built files under /assets/ have a
+// content hash in their names, so they're cached the first time they load and
+// served from the cache after that: the app opens with no connection. A new
+// worker version starts a fresh assets cache.
+const ASSETS = "app-assets-v3";
 
 // Exact paths that are safe to reload without losing anyone's work.
 const SAFE_TO_REFRESH = new Set(["/", "/dashboard", "/home", "/login", "/app", "/welcome", "/reminders", "/apps"]);
@@ -32,7 +37,11 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
-      await Promise.all(keys.filter((k) => k.startsWith("app-shell-") && k !== VERSION).map((k) => caches.delete(k)));
+      await Promise.all(
+        keys
+          .filter((k) => (k.startsWith("app-shell-") && k !== VERSION) || (k.startsWith("app-assets-") && k !== ASSETS))
+          .map((k) => caches.delete(k)),
+      );
       await self.clients.claim();
       const windows = await self.clients.matchAll({ type: "window" });
       // Deliberately NOT awaited: the reload's own page request is held until
@@ -53,12 +62,49 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  if (req.method !== "GET" || req.mode !== "navigate") return;
-  // Always ask the server (revalidate); the cached shell only when offline.
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  // Built files (hashed names): cache first, so the app opens offline.
+  if (url.origin === self.location.origin && url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      caches.open(ASSETS).then((cache) =>
+        cache.match(req).then(
+          (hit) =>
+            hit ||
+            fetch(req).then((res) => {
+              if (res.ok) cache.put(req, res.clone());
+              return res;
+            }),
+        ),
+      ),
+    );
+    return;
+  }
+  // The app's own images (logo, icons): from the cache, refreshed in the background.
+  if (url.origin === self.location.origin && req.destination === "image") {
+    event.respondWith(
+      caches.open(ASSETS).then((cache) =>
+        cache.match(req).then((hit) => {
+          const fresh = fetch(req)
+            .then((res) => {
+              if (res.ok) cache.put(req, res.clone());
+              return res;
+            })
+            .catch(() => hit || Response.error());
+          return hit || fresh;
+        }),
+      ),
+    );
+    return;
+  }
+  if (req.mode !== "navigate") return;
+  // Pages: always ask the server (revalidate); the cached app page only when
+  // offline. Every page is the same single-page app, so any successful page
+  // load refreshes the offline copy.
   event.respondWith(
     fetch(req, { cache: "no-cache" })
       .then((res) => {
-        if (res.ok && new URL(req.url).pathname === "/") {
+        if (res.ok && url.origin === self.location.origin && (res.headers.get("content-type") || "").includes("text/html")) {
           const copy = res.clone();
           caches.open(VERSION).then((c) => c.put("/", copy));
         }
