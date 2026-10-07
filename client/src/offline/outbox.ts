@@ -24,9 +24,10 @@ export interface RegisterPayload {
   date: string;
   period: number | string;
   sessionType: string;
-  subjectId?: string | null;
+  subjectId?: string | number | null;
   subjectName?: string;
-  records: Array<{ studentId: string; status: string; notes?: string; [k: string]: unknown }>;
+  /** The rows as the page sends them (studentId, status, notes, …); passed through untouched. */
+  records: object[];
 }
 
 export interface Waiting {
