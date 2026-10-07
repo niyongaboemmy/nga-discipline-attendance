@@ -24,9 +24,11 @@ import { addDays, schoolDateString, schoolMinutesOfDay } from '../../shared/scho
  *
  * Metrics:
  *   - absences_14d / absences_prev_14d: subject (lesson) registers with
- *     status 'absent'. An approved excuse flips the row to 'excused'
- *     (routes/attendance.ts reconcile), so 'absent' is already "unexcused".
- *   - lates_14d: subject registers with status 'late'.
+ *     status 'absent', plus homeroom 'absent' rows on days the student has
+ *     no subject 'absent' (no double count for a day missed entirely). An
+ *     approved excuse flips the row to 'excused' (routes/attendance.ts
+ *     reconcile), so 'absent' is already "unexcused".
+ *   - lates_14d: homeroom and subject registers with status 'late'.
  *   - incidents_30d: demerit discipline_records by incident_date, not
  *     dismissed, not soft-deleted (same filter as the conduct ledger).
  *   - discipline_points_30d: SUM(points) of those demerits (points is a
@@ -105,13 +107,29 @@ export async function computeEarlyWarningMetrics(db: Database, asOf: string): Pr
     (await db.all<{ id: string }[]>(`SELECT CAST(id AS TEXT) AS id FROM users WHERE status = 'inactive'`)).map((r) => r.id)
   );
 
+  // A row counts as an absence when it is a lesson (subject) 'absent', or a
+  // homeroom 'absent' on a day the student has no lesson 'absent' -- so a day
+  // missed entirely isn't counted twice, but a day only recorded at homeroom
+  // still counts. Lates count from both register types (most lateness is
+  // recorded at homeroom).
   const attendance = await db.all<any[]>(
     `SELECT CAST(student_id AS TEXT) AS student_id,
-            SUM(CASE WHEN status = 'absent' AND d BETWEEN ? AND ? THEN 1 ELSE 0 END) AS absences_14d,
-            SUM(CASE WHEN status = 'absent' AND d BETWEEN ? AND ? THEN 1 ELSE 0 END) AS absences_prev_14d,
-            SUM(CASE WHEN status = 'late'   AND d BETWEEN ? AND ? THEN 1 ELSE 0 END) AS lates_14d
-       FROM (SELECT student_id, status, date(session_date) AS d FROM attendance_records
-              WHERE session_type = 'subject' AND date(session_date) BETWEEN ? AND ?)
+            SUM(CASE WHEN counted_absent = 1 AND d BETWEEN ? AND ? THEN 1 ELSE 0 END) AS absences_14d,
+            SUM(CASE WHEN counted_absent = 1 AND d BETWEEN ? AND ? THEN 1 ELSE 0 END) AS absences_prev_14d,
+            SUM(CASE WHEN status = 'late'    AND d BETWEEN ? AND ? THEN 1 ELSE 0 END) AS lates_14d
+       FROM (SELECT a.student_id, a.status, date(a.session_date) AS d,
+                    CASE
+                      WHEN a.status != 'absent' THEN 0
+                      WHEN a.session_type = 'subject' THEN 1
+                      WHEN NOT EXISTS (
+                        SELECT 1 FROM attendance_records s
+                         WHERE s.student_id = a.student_id AND s.session_type = 'subject'
+                           AND s.status = 'absent' AND date(s.session_date) = date(a.session_date)
+                      ) THEN 1
+                      ELSE 0
+                    END AS counted_absent
+               FROM attendance_records a
+              WHERE date(a.session_date) BETWEEN ? AND ?)
       GROUP BY student_id`,
     w.cur14From, w.yesterday, w.prev14From, w.prev14To, w.cur14From, w.yesterday, w.prev14From, w.yesterday
   );

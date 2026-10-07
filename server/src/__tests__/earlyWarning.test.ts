@@ -58,9 +58,16 @@ describe('early-warning metrics', () => {
     await mark(db, '101', '2026-09-09', 'absent'); // prev (first day)
     await mark(db, '101', '2026-09-08', 'absent'); // outside both
     await mark(db, '101', '2026-10-01', 'excused'); // excused: not counted
-    await mark(db, '101', '2026-10-02', 'absent', 'homeroom'); // homeroom roll call: not a lesson
+    await mark(db, '101', '2026-10-02', 'absent', 'homeroom'); // only homeroom that day: counts 1
+    await mark(db, '101', '2026-10-04', 'absent', 'homeroom'); // homeroom + 3 lessons absent: counts 3
+    await mark(db, '101', '2026-10-04', 'absent');
+    await mark(db, '101', '2026-10-04', 'absent');
+    await mark(db, '101', '2026-10-04', 'absent');
+    await mark(db, '101', '2026-09-12', 'absent', 'homeroom'); // prev window, homeroom only: counts 1
+    await mark(db, '101', '2026-10-04', 'late', 'homeroom'); // homeroom late counts
+    await mark(db, '101', '2026-09-08', 'absent', 'homeroom'); // outside both windows
     await mark(db, '101', '2026-10-03', 'present');
-    await mark(db, '101', '2026-10-03', 'late'); // 14d late
+    await mark(db, '101', '2026-10-03', 'late'); // 14d late (lesson)
     await mark(db, '101', '2026-09-20', 'late'); // prev window: not in lates_14d
     await mark(db, '101', '2026-10-07', 'late'); // today: not counted
 
@@ -92,14 +99,14 @@ describe('early-warning metrics', () => {
     });
   });
 
-  it('counts unexcused lesson absences, lates and demerits inside the windows', async () => {
+  it('counts unexcused absences (homeroom only when no lesson absence that day), all lates and demerits', async () => {
     const rows = await computeEarlyWarningMetrics(db, AS_OF);
     expect(rows.map((r) => r.student_id)).toEqual([101, 102, 104]);
     const by = Object.fromEntries(rows.map((r) => [r.student_id, r.metrics]));
     expect(by[101]).toEqual({
-      absences_14d: 2,
-      absences_prev_14d: 2,
-      lates_14d: 1,
+      absences_14d: 6, // 10-06, 09-23, 10-02 (homeroom only), 3 x 10-04 (homeroom not double counted)
+      absences_prev_14d: 3, // 09-22, 09-09, 09-12 (homeroom only)
+      lates_14d: 2, // lesson 10-03 + homeroom 10-04
       incidents_30d: 2,
       discipline_points_30d: 8,
     });
