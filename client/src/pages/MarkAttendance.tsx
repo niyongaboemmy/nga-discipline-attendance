@@ -10,6 +10,7 @@ import {
   Pencil, History,
 } from 'lucide-react';
 import { apiGet, apiPost, ApiError } from '../api/client';
+import { saveRegister } from '../offline/registers';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { AttendanceCoverage } from './AttendanceCoverage';
 import './MarkAttendance.css';
@@ -291,20 +292,25 @@ export const MarkAttendance: React.FC = () => {
     const activeClass = classes.find((c) => c.id === selectedClass);
     const snapshot = attendance;
     try {
-      const res = await apiPost<{ inserted: number; updated: number }>('/api/attendance/mark', {
+      const res = await saveRegister({
         classId: selectedClass, className: activeClass?.name ?? 'Unknown Class',
         date: sessionDate, period, records: Object.values(attendance),
         sessionType, subjectId: sessionType === 'subject' ? subjectId : null,
         subjectName: sessionType === 'subject' ? subjects.find((s) => s.id === subjectId)?.name : undefined,
       });
       setDirty(false);
+      if (res.queued) {
+        setUndoSnapshot(null);
+        setMessage({ type: 'success', text: "No connection: the register is saved on this device and will be sent automatically when you're back online." });
+        return;
+      }
       // Adopt what we just saved as the new server baseline, so a follow-up
       // correction diffs against it rather than re-flagging every row.
       setServerStatuses(Object.fromEntries(
         Object.values(attendance).map((a) => [a.studentId, { status: a.status, notes: a.notes }])
       ));
       setExisting({ count: students.length, markedByName: 'you', markedByMe: true, lastMarkedAt: new Date().toISOString() });
-      const wasUpdate = (res.data?.updated ?? 0) > 0;
+      const wasUpdate = (res.updated ?? 0) > 0;
       void snapshot;
       if (andContinue) {
         setUndoSnapshot(null);
