@@ -34,7 +34,7 @@ export const Welcome: React.FC = () => {
 
   return (
     <DashboardLayout>
-      <HeroBanner name={user.name} role={user.role} title={`${greeting()}, ${user.name.split(' ')[0]}!`}>
+      <HeroBanner name={user.name} role={user.role} avatar={user.avatar} title={`${greeting()}, ${user.name.split(' ')[0]}!`}>
         {roleBlurb[user.role] || 'Welcome to Tendo.'}
       </HeroBanner>
 

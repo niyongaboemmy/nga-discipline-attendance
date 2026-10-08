@@ -2,6 +2,7 @@ import { clearCache } from '../offline/outbox';
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { beginSsoState } from '../utils/ssoState';
 import { endActivity } from '../activity';
+import { withPolledAvatar, type MisAvatar } from '../utils/avatar';
 
 export type Role = 'teacher' | 'admin' | 'student' | 'unassigned';
 
@@ -13,6 +14,8 @@ export interface User {
   preferred_theme?: 'light' | 'dark';
   academicYearId?: number;
   academicTermId?: number;
+  /** The central NGA MIS profile picture (null = none). */
+  avatar?: MisAvatar | null;
 }
 
 /** Where each role lands by default. Single source of truth for role routing:
@@ -113,6 +116,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         if (res.status === 401) {
           logout();
+          return;
+        }
+        // The poll carries the current NGA profile picture, so one changed in MIS
+        // (or another NGA app) shows up here within a minute.
+        const body = await res.json().catch(() => null);
+        if (body && 'avatar' in body) {
+          setUser((prev) => {
+            if (!prev) return prev;
+            const next = withPolledAvatar(prev, body.avatar);
+            if (next !== prev) localStorage.setItem('sso_user', JSON.stringify(next));
+            return next;
+          });
         }
       } catch {
         // Network hiccup — don't force-logout over a transient failure,

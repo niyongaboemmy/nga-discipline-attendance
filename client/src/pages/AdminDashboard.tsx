@@ -179,7 +179,7 @@ export const AdminDashboard: React.FC = () => {
   return (
     <DashboardLayout>
       {user && (
-        <HeroBanner name={user.name} role={user.role} title={`Welcome back, ${user.name.split(' ')[0]}!`}>
+        <HeroBanner name={user.name} role={user.role} avatar={user.avatar} title={`Welcome back, ${user.name.split(' ')[0]}!`}>
           {overview ? (
             <>
               <strong>{overview.total} users</strong> in the system
