@@ -6,6 +6,7 @@ import { SystemsMenu } from "./SystemsMenu";
 import { NavSearch } from "./NavSearch";
 import { NotificationCenter } from "./NotificationCenter";
 import { getSystems } from "../../api/systems";
+import { UserAvatar } from "../common/UserAvatar";
 import type { System } from "../../api/systems";
 import {
   Sun,
@@ -111,19 +112,20 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu }) => {
             aria-expanded={openMenu === "user"}
             aria-label="Account menu"
           >
-            <div className="avatar avatar-sm">
-              {user.name.charAt(0).toUpperCase()}
-            </div>
+            <UserAvatar name={user.name} avatar={user.avatar} px={28} />
           </button>
 
           {openMenu === "user" && (
             <div className="menu menu--right animate-fade-in">
-              <div className="menu-header">
-                <div className="text-sm font-semibold truncate">
-                  {user.name}
-                </div>
-                <div className="text-xs text-secondary truncate">
-                  {user.email}
+              <div className="menu-header" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <UserAvatar name={user.name} avatar={user.avatar} px={38} className="avatar" />
+                <div style={{ minWidth: 0 }}>
+                  <div className="text-sm font-semibold truncate">
+                    {user.name}
+                  </div>
+                  <div className="text-xs text-secondary truncate">
+                    {user.email}
+                  </div>
                 </div>
               </div>
               <NavLink

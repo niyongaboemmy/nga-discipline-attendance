@@ -554,7 +554,7 @@ export const Dashboard: React.FC = () => {
   return (
     <DashboardLayout>
       {user && (
-        <HeroBanner name={user.name} role={user.role} title={`${greeting()}, ${user.name.split(' ')[0]}!`}>
+        <HeroBanner name={user.name} role={user.role} avatar={user.avatar} title={`${greeting()}, ${user.name.split(' ')[0]}!`}>
           {user.role === 'student' ? (
             studentRate !== null ? (
               <>Your overall presence is <strong>{studentRate}%</strong> across <strong>{overviewTotal} sessions</strong>. Keep up the momentum! 🚀</>

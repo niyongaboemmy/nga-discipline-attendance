@@ -9,6 +9,17 @@ import { misUserIdOf, noteAccessVersion } from '../access/snapshot.js';
 
 const router = Router();
 
+/** The central profile picture as MIS reports it (services/avatar in nga_central_mis). */
+export interface MisAvatar { version: number; sm: string; md: string; lg: string }
+
+/** Only well-formed https/http picture sets get through to the client. */
+export function misAvatarOf(data: any): MisAvatar | null {
+  const a = data?.avatar;
+  const ok = (u: unknown) => typeof u === 'string' && /^https?:\/\//.test(u);
+  if (!a || !ok(a.sm) || !ok(a.md) || !ok(a.lg)) return null;
+  return { version: Number(a.version) || 0, sm: a.sm, md: a.md, lg: a.lg };
+}
+
 const levelForRole: Record<string, string> = { student: 'STUDENT', teacher: 'TEACHER', admin: 'ADMIN' };
 
 /** Look up the id of the seeded system role matching a legacy role string's level. */
@@ -244,9 +255,13 @@ router.post('/exchange', async (req: Request, res: Response) => {
     };
     const token = jwt.sign({ ...localUser, misToken }, config.jwtSecret, { expiresIn: '24h' });
 
+    // The central NGA MIS profile picture (signed URLs, three sizes). Not put in the
+    // session JWT: it can change mid-session, and /verify-mis below keeps it current.
+    const avatar = misAvatarOf(result.data);
+
     return res.json({
       success: true,
-      data: { token, user: localUser, permissions: permissions || [], rolePermissions },
+      data: { token, user: { ...localUser, avatar }, permissions: permissions || [], rolePermissions },
     });
   } catch (error) {
     console.error('SSO exchange error:', error);
@@ -307,13 +322,17 @@ router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) =>
     }
     // Access control v2: MIS reports the user's access_version here; a change
     // drops their cached snapshot so the next access check re-fetches it.
+    let avatar: MisAvatar | null | undefined;
     try {
       const body = (await response.json()) as any;
       noteAccessVersion(misUserIdOf((req as AuthenticatedRequest).user), body?.data?.access_version);
+      avatar = body?.data?.avatar === undefined ? undefined : misAvatarOf(body.data);
     } catch {
       // Not JSON / no version (older MIS): nothing to note.
     }
-    return res.json({ success: true });
+    // The current profile picture rides along, so one changed in MIS (or another
+    // NGA app) reaches this app's navbar within a minute. Omitted when MIS is silent.
+    return res.json(avatar === undefined ? { success: true } : { success: true, avatar });
   } catch (error) {
     // MIS unreachable is not the same as "logged out" -- don't force-logout
     // everyone over a network blip. The next successful poll settles it.
