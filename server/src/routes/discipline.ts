@@ -90,9 +90,10 @@ function validateIncidentFields(fields: { title: string; description: string; in
   return null;
 }
 
-// Demerit-point threshold (over the lifetime of records) at which a student is
-// flagged for follow-up. Mirrors the low-attendance escalation in attendance.ts.
-const CONDUCT_FLAG_THRESHOLD = 15;
+// Demerit-point threshold (this term's ledger, see triggerConductCheck) at which
+// a student is flagged for follow-up. Mirrors the low-attendance escalation in
+// attendance.ts; the MIS Home summary's D-02 uses the same figure.
+export const CONDUCT_FLAG_THRESHOLD = 15;
 
 // Apply auth check on all discipline routes
 router.use(authMiddleware);

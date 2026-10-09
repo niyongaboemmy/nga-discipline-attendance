@@ -977,6 +977,22 @@ function excuseTargetClause(excuse: {
   return { sql, params };
 }
 
+/**
+ * excuseTargetClause as a correlated SQL condition, for set-based reads that
+ * match many excuses at once (the MIS Home summary's C-05). `e` aliases an
+ * excuse_requests row, `ar` an attendance_records row. Keep the two in step:
+ * a truthy class_id / period in JS is a non-NULL, non-empty value here.
+ */
+export function excuseCoversRowSql(e = 'e', ar = 'ar'): string {
+  return `${ar}.student_id = ${e}.student_id
+      AND ${ar}.session_date = ${e}.session_date
+      AND (CASE WHEN COALESCE(${e}.class_id, '') <> '' THEN ${ar}.class_id = ${e}.class_id
+                ELSE lower(${ar}.class_name) = lower(${e}.class_name) END)
+      AND ${ar}.session_type = (CASE WHEN ${e}.session_type = 'subject' THEN 'subject' ELSE 'homeroom' END)
+      AND (${e}.session_type IS NOT 'subject' OR ${ar}.subject_id = ${e}.subject_id)
+      AND (COALESCE(${e}.period, '') = '' OR ${ar}.period = ${e}.period)`;
+}
+
 async function reconcileExcuseWithAttendance(
   db: any,
   excuse: Parameters<typeof excuseTargetClause>[0],

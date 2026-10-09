@@ -1,14 +1,17 @@
 import type { Database } from 'sqlite';
 import { config } from '../../config.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
-import { accessMode, accessScope, decideAny, requestSnapshot } from '../../access/policy.js';
+import { accessMode, accessScope, decideAny, requestSnapshot, studentTarget } from '../../access/policy.js';
 import { resolveStudentClassGroups } from '../../access/students.js';
 import { CohortRow, decide, Depth, suppressSmallCohorts } from '../../vendor/nga-access/index.js';
 import { fetchClassTeacherClasses } from '../../services/misClient.js';
 import { deepLink } from '../attendance/schedule.routes.js';
-import { getStudentTermBalance } from '../discipline/ledger.service.js';
+import { getStudentTermBalance, listTermBalances } from '../discipline/ledger.service.js';
+import { CONDUCT_FLAG_THRESHOLD } from '../../routes/discipline.js';
+import { excuseCoversRowSql } from '../../routes/attendance.js';
 import { resolveAcademicPeriodForDate } from '../../utils/academicPeriod.js';
 import {
+  addDays,
   dayOfWeekFor,
   schoolDateString,
   schoolMinutesOfDay,
@@ -138,6 +141,14 @@ const SCHOOL_DAYS = new Set(
 const CONDUCT_FLAG_BELOW = 70;
 /** A pending excuse older than this blocks (C-02). */
 const EXCUSE_BLOCKING_MS = 48 * 60 * 60 * 1000;
+/** A demerit waiting for review longer than this blocks (D-01). */
+const DISCIPLINE_REVIEW_BLOCKING_MS = 72 * 60 * 60 * 1000;
+/** Major incidents this recent are listed (D-03), in days. */
+const MAJOR_INCIDENT_WINDOW_DAYS = 7;
+/** A major incident logged this recently makes D-03 slipping. */
+const MAJOR_INCIDENT_FRESH_MS = 24 * 60 * 60 * 1000;
+/** A rejected excuse stays on the student's Home this long (S-09). */
+const REJECTED_EXCUSE_DAYS = 14;
 /** Notification kinds Home derives itself from today_marks / T-01 / C-01. */
 const HOME_DERIVED_KINDS = ['register_missing', 'homeroom_missing', 'lesson_soon'];
 const MAX_ENTITIES = 8;
@@ -240,6 +251,12 @@ interface Ctx {
   academicTermId?: number;
   enforce: boolean;
   leadClasses: () => Promise<Array<{ id: string; name: string }>>;
+  /** isSchoolDay(date), read once per request. */
+  schoolDay: () => Promise<boolean>;
+  /** The DISCIPLINE_VIEW_ALL student scope, resolved once per request. */
+  disciplineScope?: Promise<StudentScope | null>;
+  /** D-01 + D-03 candidate demerits, read in one query. */
+  demerits?: Promise<any[]>;
 }
 
 /** "Holds the capability anywhere" -- the route guards' test. */
@@ -456,7 +473,7 @@ async function teachingSignals(ctx: Ctx, marked: MarkedLesson[]): Promise<{ item
 async function homeroomMissing(ctx: Ctx): Promise<AttentionItem[]> {
   if (ctx.date !== ctx.today || ctx.nowMin < timeToMinutes(HOMEROOM_START_TIME)) return [];
   if (!(await holds(ctx, ['ATTENDANCE_MARK']))) return [];
-  if (!(await isSchoolDay(ctx.db, ctx.date))) return [];
+  if (!(await ctx.schoolDay())) return [];
 
   const lead = await ctx.leadClasses();
   const markable: Array<{ id: string; name: string }> = [];
@@ -494,15 +511,40 @@ async function homeroomMissing(ctx: Ctx): Promise<AttentionItem[]> {
   }));
 }
 
+/**
+ * Excuse rows (selected through excuseClassFilter) narrowed to the
+ * reviewer's scope, each with its class group `cg`. Older excuses carry only
+ * a class name: resolve the student's class group (local registers, then MIS)
+ * before deciding whether it is in scope. A school-wide reviewer covers every
+ * row already -- no lookups (they would be one MIS call per student).
+ */
+async function excusesInScope(ctx: Ctx, scope: ClassScope, rows: any[]): Promise<any[]> {
+  const unresolved = scope.all ? [] : rows.filter((r: any) => !r.class_id).map((r: any) => String(r.student_id));
+  const resolved = unresolved.length
+    ? await resolveStudentClassGroups(ctx.db, unresolved, {
+        misToken: ctx.req.user?.misToken,
+        academicYearId: ctx.academicYearId ?? null,
+      })
+    : new Map<string, number | null>();
+  return rows
+    .map((r: any) => ({ ...r, cg: r.class_id ? String(r.class_id) : resolved.get(String(r.student_id))?.toString() ?? null }))
+    .filter((r: any) => scope.all || inScope(scope, r.cg));
+}
+
+/** Excuse rows of the scope's classes, plus class-less (older) rows to resolve. */
+function excuseClassFilter(scope: ClassScope, column = 'class_id'): { sql: string; params: any[] } {
+  return scope.all ? { sql: '', params: [] } : {
+    sql: ` AND (${column} IN (SELECT value FROM json_each(?)) OR ${column} IS NULL)`,
+    params: [JSON.stringify([...scope.classIds])],
+  };
+}
+
 /** C-02: excuses waiting for review, for the viewer's classes. */
 async function excusesPending(ctx: Ctx): Promise<AttentionItem[]> {
   const scope = await classScope(ctx, 'EXCUSES_REVIEW', null);
   if (!hasClasses(scope)) return [];
   const term = termFilter(ctx);
-  const cls = scope.all ? { sql: '', params: [] } : {
-    sql: ' AND (class_id IN (SELECT value FROM json_each(?)) OR class_id IS NULL)',
-    params: [JSON.stringify([...scope.classIds])],
-  };
+  const cls = excuseClassFilter(scope);
   const rows = await ctx.db.all(
     `SELECT id, student_id, student_name, class_id, class_name, session_date, created_at
        FROM excuse_requests
@@ -511,21 +553,7 @@ async function excusesPending(ctx: Ctx): Promise<AttentionItem[]> {
     ...term.params, ...cls.params
   );
   if (rows.length === 0) return [];
-
-  // Older excuses carry only a class name: resolve the student's class group
-  // (local registers, then MIS) before deciding whether it is in scope. A
-  // school-wide reviewer covers every row already -- no lookups (they would
-  // be one MIS call per student).
-  const unresolved = scope.all ? [] : rows.filter((r: any) => !r.class_id).map((r: any) => String(r.student_id));
-  const resolved = unresolved.length
-    ? await resolveStudentClassGroups(ctx.db, unresolved, {
-        misToken: ctx.req.user?.misToken,
-        academicYearId: ctx.academicYearId ?? null,
-      })
-    : new Map<string, number | null>();
-  const withClass = rows
-    .map((r: any) => ({ ...r, cg: r.class_id ? String(r.class_id) : resolved.get(String(r.student_id))?.toString() ?? null }))
-    .filter((r: any) => scope.all || inScope(scope, r.cg));
+  const withClass = await excusesInScope(ctx, scope, rows);
 
   return [...groupBy(withClass, (r: any) => lensForClass(ctx.lenses, r.cg))].map(([lens, list]) => {
     const oldest = sqliteUtcToIso(list[0].created_at);
@@ -544,6 +572,50 @@ async function excusesPending(ctx: Ctx): Promise<AttentionItem[]> {
       why: 'Until someone decides, these students stay marked absent and hear nothing back.',
       cta: { label: 'Review excuses', href: appHref('/excuses/review'), external: true },
       waiting_since: oldest,
+    };
+  });
+}
+
+/**
+ * C-05: approved excuses whose absence was never moved to `excused` -- the
+ * register was (re)taken after the decision, so the covered rows (the
+ * excuseTargetClause match of routes/attendance.ts) still read `absent`.
+ * Same reviewer scope as C-02.
+ */
+async function approvedNotReconciled(ctx: Ctx): Promise<AttentionItem[]> {
+  const scope = await classScope(ctx, 'EXCUSES_REVIEW', null);
+  if (!hasClasses(scope)) return [];
+  const term = termFilter(ctx, 'e.academic_term_id');
+  const cls = excuseClassFilter(scope, 'e.class_id');
+  const rows = await ctx.db.all(
+    `SELECT e.id, e.student_id, e.student_name, e.class_id, e.class_name, e.session_date, e.updated_at
+       FROM excuse_requests e
+      WHERE e.status = 'approved'${term.sql}${cls.sql}
+        AND EXISTS (SELECT 1 FROM attendance_records ar
+                     WHERE ar.status = 'absent' AND ${excuseCoversRowSql('e', 'ar')})
+      ORDER BY e.updated_at ASC, e.id ASC`,
+    ...term.params, ...cls.params
+  );
+  if (rows.length === 0) return [];
+  const inScopeRows = await excusesInScope(ctx, scope, rows);
+
+  return [...groupBy(inScopeRows, (r: any) => lensForClass(ctx.lenses, r.cg))].map(([lens, list]) => {
+    const students = new Set(list.map((r: any) => String(r.student_id)));
+    const search = students.size === 1 ? `?search=${encodeURIComponent(String(list[0].student_id))}` : '';
+    return {
+      id: `attendance:C-05:${lens}`,
+      source: 'attendance' as const,
+      kind: 'C-05',
+      tier: 'slipping' as Tier,
+      lens,
+      via: [],
+      depth: 'write' as ItemDepth,
+      count: list.length,
+      title: `${list.length} approved ${plural(list.length, 'excuse is', 'excuses are')} still marked absent`,
+      entities: list.slice(0, MAX_ENTITIES).map((r: any) => `${r.student_name} · ${r.class_name} (${String(r.session_date).slice(5)})`),
+      why: 'The excuse was accepted, but the register still counts these absences against the student.',
+      cta: { label: 'Fix registers', href: appHref(`/attendance/records${search}`), external: true },
+      waiting_since: sqliteUtcToIso(list[0].updated_at),
     };
   });
 }
@@ -743,8 +815,63 @@ async function ownAttendance(ctx: Ctx): Promise<{ total: number; rate: number } 
   return { total: row.total, rate: attendanceRate(row.attended ?? 0, row.total) };
 }
 
+/**
+ * S-09: the student's own excuses (the GET /attendance/excuses/me rows):
+ * pending ones waiting for a decision, and recent rejections that can still
+ * be appealed (no follow-up request supersedes them yet -- the rule POST
+ * /attendance/excuse applies to an appeal).
+ */
+async function ownExcuses(ctx: Ctx): Promise<AttentionItem[]> {
+  if (!(await holds(ctx, ['EXCUSES_VIEW_OWN']))) return [];
+  const term = termFilter(ctx, 'e.academic_term_id');
+  const rows = await ctx.db.all(
+    `SELECT e.id, e.status, e.session_date, e.session_type, e.subject_name, e.class_name, e.created_at, e.updated_at
+       FROM excuse_requests e
+      WHERE e.student_id = ?${term.sql}
+        AND (e.status = 'pending'
+             OR (e.status = 'rejected' AND e.updated_at >= datetime('now', ?)
+                 AND NOT EXISTS (SELECT 1 FROM excuse_requests x
+                                  WHERE x.supersedes_id = e.id AND x.student_id = e.student_id)))
+      ORDER BY e.created_at ASC, e.id ASC`,
+    ctx.userId, ...term.params, `-${REJECTED_EXCUSE_DAYS} days`
+  );
+  if (rows.length === 0) return [];
+  const rejected = rows.filter((r: any) => r.status === 'rejected');
+  const pending = rows.filter((r: any) => r.status === 'pending');
+  const what = (r: any) =>
+    `${r.session_type === 'subject' ? r.subject_name || 'Lesson' : 'Morning check'} · ${String(r.session_date).slice(5)}`;
+  const parts = [
+    rejected.length ? `${rejected.length} ${plural(rejected.length, 'excuse was', 'excuses were')} rejected` : '',
+    pending.length ? `${pending.length} ${plural(pending.length, 'excuse is', 'excuses are')} waiting for a decision` : '',
+  ].filter(Boolean);
+  return [{
+    id: 'attendance:S-09:SELF',
+    source: 'attendance',
+    kind: 'S-09',
+    tier: rejected.length ? 'slipping' : 'tidy',
+    lens: 'SELF',
+    via: [],
+    depth: 'detail',
+    count: rows.length,
+    title: parts.join(' · '),
+    entities: [
+      ...rejected.map((r: any) => `${what(r)} · rejected`),
+      ...pending.map((r: any) => `${what(r)} · waiting`),
+    ].slice(0, MAX_ENTITIES),
+    why: rejected.length
+      ? 'A rejected excuse can be resubmitted with more detail; until then the absence counts.'
+      : 'Nothing to do yet -- a teacher still has to decide.',
+    cta: {
+      label: rejected.length ? 'Resubmit' : 'My excuses',
+      href: appHref(rejected.length === 1 ? `/excuses/${rejected[0].id}` : '/excuses'),
+      external: true,
+    },
+    waiting_since: sqliteUtcToIso((rejected[0] ?? pending[0]).created_at),
+  }];
+}
+
 async function learnerSignals(ctx: Ctx): Promise<{ items: AttentionItem[]; tiles: GlanceTile[] }> {
-  const items: AttentionItem[] = [...(await ownUnexcusedAbsences(ctx))];
+  const items: AttentionItem[] = [...(await ownUnexcusedAbsences(ctx)), ...(await ownExcuses(ctx))];
   const tiles: GlanceTile[] = [];
 
   const own = await ownAttendance(ctx);
@@ -841,6 +968,229 @@ async function staffLateToday(ctx: Ctx): Promise<AttentionItem[]> {
 }
 
 // ---------------------------------------------------------------------------
+// DISCIPLINE: D-01 .. D-03
+// ---------------------------------------------------------------------------
+
+interface StudentScope {
+  /** Every student (legacy key held, or a school-wide v2 grant). */
+  all: boolean;
+  allowed: Set<string>;
+  /** Class group per allowed student (restricted scopes only). */
+  classOf: Map<string, number | null>;
+}
+
+/**
+ * The students GET /discipline/overview covers for the viewer: legacy -- the
+ * DISCIPLINE_VIEW_ALL key, school-wide; enforce -- studentScopeFilter at
+ * detail depth over the term's discipline students. Resolved once per request.
+ */
+function disciplineScope(ctx: Ctx): Promise<StudentScope | null> {
+  ctx.disciplineScope ??= (async () => {
+    const cap = 'DISCIPLINE_VIEW_ALL';
+    if (!ctx.enforce) {
+      return ctx.req.user!.permissions.has(cap) ? { all: true, allowed: new Set<string>(), classOf: new Map() } : null;
+    }
+    const s = await accessScope(ctx.req, cap, 'detail');
+    if (s.unrestricted) return { all: true, allowed: new Set<string>(), classOf: new Map() };
+    if (!s.scope) return null;
+    const term = termFilter(ctx);
+    const candidates = (await ctx.db.all(
+      `SELECT DISTINCT student_id FROM discipline_records WHERE deleted_at IS NULL${term.sql}`,
+      ...term.params
+    )).map((r: any) => String(r.student_id));
+    const classOf = await resolveStudentClassGroups(ctx.db, candidates, {
+      misToken: ctx.req.user?.misToken,
+      academicYearId: ctx.academicYearId ?? null,
+    });
+    const allowed = new Set(candidates.filter((id) =>
+      decide(s.snapshot, cap, studentTarget(id, classOf.get(id) ?? null), 'detail').allowed));
+    return allowed.size ? { all: false, allowed, classOf } : null;
+  })();
+  return ctx.disciplineScope;
+}
+
+/**
+ * The demerits D-01 (waiting for review) and D-03 (recent major incidents)
+ * draw on, in one read; each item applies its own rule to the rows.
+ */
+function demeritRows(ctx: Ctx): Promise<any[]> {
+  const term = termFilter(ctx);
+  ctx.demerits ??= ctx.db.all(
+    `SELECT id, student_id, student_name, title, severity, status, incident_date, created_at
+       FROM discipline_records
+      WHERE type = 'demerit' AND deleted_at IS NULL${term.sql}
+        AND (status IN ('open', 'under_review')
+             OR (severity = 'major' AND status != 'dismissed' AND incident_date >= ?))
+      ORDER BY created_at ASC, id ASC`,
+    ...term.params, addDays(ctx.today, -MAJOR_INCIDENT_WINDOW_DAYS)
+  );
+  return ctx.demerits;
+}
+
+const studentInScope = (scope: StudentScope, studentId: unknown) => scope.all || scope.allowed.has(String(studentId));
+/** School-wide scopes carry no class (that would be one lookup per student). */
+const disciplineLens = (ctx: Ctx, scope: StudentScope, studentId: unknown) =>
+  scope.all ? schoolLens(ctx.lenses) : lensForClass(ctx.lenses, scope.classOf.get(String(studentId)) ?? null);
+
+/** D-01: demerits waiting for a review decision (open / under review). */
+async function disciplineAwaitingReview(ctx: Ctx): Promise<AttentionItem[]> {
+  // Only reviewers can act on it (PUT /discipline/:id/status).
+  if (!(await holds(ctx, ['DISCIPLINE_REVIEW']))) return [];
+  const scope = await disciplineScope(ctx);
+  if (!scope) return [];
+  const rows = (await demeritRows(ctx))
+    .filter((r: any) => (r.status === 'open' || r.status === 'under_review') && studentInScope(scope, r.student_id));
+
+  return [...groupBy(rows, (r: any) => disciplineLens(ctx, scope, r.student_id))].map(([lens, list]) => {
+    const oldest = sqliteUtcToIso(list[0].created_at);
+    const waitedMs = oldest ? Date.now() - Date.parse(oldest) : 0;
+    return {
+      id: `attendance:D-01:${lens}`,
+      source: 'attendance' as const,
+      kind: 'D-01',
+      tier: (waitedMs > DISCIPLINE_REVIEW_BLOCKING_MS ? 'blocking' : 'slipping') as Tier,
+      lens,
+      via: [],
+      depth: 'detail' as ItemDepth,
+      count: list.length,
+      title: `${list.length} discipline ${plural(list.length, 'record', 'records')} waiting for review`,
+      entities: list.slice(0, MAX_ENTITIES).map((r: any) => `${r.student_name} · ${r.title}`),
+      why: 'Until a record is reviewed, no sanction is decided and the student and family hear nothing.',
+      cta: { label: 'Review records', href: appHref('/discipline/records'), external: true },
+      waiting_since: oldest,
+    };
+  });
+}
+
+/** D-02: students at or over the conduct follow-up threshold this term
+ *  (term demerit points, the routes/discipline.ts escalation rule). */
+async function conductFollowUp(ctx: Ctx): Promise<AttentionItem[]> {
+  const scope = await disciplineScope(ctx);
+  if (!scope) return [];
+  const flagged = (await listTermBalances(ctx.db, ctx.academicTermId))
+    .filter((b) => b.demeritPoints >= CONDUCT_FLAG_THRESHOLD && studentInScope(scope, b.studentId))
+    .sort((a, b) => b.demeritPoints - a.demeritPoints);
+
+  return [...groupBy(flagged, (b) => disciplineLens(ctx, scope, b.studentId))].map(([lens, list]) => ({
+    id: `attendance:D-02:${lens}`,
+    source: 'attendance' as const,
+    kind: 'D-02',
+    tier: 'slipping' as Tier,
+    lens,
+    via: [],
+    // The scope is detail-depth by construction (studentScopeFilter's rule).
+    depth: 'detail' as ItemDepth,
+    count: list.length,
+    title: `${list.length} ${plural(list.length, 'student needs', 'students need')} a conduct follow-up`,
+    entities: list.slice(0, MAX_ENTITIES).map((b) => `${b.studentName} · ${b.demeritPoints} demerit pts`),
+    why: `${CONDUCT_FLAG_THRESHOLD}+ demerit points this term is the point where a conversation should happen.`,
+    cta: {
+      label: 'See conduct',
+      href: appHref(list.length === 1 ? `/reports/student/${encodeURIComponent(list[0].studentId)}` : '/discipline/records'),
+      external: true,
+    },
+  }));
+}
+
+/** D-03: major incidents (major demerits) in the last 7 days. Replaces the
+ *  legacy 'all'-addressed staff broadcasts Home leaves out of `updates`. */
+async function recentMajorIncidents(ctx: Ctx): Promise<AttentionItem[]> {
+  const scope = await disciplineScope(ctx);
+  if (!scope) return [];
+  const since = addDays(ctx.today, -MAJOR_INCIDENT_WINDOW_DAYS);
+  const rows = (await demeritRows(ctx))
+    .filter((r: any) => r.severity === 'major' && r.status !== 'dismissed' && String(r.incident_date) >= since
+      && studentInScope(scope, r.student_id))
+    // Newest first.
+    .reverse()
+    .sort((a: any, b: any) => String(b.incident_date).localeCompare(String(a.incident_date)));
+
+  return [...groupBy(rows, (r: any) => disciplineLens(ctx, scope, r.student_id))].map(([lens, list]) => {
+    const fresh = list.some((r: any) => {
+      const at = sqliteUtcToIso(r.created_at);
+      return at != null && Date.now() - Date.parse(at) <= MAJOR_INCIDENT_FRESH_MS;
+    });
+    return {
+      id: `attendance:D-03:${lens}`,
+      source: 'attendance' as const,
+      kind: 'D-03',
+      tier: (fresh ? 'slipping' : 'tidy') as Tier,
+      lens,
+      via: [],
+      depth: 'detail' as ItemDepth,
+      count: list.length,
+      title: `${list.length} major ${plural(list.length, 'incident', 'incidents')} in the last ${MAJOR_INCIDENT_WINDOW_DAYS} days`,
+      entities: list.slice(0, MAX_ENTITIES).map((r: any) => `${r.student_name} · ${r.title} (${String(r.incident_date).slice(5)})`),
+      why: 'Serious incidents are worth knowing about even when someone else is handling them.',
+      cta: { label: 'See incidents', href: appHref('/discipline/records'), external: true },
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SELF (staff): O-07 · ADMIN: A-01
+// ---------------------------------------------------------------------------
+
+/** O-07: the viewer clocks in as staff and has not today (POST /staff/clock-in). */
+async function ownClockInMissing(ctx: Ctx): Promise<AttentionItem[]> {
+  if (ctx.date !== ctx.today || ctx.nowMin < timeToMinutes(HOMEROOM_START_TIME)) return [];
+  if (!(await holds(ctx, ['STAFF_ATTENDANCE_CLOCK']))) return [];
+  if (!(await ctx.schoolDay())) return [];
+  const row = await ctx.db.get(
+    'SELECT 1 AS n FROM staff_attendance WHERE staff_id = ? AND date = ?',
+    ctx.userId, ctx.today
+  );
+  if (row) return [];
+  return [{
+    id: 'attendance:O-07:SELF',
+    source: 'attendance',
+    kind: 'O-07',
+    tier: 'slipping',
+    lens: 'SELF',
+    via: [],
+    depth: 'write',
+    count: 1,
+    title: 'You have not clocked in today',
+    entities: [],
+    why: 'Your day is recorded as absent until you clock in, and a late clock-in is flagged.',
+    cta: { label: 'Clock in', href: appHref('/staff/attendance'), external: true },
+    waiting_since: schoolLocalToIso(ctx.today, HOMEROOM_START_TIME),
+  }];
+}
+
+/** A-01: accounts that signed in but have no role yet (PUT /admin/users/:id/role). */
+async function accountsAwaitingRole(ctx: Ctx): Promise<AttentionItem[]> {
+  let detail = true;
+  if (ctx.enforce) {
+    const d = decideAny(await requestSnapshot(ctx.req), ['USERS_MANAGE']);
+    if (!d.allowed) return [];
+    detail = d.depth == null || isDetail(d.depth);
+  } else if (!ctx.req.user!.permissions.has('USERS_MANAGE')) {
+    return [];
+  }
+  const rows = await ctx.db.all(
+    `SELECT name, created_at FROM users WHERE role = 'unassigned' ORDER BY created_at ASC, name ASC`
+  );
+  if (rows.length === 0) return [];
+  const lens = schoolLens(ctx.lenses);
+  return [{
+    id: `attendance:A-01:${lens}`,
+    source: 'attendance',
+    kind: 'A-01',
+    tier: 'tidy',
+    lens,
+    via: [],
+    depth: detail ? 'write' : 'summary',
+    count: rows.length,
+    title: `${rows.length} ${plural(rows.length, 'account is', 'accounts are')} waiting for a role`,
+    entities: detail ? rows.slice(0, MAX_ENTITIES).map((r: any) => String(r.name)) : [],
+    why: 'They can sign in but see nothing here until someone assigns them a role.',
+    cta: { label: 'Assign roles', href: appHref('/admin'), external: true },
+    waiting_since: sqliteUtcToIso(rows[0].created_at),
+  }];
+}
+
+// ---------------------------------------------------------------------------
 // Updates: the user's own unread notifications, last 7 days
 // ---------------------------------------------------------------------------
 
@@ -902,6 +1252,7 @@ export async function buildHomeSummary(
     : await resolveAcademicPeriodForDate(db, date, { academicYearId: user.academicYearId });
 
   let lead: Promise<Array<{ id: string; name: string }>> | null = null;
+  let schoolDay: Promise<boolean> | null = null;
   const ctx: Ctx = {
     req,
     db,
@@ -921,22 +1272,32 @@ export async function buildHomeSummary(
         : Promise.resolve([]);
       return lead;
     },
+    schoolDay: () => (schoolDay ??= isSchoolDay(db, date)),
   };
 
   const marked = await safely('lessons', () => evaluateLessons(ctx), [] as MarkedLesson[]);
-  const [teaching, learner, c01, c02, c03, c04, o06, present, updates] = await Promise.all([
+  const [teaching, learner, c01, c02, c03, c04, c05, d01, d02, d03, o06, o07, a01, present, updates] = await Promise.all([
     safely('teaching', () => teachingSignals(ctx, marked), { items: [], tiles: [] }),
     safely('learner', () => learnerSignals(ctx), { items: [], tiles: [] }),
     safely('C-01', () => homeroomMissing(ctx), []),
     safely('C-02', () => excusesPending(ctx), []),
     safely('C-03', () => belowThreshold(ctx), []),
     safely('C-04', () => absentWithoutNotice(ctx), []),
+    safely('C-05', () => approvedNotReconciled(ctx), []),
+    safely('D-01', () => disciplineAwaitingReview(ctx), []),
+    safely('D-02', () => conductFollowUp(ctx), []),
+    safely('D-03', () => recentMajorIncidents(ctx), []),
     safely('O-06', () => staffLateToday(ctx), []),
+    safely('O-07', () => ownClockInMissing(ctx), []),
+    safely('A-01', () => accountsAwaitingRole(ctx), []),
     safely('present-today', () => presentTodayTile(ctx), null),
     safely('updates', () => recentUpdates(ctx), []),
   ]);
 
-  const items = [...teaching.items, ...c01, ...c02, ...c03, ...c04, ...learner.items, ...o06];
+  const items = [
+    ...teaching.items, ...c01, ...c02, ...c03, ...c04, ...c05, ...d01, ...d02, ...d03,
+    ...learner.items, ...o06, ...o07, ...a01,
+  ];
   // Last line of defence: a summary-depth item never names anyone.
   for (const item of items) if (item.depth === 'summary') item.entities = [];
 
