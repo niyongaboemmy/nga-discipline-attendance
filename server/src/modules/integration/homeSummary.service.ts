@@ -980,15 +980,41 @@ interface StudentScope {
 }
 
 /**
- * The students GET /discipline/overview covers for the viewer: legacy -- the
- * DISCIPLINE_VIEW_ALL key, school-wide; enforce -- studentScopeFilter at
- * detail depth over the term's discipline students. Resolved once per request.
+ * The students the D items cover for the viewer. Enforce: studentScopeFilter
+ * at detail depth over the term's discipline students (GET /discipline/overview).
+ * Legacy: the DISCIPLINE_VIEW_ALL key is held by every Teacher, so school-wide
+ * only for ADMIN-level roles; a teacher gets the students of their Class Teacher
+ * classes (the C items' legacy rule), and a subject teacher none -- a whole
+ * school's queue on every teacher's Home is noise, not a reminder.
+ * Resolved once per request.
  */
 function disciplineScope(ctx: Ctx): Promise<StudentScope | null> {
   ctx.disciplineScope ??= (async () => {
     const cap = 'DISCIPLINE_VIEW_ALL';
     if (!ctx.enforce) {
-      return ctx.req.user!.permissions.has(cap) ? { all: true, allowed: new Set<string>(), classOf: new Map() } : null;
+      if (!ctx.req.user!.permissions.has(cap)) return null;
+      if (ctx.req.user!.roleLevel === 'ADMIN') return { all: true, allowed: new Set<string>(), classOf: new Map() };
+      const lead = new Set((await ctx.leadClasses()).map((c) => String(c.id)));
+      if (lead.size === 0) return null;
+      // One read: the term's discipline students with their latest register
+      // class (resolveStudentClassGroups' local rule, without its MIS fallback --
+      // a student never registered is in nobody's class yet).
+      const term = termFilter(ctx, 'd.academic_term_id');
+      const rows = await ctx.db.all(
+        `SELECT s.student_id,
+                (SELECT a.class_id FROM attendance_records a WHERE a.student_id = s.student_id
+                  ORDER BY (a.academic_year_id IS ?) DESC, a.session_date DESC, a.id DESC LIMIT 1) AS class_id
+           FROM (SELECT DISTINCT d.student_id FROM discipline_records d WHERE d.deleted_at IS NULL${term.sql}) s`,
+        ctx.academicYearId ?? null, ...term.params
+      );
+      const classOf = new Map<string, number | null>();
+      const allowed = new Set<string>();
+      for (const r of rows as Array<{ student_id: string; class_id: string | null }>) {
+        const n = Number(r.class_id);
+        classOf.set(String(r.student_id), Number.isInteger(n) && r.class_id != null ? n : null);
+        if (r.class_id != null && lead.has(String(r.class_id))) allowed.add(String(r.student_id));
+      }
+      return allowed.size ? { all: false, allowed, classOf } : null;
     }
     const s = await accessScope(ctx.req, cap, 'detail');
     if (s.unrestricted) return { all: true, allowed: new Set<string>(), classOf: new Map() };

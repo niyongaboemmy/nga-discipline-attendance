@@ -590,6 +590,26 @@ describe('POST /api/integration/home-summary', () => {
       }
     });
 
+    it('legacy: a Teacher holding the keys sees only their Class Teacher class, never the school', async () => {
+      try {
+        // Bob (502) is in class 8, which teacher 101 does not lead.
+        await demerit('502', 'Bob', { severity: 'major', title: 'Other class' });
+        const res = await summary('mis-teacher', { lenses: LENSES });
+        expect(item(res, 'D-01')).toMatchObject({ lens: 'CLASS_GROUP:7', count: 4 });
+        expect(item(res, 'D-03')).toMatchObject({ lens: 'CLASS_GROUP:7', count: 4 });
+        expect(JSON.stringify(res.body.items)).not.toMatch(/Bob|Other class/);
+        // The admin still sees the whole school, Bob included.
+        expect(item(await summary('mis-admin', { lenses: LENSES }), 'D-01')).toMatchObject({ lens: 'SCHOOL', count: 5 });
+      } finally {
+        await cleanup();
+      }
+    });
+
+    it('legacy: a subject teacher (Teacher role, no class led) gets no D items', async () => {
+      const res = await summary('mis-pairs', { lenses: LENSES });
+      expect(kinds(res).filter((k: string) => k.startsWith('D-'))).toEqual([]);
+    });
+
     it('legacy: no DISCIPLINE_VIEW_ALL (a student) means no D items', async () => {
       const res = await summary('mis-student', { lenses: LENSES });
       expect(kinds(res).filter((k: string) => k.startsWith('D-'))).toEqual([]);
@@ -1149,7 +1169,9 @@ describe('POST /api/integration/home-summary', () => {
       expect(res.status).toBe(200);
       expect(item(res, 'T-01').entities).toHaveLength(8);
       expect(counts.writes).toBe(0);
-      expect(counts.reads).toBeLessThanOrEqual(20);
+      // A fixed budget, not one per lesson. 21 since the legacy discipline scope
+      // reads the teacher's class students once (D items are class-scoped).
+      expect(counts.reads).toBeLessThanOrEqual(21);
     });
 
     const lessonsOf = (n: number) =>
