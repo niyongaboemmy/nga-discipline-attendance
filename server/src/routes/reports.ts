@@ -177,7 +177,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
     // 5. Recent activity log
     const recentActivity = await db.all(
       `SELECT
-         student_name, class_name, session_date, status, updated_at
+         student_id, student_name, class_name, session_date, status, updated_at
        FROM attendance_records
        WHERE 1=1${periodFilter}
        ORDER BY updated_at DESC
