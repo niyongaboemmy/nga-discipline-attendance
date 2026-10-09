@@ -20,6 +20,7 @@ import * as misBearer from '../middleware/misBearerAuth.js';
 import * as integration from '../modules/integration/integration.routes.js';
 import { lensForClass } from '../modules/integration/homeSummary.service.js';
 import { schoolDateString, addDays } from '../shared/schoolTime.js';
+import { config } from '../config.js';
 
 const { __resetMisBearerCache } = misBearer;
 
@@ -33,6 +34,8 @@ const { __resetMisBearerCache } = misBearer;
  */
 
 const TODAY = schoolDateString();
+/** This app's public URL (from the environment), the prefix of every link. */
+const APP = config.appPublicUrl;
 const DAY = (n: number) => addDays(TODAY, -n);
 
 const MIS_USERS: Record<string, number> = {
@@ -45,6 +48,9 @@ const MIS_USERS: Record<string, number> = {
   'mis-pairs': 104,
   'mis-school': 105,
   'mis-learner2': 508,
+  'mis-conduct': 106,
+  'mis-conduct-summary': 107,
+  'mis-registrar': 109,
 };
 /** MIS user for a token: the fixture map, plus `bulk-<n>` -> 100000 + n. */
 const misUserFor = (token: string) =>
@@ -65,6 +71,20 @@ const SNAPSHOT_CAPS: Record<number, Record<string, any>> = {
   // A subject teacher: Maths (30) in class 20 only -- a (subject, class) pair.
   104: {
     ATTENDANCE_MARK: entry({ pairs: [[30, 20]] }),
+  },
+  // Discipline master of class 7 (detail) who can review.
+  106: {
+    DISCIPLINE_VIEW_ALL: entry({ class_groups: [7] }, 'detail'),
+    DISCIPLINE_REVIEW: entry({ class_groups: [7] }),
+  },
+  // Discipline insights at summary depth only: no names, so no D items.
+  107: {
+    DISCIPLINE_VIEW_ALL: entry({ class_groups: [7] }, 'summary'),
+    DISCIPLINE_REVIEW: entry({ class_groups: [7] }),
+  },
+  // Assigns local roles.
+  109: {
+    USERS_MANAGE: entry({ all: true }),
   },
   // School-wide reviewer (DOS-style).
   105: {
@@ -235,6 +255,9 @@ describe('POST /api/integration/home-summary', () => {
     await createTestUser(db, { id: '104', name: 'Teacher P', email: 'p@school.test', roleLevel: 'TEACHER' });
     await createTestUser(db, { id: '105', name: 'Dos D', email: 'd@school.test', roleLevel: 'ADMIN' });
     await createTestUser(db, { id: '508', name: 'Ben', email: 'b@school.test', roleLevel: 'STUDENT' });
+    await createTestUser(db, { id: '106', name: 'Conduct C', email: 'c@school.test', roleLevel: 'TEACHER' });
+    await createTestUser(db, { id: '107', name: 'Insight I', email: 'i@school.test', roleLevel: 'TEACHER' });
+    await createTestUser(db, { id: '109', name: 'Registrar R', email: 'r@school.test', roleLevel: 'TEACHER' });
 
     for (const [id, name] of [[30, 'Maths'], [31, 'Physics'], [32, 'Biology']] as const) {
       await db.run('INSERT INTO subjects (id, name) VALUES (?, ?)', id, name);
@@ -446,9 +469,9 @@ describe('POST /api/integration/home-summary', () => {
 
   // -------------------------------------------------------------------------
   describe('student', () => {
-    it('gets S-06, S-07, S-08 and the attendance tile, all on SELF', async () => {
+    it('gets S-06, S-07, S-08, S-09 and the attendance tile, all on SELF', async () => {
       const res = await summary('mis-student', { lenses: LENSES });
-      expect(kinds(res)).toEqual(['S-06', 'S-07', 'S-08']);
+      expect(kinds(res)).toEqual(['S-06', 'S-07', 'S-08', 'S-09']);
       // Four absences, one covered by the pending excuse.
       expect(item(res, 'S-06')).toMatchObject({ lens: 'SELF', count: 3, tier: 'slipping' });
       expect(item(res, 'S-07').title).toContain('25%');
@@ -490,6 +513,248 @@ describe('POST /api/integration/home-summary', () => {
       // Absent-without-notice names students: detail only.
       expect(item(res, 'C-04')).toBeUndefined();
       expect(item(res, 'C-02')).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Quick reminders: discipline (D-01..D-03), excuses (C-05, S-09), own
+  // clock-in (O-07), accounts without a role (A-01). Fixture rows are added
+  // per test and removed again, so the cases above keep their exact counts.
+  // -------------------------------------------------------------------------
+  describe('reminders: discipline', () => {
+    const demerit = async (student: string, name: string, opts: { severity?: string; status?: string; date?: string; age?: string; title?: string } = {}) =>
+      (await db.run(
+        `INSERT INTO discipline_records (student_id, student_name, type, category, severity, points, title, incident_date, status, logged_by, created_at)
+         VALUES (?, ?, 'demerit', 'Misconduct', ?, 3, ?, ?, ?, 'x', datetime('now', ?))`,
+        student, name, opts.severity ?? 'minor', opts.title ?? 'Extra', opts.date ?? DAY(1), opts.status ?? 'open', opts.age ?? '-1 hour'
+      )).lastID;
+    const cleanup = () => db.run(`DELETE FROM discipline_records WHERE title != 'Seed'`);
+
+    it('legacy: a DISCIPLINE_VIEW_ALL holder gets D-01, D-02 and D-03 school-wide, like /discipline/overview', async () => {
+      try {
+        await demerit('502', 'Bob', { title: 'Late' });
+        await demerit('503', 'Cara', { status: 'resolved', title: 'Done' });
+        await demerit('503', 'Cara', { status: 'dismissed', severity: 'major', title: 'Dismissed' });
+        await demerit('504', 'Dan', { severity: 'major', status: 'resolved', date: DAY(10), title: 'Old major' });
+        await db.run(
+          `INSERT INTO discipline_records (student_id, student_name, type, category, severity, points, title, incident_date, logged_by)
+           VALUES ('505', 'Eve', 'merit', 'Kindness', 'small', 2, 'Helped', ?, 'x')`, DAY(1)
+        );
+        const res = await summary('mis-admin', { lenses: LENSES });
+
+        const d01 = item(res, 'D-01');
+        // Alice's four open majors + Bob's open minor; never resolved, dismissed or merit rows.
+        expect(d01).toMatchObject({ id: 'attendance:D-01:SCHOOL', lens: 'SCHOOL', tier: 'slipping', depth: 'detail', count: 5 });
+        expect(d01.entities).toContain('Bob · Late');
+        expect(d01.entities.join()).not.toMatch(/Done|Dismissed|Helped|Old major/);
+        expect(d01.cta.href).toBe(`${APP}/discipline/records`);
+        expect(d01.waiting_since).toMatch(/Z$/);
+
+        const d02 = item(res, 'D-02');
+        expect(d02).toMatchObject({ tier: 'slipping', depth: 'detail', count: 1, entities: ['Alice · 40 demerit pts'] });
+        expect(d02.cta.href).toBe(`${APP}/reports/student/501`);
+
+        const d03 = item(res, 'D-03');
+        // Alice's four majors in the window; Dan's is 10 days old, Cara's dismissed.
+        expect(d03).toMatchObject({ tier: 'slipping', count: 4 });
+        expect(d03.entities.join()).not.toMatch(/Old major|Dismissed/);
+      } finally {
+        await cleanup();
+      }
+    });
+
+    it('D-01 blocks after 72 h; D-03 is tidy once no major incident is fresh', async () => {
+      try {
+        await db.run(`UPDATE discipline_records SET created_at = datetime('now', '-4 days') WHERE title = 'Seed'`);
+        const res = await summary('mis-teacher', { lenses: LENSES });
+        expect(item(res, 'D-01')).toMatchObject({ tier: 'blocking', count: 4 });
+        expect(Date.now() - Date.parse(item(res, 'D-01').waiting_since)).toBeGreaterThan(72 * 3600_000);
+        expect(item(res, 'D-03')).toMatchObject({ tier: 'tidy', count: 4 });
+      } finally {
+        await db.run(`UPDATE discipline_records SET created_at = datetime('now') WHERE title = 'Seed'`);
+      }
+    });
+
+    it('D-02 counts this term\'s demerit points against the threshold (15)', async () => {
+      try {
+        // Bob: 3 x 3 = 9 points, under the bar; then 5 x 3 = 15, at it.
+        for (let i = 0; i < 3; i += 1) await demerit('502', 'Bob', { status: 'resolved' });
+        expect(item(await summary('mis-admin'), 'D-02').count).toBe(1);
+        for (let i = 0; i < 2; i += 1) await demerit('502', 'Bob', { status: 'resolved' });
+        const d02 = item(await summary('mis-admin'), 'D-02');
+        expect(d02.count).toBe(2);
+        expect(d02.entities).toEqual(['Alice · 40 demerit pts', 'Bob · 15 demerit pts']);
+        expect(d02.cta.href).toBe(`${APP}/discipline/records`);
+      } finally {
+        await cleanup();
+      }
+    });
+
+    it('legacy: no DISCIPLINE_VIEW_ALL (a student) means no D items', async () => {
+      const res = await summary('mis-student', { lenses: LENSES });
+      expect(kinds(res).filter((k: string) => k.startsWith('D-'))).toEqual([]);
+    });
+
+    describe('enforce', () => {
+      beforeEach(() => { process.env.ACCESS_V2_MODE = 'enforce'; });
+
+      it('covers only students in the v2 scope, tagged with their class lens', async () => {
+        try {
+          await demerit('502', 'Bob', { severity: 'major', title: 'Out of scope' });
+          const res = await summary('mis-conduct', { lenses: LENSES });
+          expect(item(res, 'D-01')).toMatchObject({ lens: 'CLASS_GROUP:7', count: 4 });
+          expect(item(res, 'D-02')).toMatchObject({ lens: 'CLASS_GROUP:7', entities: ['Alice · 40 demerit pts'] });
+          expect(item(res, 'D-03')).toMatchObject({ lens: 'CLASS_GROUP:7', count: 4 });
+          expect(JSON.stringify(res.body.items)).not.toMatch(/Bob|Out of scope/);
+        } finally {
+          await cleanup();
+        }
+      });
+
+      it('summary depth (the overview\'s detail rule) or no grant: no D items', async () => {
+        expect(kinds(await summary('mis-conduct-summary', { lenses: LENSES })).filter((k: string) => k.startsWith('D-'))).toEqual([]);
+        // Teacher 101's snapshot carries no discipline capability at all.
+        expect(kinds(await summary('mis-teacher', { lenses: LENSES })).filter((k: string) => k.startsWith('D-'))).toEqual([]);
+      });
+    });
+  });
+
+  describe('reminders: excuses', () => {
+    const excuse = async (f: Record<string, any>) =>
+      (await db.run(
+        `INSERT INTO excuse_requests (student_id, student_name, class_name, class_id, session_date, reason, status,
+                                      period, session_type, subject_id, supersedes_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'ill', ?, ?, ?, ?, ?, datetime('now', ?), datetime('now', ?))`,
+        f.student ?? '501', f.name ?? 'Alice', f.className ?? 'G7', f.classId === undefined ? '7' : f.classId, f.date,
+        f.status ?? 'approved', f.period ?? null, f.sessionType ?? 'homeroom', f.subjectId ?? null, f.supersedes ?? null,
+        f.age ?? '-1 hour', f.updatedAge ?? f.age ?? '-1 hour'
+      )).lastID!;
+    const ids: number[] = [];
+    const add = async (f: Record<string, any>) => { const id = await excuse(f); ids.push(id); return id; };
+    afterEach(async () => {
+      await db.run('DELETE FROM excuse_requests WHERE id IN (SELECT value FROM json_each(?))', JSON.stringify(ids.splice(0)));
+    });
+
+    const seedApproved = async () => {
+      // Covers Alice's absent morning on DAY(2): still absent -> counted.
+      await add({ date: DAY(2) });
+      // Covers Alice's absent Maths lesson today (subject register) -> counted.
+      await add({ date: TODAY, sessionType: 'subject', subjectId: 30, period: 'Morning' });
+      // Physics today: no register row at all -> nothing to reconcile.
+      await add({ date: TODAY, sessionType: 'subject', subjectId: 31 });
+      // A different period than the absent row -> not covered.
+      await add({ date: DAY(1), period: 'Afternoon' });
+      // Alice's present morning -> nothing to fix.
+      await add({ date: DAY(4) });
+      // Bob, an older class-name-only excuse (case differs) -> class 8.
+      await add({ student: '502', name: 'Bob', className: 'g8', classId: null, date: DAY(2) });
+    };
+
+    it('C-05 (legacy): approved excuses still marked absent, in the class teacher\'s own classes', async () => {
+      await seedApproved();
+      const res = await summary('mis-teacher', { lenses: LENSES });
+      const c05 = item(res, 'C-05');
+      expect(c05).toMatchObject({ id: 'attendance:C-05:CLASS_GROUP:7', tier: 'slipping', count: 2, depth: 'write' });
+      expect(c05.entities.every((e: string) => e.startsWith('Alice · G7'))).toBe(true);
+      expect(c05.cta.href).toBe(`${APP}/attendance/records?search=501`);
+      expect(JSON.stringify(res.body.items)).not.toMatch(/Bob/);
+    });
+
+    it('C-05 (enforce): a school-wide reviewer sees every class; no EXCUSES_REVIEW sees none', async () => {
+      process.env.ACCESS_V2_MODE = 'enforce';
+      await seedApproved();
+      const res = await summary('mis-school', { lenses: LENSES });
+      const c05 = res.body.items.filter((i: any) => i.kind === 'C-05');
+      // Bob's class-less excuse is not resolved for a school-wide reviewer (no
+      // per-student lookups), so it lands on the SCHOOL lens -- as in C-02.
+      expect(Object.fromEntries(c05.map((i: any) => [i.lens, i.count]))).toEqual({ 'CLASS_GROUP:7': 2, SCHOOL: 1 });
+      expect(item(await summary('mis-viewer', { lenses: LENSES }), 'C-05')).toBeUndefined();
+      // 101's v2 scope is class 7 only.
+      expect(item(await summary('mis-teacher', { lenses: LENSES }), 'C-05')).toMatchObject({ count: 2 });
+    });
+
+    it('C-05 ignores pending and rejected excuses', async () => {
+      await add({ date: DAY(1), status: 'rejected' });
+      const res = await summary('mis-teacher', { lenses: LENSES });
+      expect(item(res, 'C-05')).toBeUndefined();
+    });
+
+    it('S-09: a pending excuse alone is tidy', async () => {
+      const res = await summary('mis-student');
+      expect(item(res, 'S-09')).toMatchObject({
+        id: 'attendance:S-09:SELF', tier: 'tidy', lens: 'SELF', count: 1,
+        entities: [`Morning check · ${DAY(3).slice(5)} · waiting`],
+      });
+      expect(item(res, 'S-09').cta.href).toBe(`${APP}/excuses`);
+    });
+
+    it('S-09: a recent rejection that can be resubmitted makes it slipping and links to it', async () => {
+      const rejected = await add({ date: DAY(1), status: 'rejected', age: '-2 days', updatedAge: '-1 day' });
+      // Too old to remind about.
+      await add({ date: DAY(4), status: 'rejected', age: '-20 days', updatedAge: '-15 days' });
+      // Already appealed: the appeal (pending) counts, the rejection does not.
+      const appealed = await add({ date: DAY(2), status: 'rejected', age: '-3 days', updatedAge: '-2 days' });
+      await add({ date: DAY(2), status: 'pending', supersedes: appealed });
+      // Another student's rejection.
+      await add({ student: '502', name: 'Bob', className: 'G8', classId: '8', date: DAY(1), status: 'rejected' });
+
+      const s09 = item(await summary('mis-student'), 'S-09');
+      expect(s09).toMatchObject({ tier: 'slipping', count: 3 });
+      expect(s09.title).toBe('1 excuse was rejected · 2 excuses are waiting for a decision');
+      expect(s09.entities[0]).toBe(`Morning check · ${DAY(1).slice(5)} · rejected`);
+      expect(s09.cta.href).toBe(`${APP}/excuses/${rejected}`);
+    });
+
+    it('S-09 is only for EXCUSES_VIEW_OWN holders', async () => {
+      expect(item(await summary('mis-teacher'), 'S-09')).toBeUndefined();
+      process.env.ACCESS_V2_MODE = 'enforce';
+      // No v2 snapshot for this student: nothing is shown.
+      expect(item(await summary('mis-student'), 'S-09')).toBeUndefined();
+    });
+  });
+
+  describe('reminders: own clock-in and roles', () => {
+    it('O-07: a staff member who has not clocked in today is reminded; clocking in clears it', async () => {
+      const res = await summary('mis-teacher');
+      expect(item(res, 'O-07')).toMatchObject({
+        id: 'attendance:O-07:SELF', tier: 'slipping', lens: 'SELF', count: 1, entities: [],
+        cta: { label: 'Clock in', href: `${APP}/staff/attendance`, external: true },
+      });
+      await db.run(`INSERT INTO staff_attendance (staff_id, staff_name, date, status) VALUES ('101', 'Teacher T', ?, 'present')`, TODAY);
+      try {
+        expect(item(await summary('mis-teacher'), 'O-07')).toBeUndefined();
+      } finally {
+        await db.run(`DELETE FROM staff_attendance WHERE staff_id = '101'`);
+      }
+    });
+
+    it('O-07: not for students, not for another day, not without the v2 grant', async () => {
+      expect(item(await summary('mis-student'), 'O-07')).toBeUndefined();
+      expect(item(await summary('mis-teacher', { date: addDays(TODAY, -1) }), 'O-07')).toBeUndefined();
+      process.env.ACCESS_V2_MODE = 'enforce';
+      expect(item(await summary('mis-teacher'), 'O-07')).toBeUndefined();
+    });
+
+    it('A-01: role managers see accounts waiting for a role (legacy and enforce)', async () => {
+      await db.run(`INSERT INTO users (id, name, role) VALUES ('950', 'Newbie N', 'unassigned')`);
+      try {
+        const admin = item(await summary('mis-admin', { lenses: LENSES }), 'A-01');
+        expect(admin).toMatchObject({
+          id: 'attendance:A-01:SCHOOL', tier: 'tidy', count: 1, entities: ['Newbie N'],
+          cta: { label: 'Assign roles', href: `${APP}/admin`, external: true },
+        });
+        expect(item(await summary('mis-teacher'), 'A-01')).toBeUndefined();
+
+        process.env.ACCESS_V2_MODE = 'enforce';
+        expect(item(await summary('mis-registrar'), 'A-01')).toMatchObject({ count: 1 });
+        expect(item(await summary('mis-school'), 'A-01')).toBeUndefined();
+      } finally {
+        await db.run(`DELETE FROM users WHERE id = '950'`);
+      }
+    });
+
+    it('A-01: nothing when every account has a role', async () => {
+      expect(item(await summary('mis-admin'), 'A-01')).toBeUndefined();
     });
   });
 
