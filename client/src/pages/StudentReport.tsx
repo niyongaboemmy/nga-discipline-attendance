@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -78,9 +79,12 @@ export const StudentReport: React.FC = () => {
           </div>
 
           <div className="flex items-baseline justify-between flex-wrap gap-2 mb-4">
-            <div>
-              <div className="text-lg font-semibold">{studentName || 'Student'}</div>
-              <div className="text-xs text-secondary mono">{id}</div>
+            <div className="flex items-center gap-3">
+              <UserAvatar decorative userId={id} name={studentName || 'Student'} px={48} className="avatar" />
+              <div>
+                <div className="text-lg font-semibold">{studentName || 'Student'}</div>
+                <div className="text-xs text-secondary mono">{id}</div>
+              </div>
             </div>
           </div>
 

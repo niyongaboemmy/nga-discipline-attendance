@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
@@ -298,6 +299,7 @@ export const LogIncident: React.FC = () => {
                     ) : students.map((s) => (
                       <label key={s.id} className="flex items-center gap-2 text-sm" style={{ padding: '8px 10px', cursor: 'pointer' }}>
                         <input type="checkbox" checked={bulkIds.includes(s.id)} onChange={() => toggleBulkId(s.id)} />
+                        <UserAvatar decorative userId={s.id} name={s.name} px={28} className="avatar avatar-sm" />
                         {s.name} <span className="text-tertiary mono text-xs">{s.id}</span>
                       </label>
                     ))}

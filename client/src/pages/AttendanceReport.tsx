@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -57,7 +58,10 @@ const RateChart: React.FC<{ students: ClassSectionReport['students'] }> = ({ stu
       <div className="ar-chart-rows">
         {rows.map((s) => (
           <div className="ar-chart-row" key={s.studentId} title={`${s.studentName}: ${s.rate}% (${s.present} present, ${s.absent} absent, ${s.late} late, ${s.excused} excused)`}>
-            <span className="ar-chart-name">{s.studentName}</span>
+            <span className="ar-chart-name" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <UserAvatar decorative userId={s.studentId} name={s.studentName} px={20} className="avatar avatar-sm" />
+              {s.studentName}
+            </span>
             <div className="ar-chart-track">
               <div className="ar-chart-fill" style={{ width: `${s.rate}%`, background: COMMENT_FILL[s.comment] }} />
             </div>
@@ -594,7 +598,13 @@ export const AttendanceReport: React.FC = () => {
                   <tbody>
                     {filteredStudents.map((s, i) => (
                       <tr key={s.studentId}>
-                        <td className="ar-sticky-col">{i + 1}. {s.studentName}</td>
+                        <td className="ar-sticky-col">
+                          <span className="flex items-center gap-2">
+                            <span className="text-secondary">{i + 1}.</span>
+                            <UserAvatar decorative userId={s.studentId} name={s.studentName} px={22} className="avatar avatar-sm" />
+                            {s.studentName}
+                          </span>
+                        </td>
                         {report.dateColumns.map((d) => {
                           const status = s.marks[d];
                           return (

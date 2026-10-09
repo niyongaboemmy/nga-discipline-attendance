@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -41,7 +42,7 @@ interface OverviewData {
   /** A simple linear projection from the recent trend -- null when there's
    *  too little data (fewer than 3 days recorded) to mean anything. */
   projection: Projection | null;
-  recentActivity: Array<{ student_name: string; class_name: string; status: string; updated_at: string }>;
+  recentActivity: Array<{ student_id?: string; student_name: string; class_name: string; status: string; updated_at: string }>;
 }
 /** One real session, flattened out of `/api/attendance/me`'s day-by-day
  *  merge — a homeroom row and each subject row on the same day both become
@@ -91,6 +92,7 @@ const Feed: React.FC<{ items: OverviewData['recentActivity'] }> = ({ items }) =>
       {items.map((a, i) => (
         <div key={i} className="feed-item">
           <div className={`feed-dot is-${statusToTone(a.status)}`} />
+          <UserAvatar decorative userId={a.student_id} name={a.student_name} px={28} className="avatar avatar-sm" />
           <div style={{ flex: 1 }}>
             <div className="text-sm"><span className="font-semibold">{a.student_name}</span><span className="text-secondary"> · </span><span className="capitalize font-medium">{a.status}</span></div>
             <div className="text-xs text-secondary">{a.class_name}</div>
