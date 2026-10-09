@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -234,7 +235,10 @@ export const DisciplineRecords: React.FC = () => {
                         style={{ textAlign: 'left', background: 'none', border: 0, padding: 0, cursor: 'pointer', color: 'var(--text-link, var(--primary))' }}
                         onClick={() => setDetailId(r.id)}
                       >
-                        {r.student_name}
+                        <span className="inline-flex items-center gap-2">
+                          <UserAvatar decorative userId={r.student_id} name={r.student_name} px={24} className="avatar avatar-sm" />
+                          {r.student_name}
+                        </span>
                       </button>
                       <div className="text-xs text-secondary">{r.title}</div>
                     </td>

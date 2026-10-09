@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -28,7 +29,6 @@ const roleBadge = (r: Role) =>
   r === 'admin' ? 'badge-primary' : r === 'teacher' ? 'badge-info' : r === 'student' ? 'badge-success' : 'badge-warning';
 
 const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('sso_token')}` });
-const initials = (name: string) => name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
 
 export const AdminDashboard: React.FC = () => {
   const toast = useToast();
@@ -317,7 +317,7 @@ export const AdminDashboard: React.FC = () => {
                       <tr key={u.id} className={u.role === 'unassigned' ? 'is-unassigned' : undefined}>
                         <td>
                           <div className="flex items-center gap-3">
-                            <div className="avatar avatar-square avatar-sm">{initials(u.name)}</div>
+                            <UserAvatar decorative userId={u.id} name={u.name} px={28} className="avatar avatar-square avatar-sm" />
                             <div>
                               <div className="font-medium">{u.name}</div>
                               <div className="text-xs text-secondary mono">{u.id}</div>

@@ -1,3 +1,4 @@
+import { UserAvatar } from '../common/UserAvatar';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -19,7 +20,6 @@ const STATUSES: { key: AttStatus; label: string; icon: React.ReactNode }[] = [
   { key: 'absent', label: 'Absent', icon: <XCircle size={15} /> },
   { key: 'excused', label: 'Excused', icon: <ShieldCheck size={15} /> },
 ];
-const initials = (n: string) => n.split(' ').map((p) => p[0]).join('').toUpperCase().slice(0, 2);
 
 interface Student { id: string; name: string; email: string }
 interface Row { studentId: string; studentName: string; status: AttStatus; notes: string }
@@ -376,7 +376,7 @@ export const RegisterDrawer: React.FC<{
                           aria-label={`${s.name}, ${r?.status ?? 'present'}. Press 1–4 to change.`}
                         >
                           <div className="drawer-row-main">
-                            <div className="avatar avatar-sm avatar-square">{initials(s.name)}</div>
+                            <UserAvatar decorative userId={s.id} name={s.name} px={28} className="avatar avatar-sm avatar-square" />
                             <div className="dr-name">
                               <div className="n">{s.name}{changed && <span className="dr-dot" aria-hidden="true" />}</div>
                               <div className="s mono">
