@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -34,8 +35,6 @@ const STATUSES: { key: Status; label: string; icon: React.ReactNode }[] = [
   { key: 'absent', label: 'Absent', icon: <XCircle size={14} /> },
   { key: 'excused', label: 'Excused', icon: <ShieldCheck size={14} /> },
 ];
-
-const initials = (name: string) => name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
 
 export const MarkAttendance: React.FC = () => {
   const navigate = useNavigate();
@@ -702,7 +701,7 @@ export const MarkAttendance: React.FC = () => {
                     aria-label={`${s.name}, marked ${rec?.status ?? 'present'}${isChanged ? ', changed' : ''}. Press 1 to 4 to change.`}
                   >
                     <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
-                      <div className="avatar avatar-square">{initials(s.name)}</div>
+                      <UserAvatar decorative userId={s.id} name={s.name} px={38} className="avatar avatar-square" />
                       <div style={{ minWidth: 0 }}>
                         <div className="text-sm font-semibold truncate">
                           {s.name}

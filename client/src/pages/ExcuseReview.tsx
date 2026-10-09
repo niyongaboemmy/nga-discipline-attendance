@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -170,8 +171,13 @@ export const ExcuseReview: React.FC = () => {
                       </td>
                     )}
                     <td>
-                      <div className="font-medium">{ex.student_name}</div>
-                      <div className="text-xs text-secondary mono">{ex.student_id}</div>
+                      <div className="flex items-center gap-3">
+                        <UserAvatar decorative userId={ex.student_id} name={ex.student_name} px={28} className="avatar avatar-sm" />
+                        <div>
+                          <div className="font-medium">{ex.student_name}</div>
+                          <div className="text-xs text-secondary mono">{ex.student_id}</div>
+                        </div>
+                      </div>
                     </td>
                     <td>
                       <div>{ex.session_type === 'subject' ? (ex.subject_name || 'Lesson') : 'Morning check'}</div>

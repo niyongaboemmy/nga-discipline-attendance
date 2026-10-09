@@ -3,6 +3,7 @@ import cors from 'cors';
 import { config } from './config.js';
 
 // Import Route Handlers
+import avatarRoutes from './routes/avatars.js';
 import ssoRoutes from './routes/sso.js';
 import attendanceRoutes from './routes/attendance.js';
 import disciplineRoutes from './routes/discipline.js';
@@ -53,6 +54,7 @@ app.use((_req, res, next) => {
 });
 
 app.use('/api/sso', ssoRoutes);
+app.use('/api/avatars', avatarRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/attendance', subjectAttendanceRoutes);
 app.use('/api/attendance', scheduleRoutes);

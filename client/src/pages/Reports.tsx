@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
@@ -201,7 +202,10 @@ export const Reports: React.FC = () => {
                   <div className="flex flex-col gap-2">
                     {conduct.topDemerits.map((s) => (
                       <div key={s.student_id} className="flex items-center justify-between text-sm">
-                        <span className="truncate">{s.student_name}</span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <UserAvatar decorative userId={s.student_id} name={s.student_name} px={24} className="avatar avatar-sm" />
+                          <span className="truncate">{s.student_name}</span>
+                        </span>
                         <span className="badge badge-danger">{s.demerit_points} pts</span>
                       </div>
                     ))}
@@ -223,7 +227,10 @@ export const Reports: React.FC = () => {
               <div className="flex flex-col gap-2">
                 {combined.studentsAtCombinedRisk.map((s) => (
                   <div key={s.studentId} className="flex items-center justify-between text-sm">
-                    <span className="truncate">{s.studentName}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <UserAvatar decorative userId={s.studentId} name={s.studentName} px={24} className="avatar avatar-sm" />
+                      <span className="truncate">{s.studentName}</span>
+                    </span>
                     <div className="flex gap-2">
                       <span className="badge badge-danger">{s.attendanceRate}% attendance</span>
                       <span className="badge badge-warning">{s.conductBalance} conduct</span>

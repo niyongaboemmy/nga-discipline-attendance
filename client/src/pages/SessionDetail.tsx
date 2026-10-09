@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -341,7 +342,12 @@ export const SessionDetail: React.FC = () => {
                     <tbody>
                       {register.records.map((r) => (
                         <tr key={r.studentId}>
-                          <td>{r.studentName}</td>
+                          <td>
+                            <span className="flex items-center gap-2">
+                              <UserAvatar decorative userId={r.studentId} name={r.studentName} px={24} className="avatar avatar-sm" />
+                              {r.studentName}
+                            </span>
+                          </td>
                           <td><StatusChip kind={r.status} /></td>
                           <td className="text-secondary">{r.notes || '—'}</td>
                         </tr>

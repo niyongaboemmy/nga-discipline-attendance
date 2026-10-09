@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -192,8 +193,13 @@ export const AttendanceRecords: React.FC = () => {
                   {visible.map((r) => (
                     <tr key={r.id}>
                       <td>
-                        <div className="font-medium">{r.student_name}</div>
-                        <div className="text-xs text-secondary mono">{r.student_id}</div>
+                        <div className="flex items-center gap-3">
+                          <UserAvatar decorative userId={r.student_id} name={r.student_name} px={28} className="avatar avatar-sm" />
+                          <div>
+                            <div className="font-medium">{r.student_name}</div>
+                            <div className="text-xs text-secondary mono">{r.student_id}</div>
+                          </div>
+                        </div>
                       </td>
                       <td>{r.class_name}</td>
                       <td>{new Date(r.session_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>

@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
@@ -8,7 +9,6 @@ import { Search, GraduationCap, Briefcase, Mail, Inbox, FileText, ChevronLeft, C
 
 interface DirectoryMember { id: string; name: string; email: string; role?: string; }
 
-const initials = (name: string) => name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2);
 const PAGE_SIZE = 20;
 
 export const Directory: React.FC = () => {
@@ -93,7 +93,7 @@ export const Directory: React.FC = () => {
                     <tr key={m.id}>
                       <td>
                         <div className="flex items-center gap-3">
-                          <div className="avatar avatar-square avatar-sm">{initials(m.name)}</div>
+                          <UserAvatar decorative userId={m.id} name={m.name} px={28} className="avatar avatar-square avatar-sm" />
                           <span className="font-medium">{m.name}</span>
                         </div>
                       </td>

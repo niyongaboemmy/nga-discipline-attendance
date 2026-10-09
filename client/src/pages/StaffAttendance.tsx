@@ -1,3 +1,4 @@
+import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
@@ -162,8 +163,13 @@ export const StaffAttendance: React.FC = () => {
                   <tr key={log.id}>
                     {canViewAll && (
                       <td>
-                        <div className="font-medium">{log.staff_name}</div>
-                        <div className="text-xs text-secondary mono">{log.staff_id}</div>
+                        <div className="flex items-center gap-3">
+                          <UserAvatar decorative userId={log.staff_id} name={log.staff_name} px={28} className="avatar avatar-sm" />
+                          <div>
+                            <div className="font-medium">{log.staff_name}</div>
+                            <div className="text-xs text-secondary mono">{log.staff_id}</div>
+                          </div>
+                        </div>
                       </td>
                     )}
                     <td className="font-medium">{new Date(log.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
