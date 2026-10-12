@@ -135,6 +135,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
 
+    // Role permissions are cached at sign-in, but the server resolves them
+    // fresh on every request, so a permission granted later (an admin edit,
+    // or a new feature's permissions seeded on deploy) never reached the UI
+    // until the user signed out and back in. Re-sync from /me on the same
+    // cadence as the session check.
+    const syncRolePermissions = async () => {
+      try {
+        const res = await fetch('/api/roles-permissions/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        const keys = body?.data?.permissionKeys;
+        if (Array.isArray(keys)) {
+          setRolePermissions(keys);
+          localStorage.setItem('sso_role_permissions', JSON.stringify(keys));
+        }
+      } catch {
+        // Keep the cached set; the next sync will settle it.
+      }
+    };
+
     // Single sign-out: check right away, whenever this tab comes back into
     // view (e.g. after signing out of MIS in another tab), and every minute.
     let lastCheck = 0;
@@ -142,6 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (Date.now() - lastCheck < 5000) return; // focus + visibility fire together
       lastCheck = Date.now();
       void verifyMisSession();
+      void syncRolePermissions();
     };
     const onVisible = () => {
       if (document.visibilityState === 'visible') checkSoon();

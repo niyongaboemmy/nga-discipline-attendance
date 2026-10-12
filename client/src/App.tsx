@@ -34,6 +34,8 @@ import { AuditLog } from './pages/AuditLog';
 import { StudentReport } from './pages/StudentReport';
 import { AttendanceReportGate } from './pages/AttendanceReportGate';
 import { SessionDetail } from './pages/SessionDetail';
+import { RfidCards } from './pages/RfidCards';
+import { RfidCardDetail } from './pages/RfidCardDetail';
 
 export const App: React.FC = () => {
   return (
@@ -83,6 +85,22 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin']}>
                 <AuditLog />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/attendance/cards"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <RfidCards />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/attendance/cards/:id"
+            element={
+              <ProtectedRoute allowedRoles={['admin']}>
+                <RfidCardDetail />
               </ProtectedRoute>
             }
           />

@@ -23,6 +23,7 @@ import accessRoutes from './routes/access.js';
 import integrationRoutes, { integrationErrorHandler } from './modules/integration/integration.routes.js';
 import { activityRouter } from './routes/activity.js';
 import { activityRelay } from './activity/relay.js';
+import rfidRoutes from './modules/rfid/rfid.routes.js';
 
 /** The Express app, with no side effects (no DB init, no `listen`) — so
  *  tests can import it directly against an in-memory DB via supertest.
@@ -73,6 +74,9 @@ app.use('/api/access', accessRoutes);
 // Server-to-server calls from the NGA Central MIS (the Home page), made with
 // the user's own MIS token -- see middleware/misBearerAuth.ts.
 app.use('/api/integration', integrationRoutes, integrationErrorHandler);
+
+// RFID cards, scan log, scanners and check-in sessions (modules/rfid).
+app.use('/api/rfid', rfidRoutes);
 
 // MIS roster proxy — classes, students, staff and timetables are read from the
 // NGA Central MIS using the signed-in user's MIS token (see routes/mis.ts).

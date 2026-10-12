@@ -16,6 +16,7 @@ import {
   KeyRound,
   BookOpen,
   Settings as SettingsIcon,
+  CreditCard,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -51,6 +52,8 @@ export const navItems: NavItem[] = [
   { label: 'Attendance Calendar', path: '/attendance', icon: CalendarClock, roles: ['admin', 'teacher', 'student'], section: 'Attendance' },
   { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
   { label: 'Attendance Report', path: '/attendance/report', icon: Table2, roles: ['admin', 'teacher', 'student'], section: 'Attendance' },
+  // Card attendance: the card tap stands in for the teacher marking the register.
+  { label: 'Attendance Cards', path: '/attendance/cards', icon: CreditCard, roles: ['admin'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
 
   // Attendance (student) — deliberately just the calendar (tick/cross, no

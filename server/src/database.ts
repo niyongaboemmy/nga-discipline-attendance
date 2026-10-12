@@ -2,6 +2,7 @@ import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 import { config } from './config.js';
 import { PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, SYSTEM_ROLES } from './constants/permissions.js';
+import { migrateRfidAttendance } from './modules/rfid/rfid.migrations.js';
 
 let db: Database;
 
@@ -260,6 +261,7 @@ export async function initDatabase(filenameOverride?: string) {
   await purgeAttendanceForCorrectedDates(db);
   await migrateAccessShadowDiffs(db);
   await migrateAppState(db);
+  await migrateRfidAttendance(db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
   // and the admin MIS sync (routes/admin.ts); all operational records start empty.

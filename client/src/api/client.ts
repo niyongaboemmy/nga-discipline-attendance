@@ -9,9 +9,13 @@ import { readCache, writeCache } from '../offline/outbox';
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Machine-readable reason some endpoints send alongside the message
+   *  (e.g. 'CARD_ASSIGNED'), so callers never have to match on wording. */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -24,6 +28,7 @@ export class OfflineError extends ApiError {
 
 interface Envelope<T> {
   success: boolean;
+  code?: string;
   data?: T;
   message?: string;
   total?: number;
@@ -84,7 +89,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<Envelop
   }
 
   if (!res.ok || body.success === false) {
-    throw new ApiError(body.message || `Request failed (${res.status})`, res.status);
+    throw new ApiError(body.message || `Request failed (${res.status})`, res.status, body.code);
   }
   if (isGet) writeCache(localStorage, path, body);
   return body;

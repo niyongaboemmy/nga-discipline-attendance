@@ -10,6 +10,7 @@
 @import './styles/charts.css';
 @import './styles/todayAgenda.css';
 @import './styles/dashboard.css';
+@import './styles/rfid.css';
 
 /* ==========================================================================
    Global typography — Inter (UI) + JetBrains Mono (code)

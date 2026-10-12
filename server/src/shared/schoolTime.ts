@@ -81,3 +81,37 @@ export function addDays(dateStr: string, n: number): string {
   dt.setUTCDate(dt.getUTCDate() + n);
   return dt.toISOString().slice(0, 10);
 }
+
+/** Offset (ms) of the school's timezone from UTC at instant `t`. */
+function schoolOffsetMs(t: number): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SCHOOL_TIMEZONE,
+    hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(t));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? '0');
+  const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+  return asUtc - Math.floor(t / 1000) * 1000;
+}
+
+/**
+ * The UTC instant of a school-local wall-clock time on a school date, e.g.
+ * ('2026-09-25', '07:30') -> 2026-09-25T05:30:00.000Z in Africa/Kigali.
+ * Re-checks the offset once so a zone with DST would still land correctly.
+ */
+export function schoolLocalToUtc(dateStr: string, hhmm: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [h, mi] = hhmm.split(':').map(Number);
+  const wall = Date.UTC(y, m - 1, d, h, mi);
+  let t = wall - schoolOffsetMs(wall);
+  t = wall - schoolOffsetMs(t);
+  return new Date(t);
+}
+
+/** "07:24" — the school-local clock time of an instant. */
+export function schoolClockLabel(at: Date | string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: SCHOOL_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(typeof at === 'string' ? new Date(at) : at);
+}

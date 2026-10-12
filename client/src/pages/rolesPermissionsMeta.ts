@@ -47,6 +47,10 @@ export const PERMISSION_LABELS: Record<string, string> = {
 
   NOTIFICATIONS_MANAGE: 'Manage own notifications',
   SETTINGS_MANAGE: 'Manage own settings',
+
+  RFID_CARDS_VIEW: 'View RFID cards',
+  RFID_CARDS_MANAGE: 'Manage RFID cards and scanners',
+  RFID_SCANS_VIEW: 'View the scan log',
 };
 
 /** Fallback for keys with no curated label: ROSTER_SYNC -> "Roster sync". */

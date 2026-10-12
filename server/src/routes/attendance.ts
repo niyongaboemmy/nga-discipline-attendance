@@ -69,6 +69,8 @@ const markSchema = z.object({
     studentName: z.string().min(1).max(160),
     status: z.enum(ATTENDANCE_STATUSES),
     notes: z.string().max(500).optional().default(''),
+    /** Why a teacher changed a status the check-in system recorded. Kept in history. */
+    reason: z.string().trim().max(300).optional(),
   })).min(1, 'At least one student record is required.').max(MAX_RECORDS_PER_MARK),
 }).refine((v) => v.sessionType !== 'subject' || v.subjectId != null, {
   message: 'subjectId is required when sessionType is "subject".',
@@ -138,10 +140,10 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
     await db.run('BEGIN TRANSACTION');
 
     for (const record of records) {
-      const { studentId, studentName, status, notes = '' } = record;
+      const { studentId, studentName, status, notes = '', reason } = record;
 
       const existing = await db.get(
-        `SELECT id, status, notes FROM attendance_records
+        `SELECT id, status, notes, source FROM attendance_records
           WHERE student_id = ? AND class_id = ? AND session_date = ? AND period = ?
             AND session_type = ? AND (subject_id IS ? OR subject_id = ?)`,
         studentId, classId, date, period, sessionType, subjectId, subjectId
@@ -169,10 +171,10 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
           await db.run(
             `INSERT INTO attendance_record_history
              (attendance_record_id, student_id, class_id, session_date, period, session_type, subject_id,
-              previous_status, new_status, previous_notes, new_notes, changed_by, changed_by_name)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              previous_status, new_status, previous_notes, new_notes, changed_by, changed_by_name, reason, change_source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'teacher')`,
             existing.id, studentId, classId, date, period, sessionType, subjectId,
-            existing.status, status, existing.notes ?? '', notes ?? '', teacherId, teacherName
+            existing.status, status, existing.notes ?? '', notes ?? '', teacherId, teacherName, reason ?? null
           );
         }
         updatedCount += 1;
@@ -232,6 +234,15 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
   }
 });
 
+/** Display name for `marked_by`: a user, or the check-in system (RFID scans
+ *  and the absences filled in at close write `system:*` ids). */
+async function actorName(db: ReturnType<typeof getDb>, id: string | null): Promise<string | null> {
+  if (!id) return null;
+  if (id.startsWith('system:')) return 'Check-in system';
+  const actor = await db.get('SELECT name FROM users WHERE id = ?', id);
+  return actor?.name ?? null;
+}
+
 async function notifyStudentsMarked(
   db: ReturnType<typeof getDb>,
   s: {
@@ -275,7 +286,8 @@ router.get('/session', authorizePermission('ATTENDANCE_MARK'), markAccess('query
   try {
     const db = getDb();
     const records = await db.all(
-      `SELECT id, student_id, student_name, status, notes, marked_by, updated_at
+      `SELECT id, student_id, student_name, status, notes, marked_by, updated_at,
+              source, first_scan_at, auto_status
          FROM attendance_records
         WHERE class_id = ? AND session_date = ? AND period = ? AND session_type = ?
           AND (subject_id IS ? OR subject_id = ?)
@@ -290,8 +302,7 @@ router.get('/session', authorizePermission('ATTENDANCE_MARK'), markAccess('query
       const latest = records.reduce((a: any, b: any) => (a.updated_at > b.updated_at ? a : b));
       lastMarkedAt = latest.updated_at;
       markedById = latest.marked_by;
-      const actor = await db.get('SELECT name FROM users WHERE id = ?', latest.marked_by);
-      markedByName = actor?.name ?? null;
+      markedByName = await actorName(db, latest.marked_by);
     }
 
     return res.json({
@@ -308,6 +319,11 @@ router.get('/session', authorizePermission('ATTENDANCE_MARK'), markAccess('query
           studentName: r.student_name,
           status: r.status,
           notes: r.notes ?? '',
+          // Check-in provenance: how the row was created, when the card was
+          // tapped, and what the system decided (differs from status after an override).
+          source: r.source ?? 'manual',
+          firstScanAt: r.first_scan_at ?? null,
+          autoStatus: r.auto_status ?? null,
         })),
       },
     });
@@ -505,8 +521,7 @@ router.get('/session-status', authorizePermission('ATTENDANCE_MARK'), markAccess
     const count = row?.count ?? 0;
     let markedByName: string | null = null;
     if (count > 0 && row?.marked_by) {
-      const actor = await db.get('SELECT name FROM users WHERE id = ?', row.marked_by);
-      markedByName = actor?.name ?? null;
+      markedByName = await actorName(db, row.marked_by);
     }
     return res.json({
       success: true,
@@ -1247,8 +1262,9 @@ router.put('/excuses/bulk', authorizePermission('EXCUSES_REVIEW'), async (req: a
   }
 });
 
-// Helper background logic to analyze attendance drop and push system alerts
-async function triggerLowAttendanceCheck(
+// Helper background logic to analyze attendance drop and push system alerts.
+// Also run after card attendance closes a register (modules/rfid/closing.service.ts).
+export async function triggerLowAttendanceCheck(
   classId: string,
   className: string,
   sessionType: string = 'homeroom',

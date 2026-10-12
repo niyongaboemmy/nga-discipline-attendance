@@ -18,6 +18,7 @@ export const PERMISSION_CATEGORIES = {
   ROSTER: 'MIS Roster',
   NOTIFICATIONS: 'Notifications',
   SETTINGS: 'Account Settings',
+  RFID: 'RFID & Check-in',
 } as const;
 
 export const PERMISSIONS: PermissionDefinition[] = [
@@ -71,6 +72,10 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'NOTIFICATIONS_MANAGE', category: PERMISSION_CATEGORIES.NOTIFICATIONS, description: 'View and manage your own in-app notifications.' },
 
   { key: 'SETTINGS_MANAGE', category: PERMISSION_CATEGORIES.SETTINGS, description: 'View and update your own account preferences.' },
+
+  { key: 'RFID_CARDS_VIEW', category: PERMISSION_CATEGORIES.RFID, description: 'View RFID cards, who holds them, and scanners.' },
+  { key: 'RFID_CARDS_MANAGE', category: PERMISSION_CATEGORIES.RFID, description: 'Register, assign, reassign, and disable RFID cards; manage scanners and days off; sync the roster and timetables.' },
+  { key: 'RFID_SCANS_VIEW', category: PERMISSION_CATEGORIES.RFID, description: 'View the raw RFID scan log, including unknown and rejected cards.' },
 ];
 
 export const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));
@@ -123,6 +128,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', s
     'ROSTER_VIEW', 'ROSTER_SYNC',
     'NOTIFICATIONS_MANAGE',
     'SETTINGS_MANAGE',
+    'RFID_CARDS_VIEW', 'RFID_CARDS_MANAGE', 'RFID_SCANS_VIEW',
   ],
 };
 
