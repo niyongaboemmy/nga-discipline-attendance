@@ -39,6 +39,9 @@ export const DisciplineRules: React.FC = () => {
   const [creating, setCreating] = useState(false);
   // null = closed; otherwise which add-flow is open (spreadsheet or AI).
   const [addMode, setAddMode] = useState<'file' | 'ai' | null>(null);
+  // The school's AI switch: when the super admin has turned AI off, the AI
+  // button stays visible but disabled, and says why.
+  const [aiOff, setAiOff] = useState<string | null>(null);
   const RULES_PAGE_SIZE = 10;
   const [demeritPage, setDemeritPage] = useState(1);
   const [meritPage, setMeritPage] = useState(1);
@@ -70,6 +73,12 @@ export const DisciplineRules: React.FC = () => {
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!canManage) return;
+    disciplineApi.rulesAiStatus()
+      .then((r) => setAiOff(r.data && !r.data.policy.enabled ? r.data.policy.message : null))
+      .catch(() => setAiOff(null));
+  }, [canManage]);
 
   const update = (patch: Partial<RuleInput>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -214,7 +223,12 @@ export const DisciplineRules: React.FC = () => {
             <button className="btn btn-outline" onClick={() => setAddMode('file')}>
               <Upload size={16} /> Import
             </button>
-            <button className="btn btn-outline" onClick={() => setAddMode('ai')}>
+            <button
+              className="btn btn-outline"
+              onClick={() => setAddMode('ai')}
+              disabled={!!aiOff}
+              title={aiOff ?? undefined}
+            >
               <Sparkles size={16} /> Describe with AI
             </button>
             <button className="btn btn-primary" onClick={() => setCreating((v) => !v)}>
@@ -223,6 +237,12 @@ export const DisciplineRules: React.FC = () => {
           </div>
         )}
       </div>
+
+      {canManage && aiOff && (
+        <p className="text-xs text-secondary mb-3" role="note">
+          <Sparkles size={12} /> {aiOff} Rules can still be imported or added by hand.
+        </p>
+      )}
 
       {canManage && addMode && (
         <RuleImportModal

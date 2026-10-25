@@ -154,6 +154,8 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
   const fileRef = useRef<HTMLInputElement>(null);
   const [prompt, setPrompt] = useState('');
   const [providerUsed, setProviderUsed] = useState<string | null>(null);
+  /** The school turned AI off (403 AI_DISABLED): its message, and no more drafting. */
+  const [aiOff, setAiOff] = useState<string | null>(null);
 
   const reset = () => {
     setFileName(null);
@@ -195,6 +197,10 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
         }))
       );
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'AI_DISABLED') {
+        setAiOff(err.message || 'AI is turned off for the school.');
+        return;
+      }
       setParseError(err instanceof ApiError ? err.message : 'Could not reach the AI service.');
     } finally {
       setBusy(false);
@@ -413,13 +419,15 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
             ))}
           </div>
           <div className="flex items-center justify-between mt-2">
-            <p className="text-xs text-secondary">
-              Nothing is saved until you review the drafts and confirm.
+            <p className="text-xs text-secondary" role={aiOff ? 'note' : undefined}>
+              {aiOff
+                ? `${aiOff} Rules can still be imported or added by hand.`
+                : 'Nothing is saved until you review the drafts and confirm.'}
             </p>
             <button
               className="btn btn-secondary btn-sm"
               onClick={draftWithAi}
-              disabled={busy || prompt.trim().length < 3}
+              disabled={busy || !!aiOff || prompt.trim().length < 3}
             >
               <Sparkles size={14} /> {busy ? 'Drafting…' : 'Draft rules'}
             </button>

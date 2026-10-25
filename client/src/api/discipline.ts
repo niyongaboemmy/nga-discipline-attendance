@@ -45,6 +45,12 @@ export const disciplineApi = {
   updateRule: (id: number, input: Partial<RuleInput> & { isActive?: boolean }) =>
     apiPut<DisciplineRule>(`/api/discipline/rules/${id}`, input),
   retireRule: (id: number) => apiDelete<DisciplineRule>(`/api/discipline/rules/${id}`),
+  /** Can "Draft with AI" be offered? `policy` is the school's AI switch (MIS ai_policy). */
+  rulesAiStatus: () => apiGet<{
+    available: boolean;
+    configured: boolean;
+    policy: { enabled: boolean; reason: string; message: string };
+  }>('/api/discipline/rules/ai-status'),
 
   adjust: (input: {
     studentId: string; studentName: string; ruleId: number; incidentDate: string;

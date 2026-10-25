@@ -9,9 +9,12 @@ import { readCache, writeCache } from '../offline/outbox';
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** The server's machine-readable code when it sends one (e.g. 'AI_DISABLED'). */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -24,6 +27,8 @@ export class OfflineError extends ApiError {
 
 interface Envelope<T> {
   success: boolean;
+  /** Set on some refusals, e.g. 'AI_DISABLED' (with `reason`) when the school turned AI off. */
+  code?: string;
   data?: T;
   message?: string;
   total?: number;
@@ -84,7 +89,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<Envelop
   }
 
   if (!res.ok || body.success === false) {
-    throw new ApiError(body.message || `Request failed (${res.status})`, res.status);
+    throw new ApiError(body.message || `Request failed (${res.status})`, res.status, body.code);
   }
   if (isGet) writeCache(localStorage, path, body);
   return body;
