@@ -9,6 +9,8 @@ import {
   sendMisError,
   requireMisToken,
 } from '../services/misClient.js';
+import { getDb } from '../database.js';
+import { inactiveIdSet, misStatusIsActive } from '../services/activeStudents.js';
 
 // Re-exported for routes/attendance.ts, which imports the MIS client helpers
 // (and the curriculum helpers below) from this module.
@@ -72,6 +74,23 @@ function normalizeMisUser(entry: any) {
       'Unknown',
     email: user.email || user.username || '',
   };
+}
+
+/**
+ * Active users only (ACTIVE_USERS_CONTRACTS.md). The MIS is being changed to
+ * leave inactive people out of these lists; until every MIS does, drop any row
+ * that carries a non-ACTIVE status itself, then anyone Tendo's synced copy of
+ * the MIS status (users.status / roster_students.mis_status) knows is inactive.
+ * A row with no status anywhere stays: the MIS list it came from is the authority.
+ */
+const statusOf = (row: any) => row?.user?.status ?? row?.user_status ?? row?.status;
+
+async function onlyActive<T extends { id: string }>(raw: any[], normalize: (r: any) => T): Promise<T[]> {
+  const inactive = await inactiveIdSet(getDb());
+  return raw
+    .filter((r) => misStatusIsActive(statusOf(r)) !== false)
+    .map(normalize)
+    .filter((p) => !inactive.has(p.id));
 }
 
 function dedupeById<T extends { id: string }>(rows: T[]): T[] {
@@ -179,7 +198,7 @@ router.get('/students', async (req: any, res) => {
         `/academics/class-groups/${encodeURIComponent(classId)}/students`,
         { academic_year_id: yearParam }
       );
-      return res.json({ success: true, data: rows.map(normalizeFlatPerson) });
+      return res.json({ success: true, data: await onlyActive(rows, normalizeFlatPerson) });
     }
 
     // School-wide list (Directory). Built from the per-year class-group
@@ -199,17 +218,18 @@ router.get('/students', async (req: any, res) => {
       );
       return res.json({
         success: true,
-        data: dedupeById(rosters.flat().map(normalizeFlatPerson)),
+        data: dedupeById(await onlyActive(rosters.flat(), normalizeFlatPerson)),
       });
     }
 
     const viaUsers = await misGetListOrNull(misToken, '/users', {
       userRole: MIS_STUDENT_ROLE_ID,
       limit: '1000',
+      status: 'ACTIVE',
     });
     return res.json({
       success: true,
-      data: viaUsers ? dedupeById(viaUsers.map(normalizeMisUser)) : [],
+      data: viaUsers ? dedupeById(await onlyActive(viaUsers, normalizeMisUser)) : [],
     });
   } catch (error) {
     sendMisError(res, classId ? `/academics/class-groups/${classId}/students` : '/users', error);
@@ -223,22 +243,27 @@ router.get('/staff', async (req: any, res) => {
     // /users spans every staff role at once but needs MANAGE_USERS; the
     // teacher-assignment list is permission-free and names every teacher
     // actually assigned to teach something.
-    const viaUsers = await misGetListOrNull(misToken, '/users', { limit: '1000' });
+    const viaUsers = await misGetListOrNull(misToken, '/users', { limit: '1000', status: 'ACTIVE' });
     if (viaUsers) {
       const staffOnly = viaUsers.filter(
         (entry: any) =>
           !(entry.roles || []).some((r: any) => String(r.name).toUpperCase() === 'STUDENT')
       );
-      return res.json({ success: true, data: dedupeById(staffOnly.map(normalizeMisUser)) });
+      return res.json({ success: true, data: dedupeById(await onlyActive(staffOnly, normalizeMisUser)) });
     }
 
+    // Assignment rows carry no account status (their `status` is the
+    // assignment's), so only Tendo's synced copy can filter these.
     const assignments = await misGetList(misToken, '/academics/teacher-assignments');
     const staff = dedupeById(
-      assignments.map((a: any) => ({
-        id: String(a.user_id),
-        name: a.teacher_name || a.teacher_username || 'Unknown',
-        email: a.teacher_username || '',
-      }))
+      await onlyActive(
+        assignments.map((a: any) => ({ ...a, status: undefined })),
+        (a: any) => ({
+          id: String(a.user_id),
+          name: a.teacher_name || a.teacher_username || 'Unknown',
+          email: a.teacher_username || '',
+        })
+      )
     );
     return res.json({ success: true, data: staff });
   } catch (error) {
