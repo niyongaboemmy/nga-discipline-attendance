@@ -2,12 +2,13 @@
 
 ## Current Task
 Card (RFID) attendance: the ESP32 writes taps to Supabase `public.rfid_scans`. Tendo reads them and marks the same
-registers a teacher would, following **each student's own class timetable**. The user put it this way: "a teacher
-assigns attendance, it's just a replacement so teachers don't need to input it themselves." Branch
-`feat/rfid-attendance`, **uncommitted**. Commit only when asked.
+registers a teacher would, following **each student's own class timetable**. The RFID implementation is now merged
+into local `main` from `Levi`; no push was performed.
 
 ## Status
-**MVP focus (user, 2026-09-25): the admin page only needs to show cards the scanner picked up and let the admin
+**Merge completed 2026-10-25:** the local `main` branch contains both the fetched `origin/main` and all `Levi`
+commits. The one merge conflict was documentation-only in `client/src/api/client.ts`; both machine-readable error
+code explanations were retained without changing runtime behavior. The admin page only needs to show cards the scanner
 assign them to students. Attendance marking is parked.** The page is now: feed Live/Not-live bar (with "Assign it" for the
 last tap), roster bar, tabs Scanned cards (default, `?scanned=1`) / Scan log / Scanners. Removed: Today tab, days-off UI,
 Unregistered tab, the manual Register card and Enter a scan buttons (the APIs remain).
