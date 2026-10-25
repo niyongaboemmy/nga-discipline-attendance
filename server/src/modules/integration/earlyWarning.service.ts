@@ -3,6 +3,7 @@ import { config } from '../../config.js';
 import { getDb } from '../../database.js';
 import { basicAuthHeader } from '../../access/misService.js';
 import { fetchWithTimeout } from '../../access/snapshot.js';
+import { inactiveIdSet } from '../../services/activeStudents.js';
 import { addDays, schoolDateString, schoolMinutesOfDay } from '../../shared/schoolTime.js';
 
 /**
@@ -103,9 +104,11 @@ export async function computeEarlyWarningMetrics(db: Database, asOf: string): Pr
       WHERE deleted_at IS NULL AND date(incident_date) BETWEEN ? AND ?`,
     earliest, w.yesterday, earliest, w.yesterday
   );
-  const inactive = new Set(
-    (await db.all<{ id: string }[]>(`SELECT CAST(id AS TEXT) AS id FROM users WHERE status = 'inactive'`)).map((r) => r.id)
-  );
+  // Known inactive from either synced copy of the MIS status (users.status
+  // or the roster's mis_status), so a student disabled on the MIS but never
+  // signed in here is still left out even though their old registers bring
+  // them back in through the UNION above.
+  const inactive = await inactiveIdSet(db);
 
   // A row counts as an absence when it is a lesson (subject) 'absent', or a
   // homeroom 'absent' on a day the student has no lesson 'absent' -- so a day
