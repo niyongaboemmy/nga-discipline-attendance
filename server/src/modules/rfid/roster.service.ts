@@ -1,6 +1,7 @@
 import { Database } from 'sqlite';
 import { config } from '../../config.js';
 import { replaceTimetable, upsertReference } from './timetable.service.js';
+import { isActiveStudent, localUserStatus } from '../../services/activeStudents.js';
 
 /**
  * Local copy of "which students exist and which class group each is in", read
@@ -126,6 +127,16 @@ export async function syncRosterFromMis(
       await db.run('BEGIN TRANSACTION');
       try {
         for (const u of users) {
+          // Every person's MIS account status lands on users.status (staff
+          // too): the one local "is this account active" flag. Existing rows
+          // only; nobody is created here.
+          const local = localUserStatus(u.status);
+          if (local && u.id != null) {
+            await db.run(
+              `UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IS NOT ?`,
+              local, String(u.id), local
+            );
+          }
           if (!isStudent(u)) continue;
           const studentId = String(u.id);
           await db.run(
@@ -172,6 +183,10 @@ export async function syncRosterFromMis(
     // Anything not seen in this full pass no longer exists on the MIS.
     await db.run(`DELETE FROM roster_enrolments WHERE synced_at < ?`, startedAt);
     await db.run(`UPDATE roster_students SET mis_status = 'REMOVED' WHERE synced_at < ?`, startedAt);
+    await db.run(
+      `UPDATE users SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'active' AND id IN (SELECT student_id FROM roster_students WHERE mis_status = 'REMOVED')`
+    );
 
     // Each class's timetable (the MIS calendar slots Tendo's attendance calendar shows).
     const academics = await misServiceGet(fetchImpl, '/integrations/sync/academics');
@@ -248,6 +263,10 @@ export async function resolveEnrolment(
   studentId: string,
   academicYearId: number | null
 ): Promise<EnrolmentResolution> {
+  // Only an active student is enrolled anywhere: a card left with someone
+  // whose MIS account was disabled must not record attendance for them.
+  // A student never synced (no row, or no status) keeps the old behaviour.
+  if ((await isActiveStudent(db, studentId)) === 'inactive') return { kind: 'none' };
   let yearId = academicYearId;
   if (yearId == null) {
     const latest = await db.get(
