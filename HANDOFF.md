@@ -3,7 +3,7 @@
 ## Current Task
 Card (RFID) attendance: the ESP32 writes taps to Supabase `public.rfid_scans`. Tendo reads them and marks the same
 registers a teacher would, following **each student's own class timetable**. The RFID implementation is now merged
-into local `main` from `Levi`; no push was performed.
+into local `main` from `Levi` and pushed to GitHub without force-pushing.
 
 ## Status
 **Merge completed 2026-10-25:** the local `main` branch contains both the fetched `origin/main` and all `Levi`
