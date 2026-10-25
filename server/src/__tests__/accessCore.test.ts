@@ -3,7 +3,8 @@ import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import {
-  AccessSnapshot, decide, depthSatisfies, groupByAllowed, scopeFor, suppressSmallCohorts, validateManifest,
+  AccessSnapshot, decide, decideAi, depthSatisfies, groupByAllowed, normalizeAiPolicy, scopeFor,
+  suppressSmallCohorts, validateManifest,
 } from '../vendor/nga-access/index.js';
 import { DA_MANIFEST } from '../access/manifest.js';
 import { PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from '../constants/permissions.js';
@@ -90,4 +91,24 @@ describe('D&A capability manifest', () => {
       expect(DEFAULT_ROLE_PERMISSIONS.Student).not.toContain(k);
     }
   });
+});
+
+describe('@nga/access AI usage decisions', () => {
+  for (const c of table.ai.cases) {
+    it(c.name, () => {
+      const policy = c.policy ? normalizeAiPolicy(c.policy) : null;
+      expect(decideAi(policy, c.ctx)).toEqual({ allowed: c.allowed, reason: c.reason });
+    });
+  }
+  for (const c of table.ai.normalize) {
+    it(`normalizeAiPolicy: ${c.name}`, () => {
+      const p = normalizeAiPolicy(c.input);
+      expect({
+        enabled: p.enabled,
+        assessments: p.assessments,
+        grading: p.features.grading,
+        thirdPartyExtensions: p.thirdPartyExtensions,
+      }).toEqual(c.expect);
+    });
+  }
 });

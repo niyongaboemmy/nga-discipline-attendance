@@ -1,6 +1,7 @@
 import { GenerateJSONParams } from "./types.js";
 import { orderedProviders, isCoolingDown, markCoolingDown } from "./registry.js";
 import { isQuotaError, friendlyAIErrorMessage } from "./errors.js";
+import { assertDaAiEnabled } from "../aiPolicy.js";
 
 /** Thrown when no provider could answer. Carries a message already safe to
  *  show a user (see friendlyAIErrorMessage). */
@@ -35,6 +36,9 @@ export async function generateStructuredContent<T = any>(
   params: GenerateJSONParams,
   options?: GenerateStructuredContentOptions,
 ): Promise<GenerateStructuredContentResult<T>> {
+  // The school's master switch (MIS ai_policy) comes before any provider.
+  // Throws AiDisabledError, which the routes answer as 403 AI_DISABLED.
+  await assertDaAiEnabled();
   const providers = orderedProviders(options?.providerOrder);
   let lastErr: any = null;
   let attempted = 0;

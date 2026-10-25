@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { Database } from 'sqlite';
 import { setupTestDb, createTestUser, authHeader } from './testUtils.js';
@@ -6,6 +6,7 @@ import { setupTestDb, createTestUser, authHeader } from './testUtils.js';
 // (A top-level `await import` would read more obviously, but tsc compiles
 // this directory too and rejects top-level await under this module target.)
 import { app } from '../app.js';
+import { setAiPolicyForTests, __resetAiPolicyCache } from '../services/aiPolicy.js';
 
 // Mocked so the suite never makes a real provider call (no keys, no cost, no
 // flakiness). The contract under test is this route's handling of whatever
@@ -24,6 +25,8 @@ describe('POST /api/discipline/rules/ai-draft', () => {
   let teacherToken: string;
 
   beforeAll(async () => {
+    // The school's AI switch lives in the MIS; pinned on here, off in its own tests.
+    setAiPolicyForTests({ v: 1, enabled: true });
     db = await setupTestDb();
     adminToken = (
       await createTestUser(db, { id: 'ai-admin', name: 'Ada', email: 'ada@s.test', roleLevel: 'ADMIN' })
@@ -31,6 +34,55 @@ describe('POST /api/discipline/rules/ai-draft', () => {
     teacherToken = (
       await createTestUser(db, { id: 'ai-teacher', name: 'Tom', email: 'tom@s.test', roleLevel: 'TEACHER' })
     ).token;
+  });
+
+  afterAll(() => { __resetAiPolicyCache(); });
+
+  it('answers 403 AI_DISABLED when the school has turned AI off, before any provider', async () => {
+    setAiPolicyForTests({ v: 2, enabled: false });
+    mockGenerate.mockClear();
+    try {
+      const res = await request(app)
+        .post('/api/discipline/rules/ai-draft')
+        .set(authHeader(adminToken))
+        .send({ prompt: 'rules about lateness' });
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({
+        success: false, code: 'AI_DISABLED', reason: 'GLOBAL_OFF', message: 'AI is turned off for the school.',
+      });
+      expect(mockGenerate).not.toHaveBeenCalled();
+
+      setAiPolicyForTests({ v: 3, enabled: true, apps: { da: false } });
+      const appOff = await request(app)
+        .post('/api/discipline/rules/ai-draft')
+        .set(authHeader(adminToken))
+        .send({ prompt: 'rules about lateness' });
+      expect(appOff.status).toBe(403);
+      expect(appOff.body.reason).toBe('APP_OFF');
+    } finally {
+      setAiPolicyForTests({ v: 1, enabled: true });
+    }
+  });
+
+  it('GET /rules/ai-status reports the school switch for the rules page', async () => {
+    const on = await request(app).get('/api/discipline/rules/ai-status').set(authHeader(adminToken));
+    expect(on.status).toBe(200);
+    expect(on.body.data).toMatchObject({ available: true, configured: true, policy: { enabled: true } });
+
+    setAiPolicyForTests(null);
+    try {
+      const off = await request(app).get('/api/discipline/rules/ai-status').set(authHeader(adminToken));
+      expect(off.body.data).toEqual({
+        available: false,
+        configured: true,
+        policy: { enabled: false, reason: 'GLOBAL_OFF', message: 'AI is turned off for the school.' },
+      });
+    } finally {
+      setAiPolicyForTests({ v: 1, enabled: true });
+    }
+
+    const teacher = await request(app).get('/api/discipline/rules/ai-status').set(authHeader(teacherToken));
+    expect(teacher.status).toBe(403);
   });
 
   it('requires DISCIPLINE_RULES_MANAGE', async () => {
