@@ -25,6 +25,7 @@ import {
 import { sanctionDenied, sanctionForbidden } from '../access/sanctions.js';
 import { notifyStaff } from '../access/notify.js';
 import { trackKeyEvent } from '../activity/relay.js';
+import { rejectInactiveStudents } from '../services/activeStudents.js';
 
 const router = Router();
 
@@ -182,6 +183,7 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
   if (type !== 'demerit' && type !== 'merit') {
     return res.status(400).json({ success: false, message: "Invalid type. Expected 'demerit' or 'merit'." });
   }
+  if (await rejectInactiveStudents(res, getDb(), [studentId], 'discipline.log')) return;
 
   // Prefer the rules catalog (B.1) when a ruleId is supplied — it's the
   // governable source of truth for category/points/fine going forward, and
@@ -365,6 +367,7 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
   if (uniqueStudents.length > 100) {
     return res.status(400).json({ success: false, message: 'Too many students in one batch (max 100).' });
   }
+  if (await rejectInactiveStudents(res, getDb(), uniqueStudents.map((s) => s.studentId), 'discipline.bulk')) return;
 
   let resolvedRuleId: number | null = null;
   let resolvedCategory = category;

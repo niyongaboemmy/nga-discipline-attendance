@@ -6,6 +6,7 @@ import { triggerLowAttendanceCheck } from '../../routes/attendance.js';
 import { buildBlocks, Lesson } from './engine.js';
 import { BREAK_MIN_GAP_MS, HOMEROOM_PERIOD, dayStartFor, isSchoolDay, lessonsFor } from './timetable.service.js';
 import { schoolYearForDate } from './roster.service.js';
+import { excludeInactiveSql } from '../../services/activeStudents.js';
 import { rfidEvents, RegisterChangedEvent } from './workQueue.js';
 
 /**
@@ -83,7 +84,7 @@ export async function closeEndedRegisters(db: Database, dateStr: string, nowMs: 
        JOIN roster_enrolments e ON e.student_id = a.student_id AND e.status = 'ACTIVE' AND e.academic_year_id = ?
        LEFT JOIN roster_class_groups c ON c.class_id = e.class_id
        LEFT JOIN roster_students s ON s.student_id = a.student_id
-      WHERE a.assigned_at < ? AND (a.ended_at IS NULL OR a.ended_at > ?)
+      WHERE a.assigned_at < ? AND (a.ended_at IS NULL OR a.ended_at > ?)${excludeInactiveSql('a.student_id')}
         AND (SELECT COUNT(*) FROM roster_enrolments e2
               WHERE e2.student_id = a.student_id AND e2.status = 'ACTIVE' AND e2.academic_year_id = ?) = 1`,
     year, new Date(dayEnd).toISOString(), new Date(dayStart).toISOString(), year

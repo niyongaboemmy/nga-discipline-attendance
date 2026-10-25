@@ -12,6 +12,7 @@ import { notifyExcuseDecision, notifyStudentMarked, generateForUser } from '../m
 import { isFutureSchoolDate } from '../shared/schoolTime.js';
 import { ensureSubjectCached } from '../modules/academics/academicsSync.service.js';
 import { trackKeyEvent } from '../activity/relay.js';
+import { rejectInactiveStudents } from '../services/activeStudents.js';
 import {
   accessCheck, accessMode, accessScope, allowedStudents, classGroupOfStudent, requireAccess,
   scopeToSql, shadowListLeak, studentTarget,
@@ -114,6 +115,9 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
   }
 
   const db = getDb();
+  // Active students only: nothing new is recorded for an account the MIS has
+  // disabled (their existing registers stay, read-only history).
+  if (await rejectInactiveStudents(res, db, records.map((r: any) => r.studentId), 'attendance.mark')) return;
   const teacherId = authReq.user!.id;
   const teacherName = authReq.user!.name;
   // Remediation X3: file the register under the term its *date* falls in, not

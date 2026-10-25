@@ -1,4 +1,5 @@
 import { Database } from 'sqlite';
+import { isActiveStudent } from '../../services/activeStudents.js';
 import { recordAudit } from '../../shared/audit.js';
 import { normalizeUid } from './uid.js';
 
@@ -90,6 +91,11 @@ export async function assignCard(
   const studentName = rosterStudent?.name ?? fallbackName;
   if (!studentName) {
     throw new CardError(400, 'UNKNOWN_STUDENT', 'That student isn’t in Tendo’s student list yet. Press “Sync now” to pull students from the MIS, then try again.');
+  }
+  if ((await isActiveStudent(db, studentId)) === 'inactive') {
+    throw new CardError(422, 'STUDENT_INACTIVE',
+      `${studentName}’s account is no longer active on the MIS, so a card can’t be assigned to them.`,
+      { ids: [studentId] });
   }
 
   const cardHolder = await openAssignment(db, 'card_id', cardId);

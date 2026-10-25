@@ -16,6 +16,7 @@ import { getStudentTermBalance, listTermBalances } from './ledger.service.js';
 import { accessScope, allowedStudents, classGroupOfStudent, shadowListLeak, studentTarget } from '../../access/policy.js';
 import { sanctionDenied, sanctionForbidden } from '../../access/sanctions.js';
 import { notifyStaff } from '../../access/notify.js';
+import { rejectInactiveStudents } from '../../services/activeStudents.js';
 
 /**
  * Discipline rules catalog (B.1), permission-gated point adjustment (B.2),
@@ -397,6 +398,8 @@ router.post('/adjust', authorizePermission('DISCIPLINE_ADJUST'), validateBody(ad
   if (!rule || !rule.is_active) {
     return res.status(400).json({ success: false, message: 'That discipline rule does not exist or is retired.' });
   }
+
+  if (await rejectInactiveStudents(res, db, [body.studentId], 'discipline.adjust')) return;
 
   const points = body.pointsOverride ?? rule.default_points;
   const effectiveSanction = rule.type === 'demerit' ? (body.sanction || 'none') : 'none';
