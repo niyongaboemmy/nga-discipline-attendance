@@ -22,7 +22,9 @@ interface ManagedUser {
   source: string;
   last_login: string | null;
 }
-interface Overview { total: number; students: number; teachers: number; admins: number; unassigned: number; }
+/** Role counts are of active accounts; inactive (disabled on the MIS) ones are counted apart. */
+interface Overview { total: number; students: number; teachers: number; admins: number; unassigned: number; inactive?: number; }
+type StatusFilter = 'active' | 'inactive' | 'all';
 interface RoleOption { id: number; name: string; level: 'STUDENT' | 'TEACHER' | 'ADMIN'; is_system: number; }
 
 const roleBadge = (r: Role) =>
@@ -50,6 +52,9 @@ export const AdminDashboard: React.FC = () => {
   // A role change requested via the dropdown, awaiting confirmation.
   const [pending, setPending] = useState<{ id: string; name: string; fromRoleId: number | null; toRoleId: number; toName: string } | null>(null);
   const [syncing, setSyncing] = useState(false);
+  // Accounts disabled on the MIS stay reachable here, but the list shows
+  // active ones unless asked.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
 
   const load = async () => {
     setLoading(true);
@@ -57,7 +62,7 @@ export const AdminDashboard: React.FC = () => {
     try {
       const requests = [
         fetch('/api/admin/overview', { headers: authHeaders() }),
-        fetch('/api/admin/users', { headers: authHeaders() }),
+        fetch(`/api/admin/users?status=${statusFilter}`, { headers: authHeaders() }),
         fetch('/api/roles-permissions/roles', { headers: authHeaders() }),
       ];
       const [oRes, uRes, rRes] = await Promise.all(requests);
@@ -78,7 +83,8 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [statusFilter]);
 
   const changeRole = async (id: string, roleId: number) => {
     setSavingId(id);
@@ -169,7 +175,7 @@ export const AdminDashboard: React.FC = () => {
   const cards: Array<{
     key: typeof segment; label: string; value: number; icon: React.ReactNode; accent: string;
   }> = overview ? [
-    { key: 'all', label: 'Total users', value: overview.total, icon: <Users size={18} />, accent: 'var(--primary)' },
+    { key: 'all', label: 'Active users', value: overview.total, icon: <Users size={18} />, accent: 'var(--primary)' },
     { key: 'student', label: 'Students', value: overview.students, icon: <GraduationCap size={18} />, accent: 'var(--success)' },
     { key: 'teacher', label: 'Teachers', value: overview.teachers, icon: <Briefcase size={18} />, accent: 'var(--info)' },
     { key: 'admin', label: 'Admins', value: overview.admins, icon: <ShieldCheck size={18} />, accent: 'var(--accent)' },
@@ -182,10 +188,11 @@ export const AdminDashboard: React.FC = () => {
         <HeroBanner name={user.name} role={user.role} avatar={user.avatar} title={`Welcome back, ${user.name.split(' ')[0]}!`}>
           {overview ? (
             <>
-              <strong>{overview.total} users</strong> in the system
+              <strong>{overview.total} active users</strong> in the system
               {overview.unassigned > 0
                 ? <> · <strong>{overview.unassigned} awaiting</strong> a role assignment</>
                 : <> · every account has a role assigned 🎉</>}
+              {overview.inactive ? <> · {overview.inactive} inactive</> : null}
             </>
           ) : (
             <>Manage user roles and review system membership.</>
@@ -264,6 +271,18 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1" role="group" aria-label="Account status">
+                  {(['active', 'inactive', 'all'] as StatusFilter[]).map((s) => (
+                    <button
+                      key={s}
+                      className={`rp-chip${statusFilter === s ? ' is-on' : ''}`}
+                      aria-pressed={statusFilter === s}
+                      onClick={() => setStatusFilter(s)}
+                    >
+                      {s === 'active' ? 'Active' : s === 'inactive' ? 'Inactive' : 'All'}
+                    </button>
+                  ))}
+                </div>
                 {(segment !== 'all' || search) && (
                   <button className="rp-chip is-on" onClick={() => { setSegment('all'); setSearch(''); }}>
                     <X size={12} /> Clear filters
