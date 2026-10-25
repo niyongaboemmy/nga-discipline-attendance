@@ -9,7 +9,8 @@ import { readCache, writeCache } from '../offline/outbox';
 
 export class ApiError extends Error {
   status: number;
-  /** The server's machine-readable code when it sends one (e.g. 'AI_DISABLED'). */
+  /** Machine-readable reason some endpoints send alongside the message
+   *  (e.g. 'CARD_ASSIGNED' or 'AI_DISABLED'), so callers never have to match on wording. */
   code?: string;
   constructor(message: string, status: number, code?: string) {
     super(message);

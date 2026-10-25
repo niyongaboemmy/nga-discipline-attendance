@@ -43,3 +43,31 @@ export const clock = (hhmm: string | null | undefined): string =>
   hhmm ? String(hhmm).slice(0, 5) : '';
 
 export const DOW_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** The school's timezone. Check-in times are school rules, so they are shown
+ *  in school time whatever timezone the viewer's device is set to. */
+export const SCHOOL_TIMEZONE = 'Africa/Kigali';
+
+const parseIso = (iso: string) => new Date(String(iso).replace(' ', 'T') + (/Z|[+-]\d\d:?\d\d$/.test(String(iso)) ? '' : 'Z'));
+
+/** "07:24" in school time. */
+export const fmtSchoolClock = (iso: string | null | undefined, withSeconds = false): string => {
+  if (!iso) return '';
+  const d = parseIso(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-GB', {
+    timeZone: SCHOOL_TIMEZONE, hour: '2-digit', minute: '2-digit', ...(withSeconds ? { second: '2-digit' } : {}), hour12: false,
+  });
+};
+
+/** "25 Sep, 07:24" in school time. */
+export const fmtSchoolWhen = (iso: string | null | undefined): string => {
+  if (!iso) return '';
+  const d = parseIso(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('en-GB', {
+    timeZone: SCHOOL_TIMEZONE, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+};
+
+/** Today's date (YYYY-MM-DD) in school time. */
+export const schoolToday = (): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: SCHOOL_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());

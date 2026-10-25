@@ -1,5 +1,6 @@
 import { config } from './config.js';
-import { initDatabase } from './database.js';
+import { initDatabase, getDb } from './database.js';
+import { startRfidScheduler } from './modules/rfid/rfid.scheduler.js';
 import { app } from './app.js';
 import { activityRelay } from './activity/relay.js';
 import activityCatalog from './activity/catalog.json';
@@ -8,6 +9,7 @@ import { startEarlyWarningScheduler } from './modules/integration/earlyWarning.s
 async function startServer() {
   try {
     await initDatabase();
+    startRfidScheduler(getDb());
     app.listen(config.port, () => {
       console.log(`🚀 NGA Attendance Express server running on http://localhost:${config.port}`);
     });
