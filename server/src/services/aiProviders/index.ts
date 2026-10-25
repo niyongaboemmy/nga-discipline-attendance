@@ -4,3 +4,4 @@ export { isAnyProviderConfigured } from "./registry.js";
 export { friendlyAIErrorMessage, isQuotaError } from "./errors.js";
 export type { JSONSchema, AIProvider, GenerateJSONParams } from "./types.js";
 export { AIUnavailableError } from "./generate.js";
+export { AiDisabledError, isAiDisabledError, aiDisabledBody } from "../aiPolicy.js";

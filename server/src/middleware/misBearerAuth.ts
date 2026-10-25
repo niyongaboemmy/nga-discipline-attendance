@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { getDb } from '../database.js';
 import { AuthenticatedRequest, Role, resolvePermissions } from './auth.js';
 import { fetchWithTimeout, noteAccessVersion } from '../access/snapshot.js';
+import { noteAiPolicyVersion } from '../services/aiPolicy.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 
 /**
@@ -97,6 +98,7 @@ async function verifyWithMis(token: string): Promise<VerifyResult> {
   // Same hint the verify-mis poll gives: a changed access_version drops the
   // cached access snapshot so this request decides with fresh grants.
   noteAccessVersion(misUserId, data?.access_version);
+  noteAiPolicyVersion(data?.ai_policy_v);
 
   const entry: Verified = { misUserId, at: Date.now() };
   remember(key, entry);

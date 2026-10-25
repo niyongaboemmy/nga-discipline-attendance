@@ -11,6 +11,7 @@ import { SANCTIONS } from '../../utils/conduct.js';
 import * as rulesRepo from './rules.repository.js';
 import { generateStructuredContent, isAnyProviderConfigured } from '../../services/aiProviders/index.js';
 import type { JSONSchema } from '../../services/aiProviders/index.js';
+import { aiDisabledBody, daAiState, isAiDisabledError } from '../../services/aiPolicy.js';
 import { getStudentTermBalance, listTermBalances } from './ledger.service.js';
 import { accessScope, allowedStudents, classGroupOfStudent, shadowListLeak, studentTarget } from '../../access/policy.js';
 import { sanctionDenied, sanctionForbidden } from '../../access/sanctions.js';
@@ -126,6 +127,26 @@ const aiDraftSchema = z.object({
   count: z.number().int().min(1).max(25).optional(),
 });
 
+/**
+ * Can this user draft rules with AI right now? The rules page asks before
+ * showing the "Draft with AI" button, so a school with AI switched off sees
+ * why instead of a button that fails.
+ *   available  AI on for Tendo and a provider configured
+ *   policy     the school's switch (MIS ai_policy): {enabled, reason, message}
+ */
+router.get(
+  '/rules/ai-status',
+  authorizePermission('DISCIPLINE_RULES_MANAGE'),
+  async (_req: any, res: Response) => {
+    const policy = await daAiState();
+    const configured = isAnyProviderConfigured();
+    return res.json({
+      success: true,
+      data: { available: policy.enabled && configured, configured, policy },
+    });
+  }
+);
+
 router.post(
   '/rules/ai-draft',
   authorizePermission('DISCIPLINE_RULES_MANAGE'),
@@ -133,6 +154,14 @@ router.post(
   async (req: any, res: Response) => {
     const { prompt, count } = req.body as { prompt: string; count?: number };
     const db = getDb();
+
+    // The super admin's switch first: nothing on this server can override it.
+    const policy = await daAiState();
+    if (!policy.enabled) {
+      return res.status(403).json({
+        success: false, code: 'AI_DISABLED', reason: policy.reason, message: policy.message,
+      });
+    }
 
     if (!isAnyProviderConfigured()) {
       return res.status(503).json({
@@ -206,6 +235,8 @@ router.post(
         message: `Drafted ${drafts.length} rule${drafts.length === 1 ? '' : 's'}.`,
       });
     } catch (error: any) {
+      // Switched off between the check above and the provider call.
+      if (isAiDisabledError(error)) return res.status(403).json(aiDisabledBody(error));
       const status = error?.status === 503 ? 503 : 500;
       console.error('Error drafting rules with AI:', error?.message);
       return res.status(status).json({

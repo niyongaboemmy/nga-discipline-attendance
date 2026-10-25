@@ -6,6 +6,7 @@ import { getDb } from '../database.js';
 import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 import { misUserIdOf, noteAccessVersion } from '../access/snapshot.js';
+import { noteAiPolicyVersion } from '../services/aiPolicy.js';
 
 const router = Router();
 
@@ -326,6 +327,8 @@ router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) =>
     try {
       const body = (await response.json()) as any;
       noteAccessVersion(misUserIdOf((req as AuthenticatedRequest).user), body?.data?.access_version);
+      // Same for the school's AI policy: a new ai_policy_v drops the cached copy.
+      noteAiPolicyVersion(body?.data?.ai_policy_v);
       avatar = body?.data?.avatar === undefined ? undefined : misAvatarOf(body.data);
     } catch {
       // Not JSON / no version (older MIS): nothing to note.
