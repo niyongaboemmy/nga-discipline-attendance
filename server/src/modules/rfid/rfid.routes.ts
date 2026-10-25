@@ -15,6 +15,7 @@ import { ingestScan, OUTCOME_MESSAGES } from './ingest.service.js';
 import { SCAN_OUTCOMES, UNRESOLVED_CARD_OUTCOMES } from './engine.js';
 import { enqueue, rfidEvents } from './workQueue.js';
 import { bridgeStatus } from './supabase.bridge.js';
+import { INACTIVE_IDS_SQL, misStatusIsActive } from '../../services/activeStudents.js';
 
 /** Card management, scan log, scanners, roster cache and check-in sessions.
  *  Mounted at /api/rfid. */
@@ -231,10 +232,14 @@ router.post('/cards/:id/status', authorizePermission('RFID_CARDS_MANAGE'), valid
 
 // ───────────────────────────── Roster ─────────────────────────────
 
-/** Student picker for card assignment, from the local roster cache. */
+/** Student picker for card assignment, from the local roster cache. Active
+ *  students only; `include_inactive=1` adds disabled ones (each row carries
+ *  its MIS `status` and `inactive`) for callers who can manage cards. */
 router.get('/students', authorizePermission('RFID_CARDS_VIEW'), async (req: any, res: Response) => {
   const db = getDb();
   const search = String(req.query.search ?? '').trim();
+  const wantsInactive = ['1', 'true'].includes(String(req.query.include_inactive ?? '').toLowerCase());
+  const includeInactive = wantsInactive && !!(req as AuthenticatedRequest).user?.permissions?.has('RFID_CARDS_MANAGE');
   try {
     const rows = await db.all(
       `SELECT s.student_id, s.name, s.mis_status, c.name AS class_name,
@@ -244,7 +249,8 @@ router.get('/students', authorizePermission('RFID_CARDS_VIEW'), async (req: any,
          LEFT JOIN roster_enrolments e ON e.student_id = s.student_id AND e.status = 'ACTIVE'
               AND e.academic_year_id = (SELECT MAX(academic_year_id) FROM roster_enrolments x WHERE x.student_id = s.student_id AND x.status = 'ACTIVE')
          LEFT JOIN roster_class_groups c ON c.class_id = e.class_id
-        WHERE s.mis_status IS NOT 'REMOVED' AND (? = '' OR s.name LIKE ? OR s.student_id = ?)
+        WHERE ${includeInactive ? `s.mis_status IS NOT 'REMOVED'` : `s.student_id NOT IN (${INACTIVE_IDS_SQL})`}
+          AND (? = '' OR s.name LIKE ? OR s.student_id = ?)
         GROUP BY s.student_id
         ORDER BY s.name LIMIT 30`,
       search, `%${search}%`, search
@@ -255,6 +261,7 @@ router.get('/students', authorizePermission('RFID_CARDS_VIEW'), async (req: any,
         const [label, uid] = r.card ? String(r.card).split('|') : [null, null];
         return {
           id: r.student_id, name: r.name, status: r.mis_status, className: r.class_name ?? null,
+          inactive: misStatusIsActive(r.mis_status) === false,
           card: r.card ? { label: label || null, uid } : null,
         };
       }),

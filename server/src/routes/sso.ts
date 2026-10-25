@@ -7,6 +7,7 @@ import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.j
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 import { misUserIdOf, noteAccessVersion } from '../access/snapshot.js';
 import { noteAiPolicyVersion } from '../services/aiPolicy.js';
+import { recheckMisStatus, recordMisStatus } from '../services/activeStudents.js';
 
 const router = Router();
 
@@ -239,6 +240,9 @@ router.post('/exchange', async (req: Request, res: Response) => {
     const computedRole: Role = isBootstrapAdmin ? 'admin' : resolveMisRole(misUser, permissions);
 
     const role = await resolveAndPersistUser(id, name, email, computedRole, isBootstrapAdmin);
+    // Keep the local copy of the MIS account status current (active users
+    // only, ACTIVE_USERS_CONTRACTS.md). Only when the MIS sends one.
+    await recordMisStatus(getDb(), id, misUser.status ?? misUser.user_status);
     const rolePermissions = await fetchRolePermissions(id);
 
     // Carry the user's MIS theme preference through so the app opens in the same
@@ -299,6 +303,9 @@ router.post('/backchannel-logout', express.urlencoded({ extended: false, limit: 
       misUserId,
       Date.now(),
     );
+    // A sign-out from MIS may be a deactivation: re-check this person's
+    // status now instead of waiting for the next roster sync. Not awaited.
+    void recheckMisStatus(getDb(), String(misUserId));
     return res.status(200).json({ success: true });
   } catch (error: any) {
     if (error instanceof LogoutTokenError) {

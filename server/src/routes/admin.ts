@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission } from '../middleware/authorize.js';
 import { recordAudit } from '../utils/conduct.js';
+import { localUserStatus } from '../services/activeStudents.js';
 
 const router = Router();
 
@@ -15,13 +16,16 @@ router.use(authMiddleware);
  * upserted as 'unassigned' if we don't already track them. Failures (e.g. the
  * MIS being unreachable) are swallowed so the local roster is still served.
  */
-async function syncMisUsers(misToken?: string) {
+export async function syncMisUsers(misToken?: string) {
   if (!misToken) return;
   try {
     // limit=1000: the MIS defaults to 10 per page, so without this only the
     // first 10 users were ever considered for import.
     const url = new URL(`${config.ngaMisBaseUrl}/users`);
     url.searchParams.set('limit', '1000');
+    // Everyone, not just ACTIVE (the MIS default once active-users ships):
+    // this sync is how a deactivation reaches users.status.
+    url.searchParams.set('status', 'all');
     const resp = await fetch(url, {
       headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json' },
     });
@@ -47,14 +51,19 @@ async function syncMisUsers(misToken?: string) {
           .trim() ||
         user.username ||
         'Unknown';
+      // MIS User.status (ACTIVE / INACTIVE / SUSPENDED). Absent on a MIS
+      // that doesn't send it: then a new row defaults to active and an
+      // existing row keeps whatever status it has.
+      const status = localUserStatus(user.status ?? entry.status);
       await db.run(
-        `INSERT INTO users (id, name, email, role, source)
-         VALUES (?, ?, ?, 'unassigned', 'mis')
+        `INSERT INTO users (id, name, email, role, source, status)
+         VALUES (?, ?, ?, 'unassigned', 'mis', COALESCE(?, 'active'))
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            email = COALESCE(excluded.email, users.email),
+           status = COALESCE(?, users.status),
            updated_at = CURRENT_TIMESTAMP`,
-        String(id), name, user.email || null
+        String(id), name, user.email || null, status, status
       );
     }
   } catch (err) {
@@ -62,16 +71,24 @@ async function syncMisUsers(misToken?: string) {
   }
 }
 
-// GET /api/admin/users — full roster with roles
+// GET /api/admin/users — roster with roles. ?status=active (default) |
+// inactive | all: user management keeps inactive accounts reachable, but
+// lists active ones unless asked.
 router.get('/users', authorizePermission('USERS_VIEW', 'USERS_MANAGE'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
+  const status = String(req.query.status ?? 'active').toLowerCase();
+  if (!['active', 'inactive', 'all'].includes(status)) {
+    return res.status(400).json({ success: false, message: "status must be 'active', 'inactive' or 'all'." });
+  }
   try {
     await syncMisUsers(authReq.user?.misToken);
     const db = getDb();
     const users = await db.all(
       `SELECT id, name, email, role, status, source, last_login, created_at
        FROM users
-       ORDER BY (role = 'unassigned') DESC, name ASC`
+       ${status === 'all' ? '' : 'WHERE status = ?'}
+       ORDER BY (role = 'unassigned') DESC, name ASC`,
+      ...(status === 'all' ? [] : [status])
     );
     return res.json({ success: true, data: users });
   } catch (error) {
@@ -84,13 +101,20 @@ router.get('/users', authorizePermission('USERS_VIEW', 'USERS_MANAGE'), async (r
 router.get('/overview', authorizePermission('USERS_VIEW', 'USERS_MANAGE'), async (_req: any, res: Response) => {
   try {
     const db = getDb();
+    // Role counts are of ACTIVE accounts; inactive ones are counted
+    // separately (in total and per role) rather than mixed in.
     const row = await db.get(
       `SELECT
-         COUNT(*) AS total,
-         SUM(CASE WHEN role = 'student' THEN 1 ELSE 0 END) AS students,
-         SUM(CASE WHEN role = 'teacher' THEN 1 ELSE 0 END) AS teachers,
-         SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) AS admins,
-         SUM(CASE WHEN role = 'unassigned' THEN 1 ELSE 0 END) AS unassigned
+         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS total,
+         SUM(CASE WHEN status = 'active' AND role = 'student' THEN 1 ELSE 0 END) AS students,
+         SUM(CASE WHEN status = 'active' AND role = 'teacher' THEN 1 ELSE 0 END) AS teachers,
+         SUM(CASE WHEN status = 'active' AND role = 'admin' THEN 1 ELSE 0 END) AS admins,
+         SUM(CASE WHEN status = 'active' AND role = 'unassigned' THEN 1 ELSE 0 END) AS unassigned,
+         SUM(CASE WHEN status = 'inactive' THEN 1 ELSE 0 END) AS inactive,
+         SUM(CASE WHEN status = 'inactive' AND role = 'student' THEN 1 ELSE 0 END) AS inactive_students,
+         SUM(CASE WHEN status = 'inactive' AND role = 'teacher' THEN 1 ELSE 0 END) AS inactive_teachers,
+         SUM(CASE WHEN status = 'inactive' AND role = 'admin' THEN 1 ELSE 0 END) AS inactive_admins,
+         SUM(CASE WHEN status = 'inactive' AND role = 'unassigned' THEN 1 ELSE 0 END) AS inactive_unassigned
        FROM users`
     );
     return res.json({
@@ -101,6 +125,13 @@ router.get('/overview', authorizePermission('USERS_VIEW', 'USERS_MANAGE'), async
         teachers: row.teachers || 0,
         admins: row.admins || 0,
         unassigned: row.unassigned || 0,
+        inactive: row.inactive || 0,
+        inactiveByRole: {
+          students: row.inactive_students || 0,
+          teachers: row.inactive_teachers || 0,
+          admins: row.inactive_admins || 0,
+          unassigned: row.inactive_unassigned || 0,
+        },
       },
     });
   } catch (error) {

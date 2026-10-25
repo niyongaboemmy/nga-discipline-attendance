@@ -11,7 +11,7 @@ import {
   Pencil, History,
 } from 'lucide-react';
 import { apiGet, ApiError } from '../api/client';
-import { saveRegister } from '../offline/registers';
+import { saveRegister, skippedInactiveNotice } from '../offline/registers';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { AttendanceCoverage } from './AttendanceCoverage';
 import './MarkAttendance.css';
@@ -310,17 +310,19 @@ export const MarkAttendance: React.FC = () => {
       ));
       setExisting({ count: students.length, markedByName: 'you', markedByMe: true, lastMarkedAt: new Date().toISOString() });
       const wasUpdate = (res.updated ?? 0) > 0;
+      const skippedText = skippedInactiveNotice(res.skippedInactive?.length ?? 0);
+      const skippedSuffix = skippedText ? ` ${skippedText}` : '';
       void snapshot;
       if (andContinue) {
         setUndoSnapshot(null);
         setMessage({
           type: 'success',
-          text: `${wasUpdate ? 'Register updated' : `Saved ${students.length} record${students.length === 1 ? '' : 's'}`}. Pick another period or subject to keep going — the class stays selected.`,
+          text: `${wasUpdate ? 'Register updated' : `Saved ${students.length - (res.skippedInactive?.length ?? 0)} record${students.length === 1 ? '' : 's'}`}.${skippedSuffix} Pick another period or subject to keep going — the class stays selected.`,
         });
       } else {
         setUndoSnapshot(null);
-        setMessage({ type: 'success', text: wasUpdate ? 'Register updated successfully.' : 'Attendance recorded successfully.' });
-        setTimeout(() => navigate('/dashboard'), 1200);
+        setMessage({ type: 'success', text: (wasUpdate ? 'Register updated successfully.' : 'Attendance recorded successfully.') + skippedSuffix });
+        setTimeout(() => navigate('/dashboard'), skippedText ? 3000 : 1200);
       }
     } catch (err) {
       setMessage({

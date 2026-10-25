@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet, ApiError } from '../../api/client';
-import { saveRegister } from '../../offline/registers';
+import { saveRegister, skippedInactiveNotice } from '../../offline/registers';
 import type { CalendarSession, AttStatus } from '../../api/schedule';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useToast } from '../../context/ToastContext';
@@ -212,6 +212,8 @@ export const RegisterDrawer: React.FC<{
         return acc;
       }, {} as Record<AttStatus, number>);
       onSaved();
+      const skippedText = skippedInactiveNotice(res.skippedInactive?.length ?? 0);
+      if (skippedText) toast.info('Some students skipped', skippedText);
       if (next) {
         setSavedView({ present: t.present, absent: t.absent, late: t.late, excused: t.excused });
       } else {

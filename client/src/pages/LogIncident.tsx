@@ -10,6 +10,7 @@ import { Gavel, Award, AlertCircle, Save, Users } from 'lucide-react';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { disciplineApi, type DisciplineRule } from '../api/discipline';
 import { apiGet, apiPost, ApiError } from '../api/client';
+import { skippedInactiveNotice } from '../offline/registers';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 
 interface ClassData { id: string; name: string; department: string; }
@@ -202,7 +203,12 @@ export const LogIncident: React.FC = () => {
         const chosen = students.filter((s) => bulkIds.includes(s.id));
         if (chosen.length === 0) { setMessage({ type: 'error', text: 'Select at least one student.' }); setSaving(false); return; }
         label = `${chosen.length} students`;
-        await apiPost('/api/discipline/bulk', { ...shared, students: chosen.map((s) => ({ studentId: s.id, studentName: s.name })) });
+        const res = await apiPost<{ count: number; skipped_inactive?: string[] }>('/api/discipline/bulk', { ...shared, students: chosen.map((s) => ({ studentId: s.id, studentName: s.name })) });
+        const n = res.data?.skipped_inactive?.length ?? 0;
+        if (n) {
+          label = `${chosen.length - n} students`;
+          toast.info('Some students skipped', skippedInactiveNotice(n)!);
+        }
       } else {
         const student = students.find((s) => s.id === form.studentId);
         if (!student) { setMessage({ type: 'error', text: 'Please select a student.' }); setSaving(false); return; }

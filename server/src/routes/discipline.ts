@@ -25,6 +25,7 @@ import {
 import { sanctionDenied, sanctionForbidden } from '../access/sanctions.js';
 import { notifyStaff } from '../access/notify.js';
 import { trackKeyEvent } from '../activity/relay.js';
+import { rejectInactiveStudents, skipInactiveStudents } from '../services/activeStudents.js';
 
 const router = Router();
 
@@ -182,6 +183,7 @@ router.post('/', authorizePermission('DISCIPLINE_LOG'), async (req: any, res: Re
   if (type !== 'demerit' && type !== 'merit') {
     return res.status(400).json({ success: false, message: "Invalid type. Expected 'demerit' or 'merit'." });
   }
+  if (await rejectInactiveStudents(res, getDb(), [studentId], 'discipline.log')) return;
 
   // Prefer the rules catalog (B.1) when a ruleId is supplied — it's the
   // governable source of truth for category/points/fine going forward, and
@@ -365,6 +367,13 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
   if (uniqueStudents.length > 100) {
     return res.status(400).json({ success: false, message: 'Too many students in one batch (max 100).' });
   }
+  // Inactive students are dropped, not the batch; 422 only if none is left.
+  const inactiveSkipped = await skipInactiveStudents(res, getDb(), uniqueStudents.map((s) => s.studentId), 'discipline.bulk');
+  if (!inactiveSkipped) return;
+  const skippedInactive = [...inactiveSkipped];
+  for (let i = uniqueStudents.length - 1; i >= 0; i--) {
+    if (inactiveSkipped.has(uniqueStudents[i].studentId)) uniqueStudents.splice(i, 1);
+  }
 
   let resolvedRuleId: number | null = null;
   let resolvedCategory = category;
@@ -482,7 +491,8 @@ router.post('/bulk', authorizePermission('DISCIPLINE_LOG'), async (req: any, res
 
     return res.json({
       success: true,
-      data: { count: insertedIds.length, skipped },
+      data: { count: insertedIds.length, skipped, skipped_inactive: skippedInactive },
+      skipped_inactive: skippedInactive,
       message: skipped > 0
         ? `Logged ${insertedIds.length} record${insertedIds.length === 1 ? '' : 's'}; skipped ${skipped} already logged.`
         : `Logged ${insertedIds.length} record${insertedIds.length === 1 ? '' : 's'}.`,

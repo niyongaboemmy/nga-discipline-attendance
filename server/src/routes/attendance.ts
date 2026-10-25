@@ -12,6 +12,7 @@ import { notifyExcuseDecision, notifyStudentMarked, generateForUser } from '../m
 import { isFutureSchoolDate } from '../shared/schoolTime.js';
 import { ensureSubjectCached } from '../modules/academics/academicsSync.service.js';
 import { trackKeyEvent } from '../activity/relay.js';
+import { skipInactiveStudents } from '../services/activeStudents.js';
 import {
   accessCheck, accessMode, accessScope, allowedStudents, classGroupOfStudent, requireAccess,
   scopeToSql, shadowListLeak, studentTarget,
@@ -89,7 +90,7 @@ router.use(authMiddleware);
 // transaction (A13), and one summary row lands in audit_log.
 router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSchema), markAccess('body'), async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const { classId, className, date, period, records, sessionType } = req.body;
+  const { classId, className, date, period, records: requestedRecords, sessionType } = req.body;
   const subjectId: number | null = req.body.subjectId ?? null;
 
   // The subject must be on this class group's grade curriculum. The client only
@@ -114,6 +115,14 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
   }
 
   const db = getDb();
+  // Active students only: nothing new is recorded for an account the MIS has
+  // disabled (their existing registers stay, read-only history). Their rows
+  // are dropped, never the whole register -- an offline replay may carry a
+  // student disabled since. 422 only when no one is left to record.
+  const skipped = await skipInactiveStudents(res, db, requestedRecords.map((r: any) => r.studentId), 'attendance.mark');
+  if (!skipped) return;
+  const records = requestedRecords.filter((r: any) => !skipped.has(String(r.studentId)));
+  const skippedInactive = [...skipped];
   const teacherId = authReq.user!.id;
   const teacherName = authReq.user!.name;
   // Remediation X3: file the register under the term its *date* falls in, not
@@ -222,7 +231,8 @@ router.post('/mark', authorizePermission('ATTENDANCE_MARK'), validateBody(markSc
       message: updatedCount > 0
         ? `Register updated — ${updatedCount} record${updatedCount === 1 ? '' : 's'} changed or confirmed${insertedCount ? `, ${insertedCount} added` : ''}.`
         : 'Attendance recorded successfully.',
-      data: { inserted: insertedCount, updated: updatedCount },
+      data: { inserted: insertedCount, updated: updatedCount, skipped_inactive: skippedInactive },
+      skipped_inactive: skippedInactive,
     });
   } catch (error: any) {
     await db.run('ROLLBACK');

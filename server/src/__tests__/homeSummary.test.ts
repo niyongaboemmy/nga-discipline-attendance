@@ -779,6 +779,56 @@ describe('POST /api/integration/home-summary', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Active users only (ACTIVE_USERS_CONTRACTS.md): a student disabled on the
+  // MIS drops out of the reminder lists; their records stay where they are.
+  // -------------------------------------------------------------------------
+  describe('active users only', () => {
+    /** Every name an item kind lists, across its lenses. */
+    const named = (res: any, kind: string) =>
+      res.body.items.filter((i: any) => i.kind === kind).flatMap((i: any) => i.entities).join(' | ');
+
+    it('C-03 / C-04 leave out a student the roster sync knows is inactive', async () => {
+      process.env.ACCESS_V2_MODE = 'enforce';
+      const before = await summary('mis-school', { lenses: LENSES });
+      expect(named(before, 'C-04')).toMatch(/Bob/);
+      expect(named(before, 'C-03')).toMatch(/Bob/);
+      await db.run(`INSERT INTO roster_students (student_id, name, mis_status, synced_at) VALUES ('502', 'Bob', 'INACTIVE', '2026-01-01T00:00:00Z')`);
+      try {
+        const res = await summary('mis-school', { lenses: LENSES });
+        expect(named(res, 'C-04')).not.toMatch(/Bob/);
+        expect(named(res, 'C-03')).not.toMatch(/Bob/);
+        expect(named(res, 'C-03')).toMatch(/Cara/);
+        // History is untouched.
+        expect((await db.get(`SELECT COUNT(*) AS n FROM attendance_records WHERE student_id = '502'`)).n).toBe(5);
+      } finally {
+        await db.run(`DELETE FROM roster_students WHERE student_id = '502'`);
+      }
+    });
+
+    it('D-01..D-03 leave out a student whose local account is inactive', async () => {
+      expect(item(await summary('mis-admin'), 'D-02')).toBeDefined();
+      await db.run(`UPDATE users SET status = 'inactive' WHERE id = '501'`);
+      try {
+        const res = await summary('mis-admin', { lenses: LENSES });
+        expect(item(res, 'D-01')).toBeUndefined();
+        expect(item(res, 'D-02')).toBeUndefined();
+        expect(item(res, 'D-03')).toBeUndefined();
+      } finally {
+        await db.run(`UPDATE users SET status = 'active' WHERE id = '501'`);
+      }
+    });
+
+    it('A-01 does not ask anyone to assign a role to an inactive account', async () => {
+      await db.run(`INSERT INTO users (id, name, role, status) VALUES ('951', 'Gone G', 'unassigned', 'inactive')`);
+      try {
+        expect(item(await summary('mis-admin'), 'A-01')).toBeUndefined();
+      } finally {
+        await db.run(`DELETE FROM users WHERE id = '951'`);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Hardening: every case below pins a defect found in review.
   // -------------------------------------------------------------------------
   describe('hardening: MIS token verification', () => {
@@ -1170,8 +1220,9 @@ describe('POST /api/integration/home-summary', () => {
       expect(item(res, 'T-01').entities).toHaveLength(8);
       expect(counts.writes).toBe(0);
       // A fixed budget, not one per lesson. 21 since the legacy discipline scope
-      // reads the teacher's class students once (D items are class-scoped).
-      expect(counts.reads).toBeLessThanOrEqual(21);
+      // reads the teacher's class students once (D items are class-scoped);
+      // 22 since it also reads the inactive-student set once (active users only).
+      expect(counts.reads).toBeLessThanOrEqual(22);
     });
 
     const lessonsOf = (n: number) =>

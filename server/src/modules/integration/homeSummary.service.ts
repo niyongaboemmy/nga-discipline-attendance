@@ -24,6 +24,7 @@ import {
   ATTENDANCE_WARN_THRESHOLD,
   attendanceRate,
 } from '../../shared/attendancePolicy.js';
+import { excludeInactiveSql, inactiveIdSet } from '../../services/activeStudents.js';
 
 /**
  * The Discipline & Attendance slice of the MIS Home page (contract:
@@ -631,7 +632,7 @@ async function belowThreshold(ctx: Ctx): Promise<AttentionItem[]> {
     `SELECT class_id, MAX(class_name) AS class_name, student_id, MAX(student_name) AS student_name,
             SUM(${ATTENDED_SQL_CASE}) AS attended, COUNT(*) AS total
        FROM attendance_records
-      WHERE session_type = 'homeroom'${term.sql}${cls.sql}
+      WHERE session_type = 'homeroom'${term.sql}${cls.sql}${excludeInactiveSql('student_id')}
       GROUP BY class_id, student_id`,
     ...term.params, ...cls.params
   );
@@ -680,7 +681,7 @@ async function absentWithoutNotice(ctx: Ctx): Promise<AttentionItem[]> {
   const rows = await ctx.db.all(
     `SELECT ar.class_id, MAX(ar.class_name) AS class_name, ar.student_id, MAX(ar.student_name) AS student_name
        FROM attendance_records ar
-      WHERE ar.session_date = ? AND ar.status = 'absent'${cls.sql}
+      WHERE ar.session_date = ? AND ar.status = 'absent'${cls.sql}${excludeInactiveSql('ar.student_id')}
         AND NOT EXISTS (
           SELECT 1 FROM excuse_requests e
            WHERE e.student_id = ar.student_id AND e.session_date = ar.session_date
@@ -977,6 +978,8 @@ interface StudentScope {
   allowed: Set<string>;
   /** Class group per allowed student (restricted scopes only). */
   classOf: Map<string, number | null>;
+  /** Students whose MIS account is disabled: left out of every D item. */
+  inactive: Set<string>;
 }
 
 /**
@@ -990,49 +993,54 @@ interface StudentScope {
  */
 function disciplineScope(ctx: Ctx): Promise<StudentScope | null> {
   ctx.disciplineScope ??= (async () => {
-    const cap = 'DISCIPLINE_VIEW_ALL';
-    if (!ctx.enforce) {
-      if (!ctx.req.user!.permissions.has(cap)) return null;
-      if (ctx.req.user!.roleLevel === 'ADMIN') return { all: true, allowed: new Set<string>(), classOf: new Map() };
-      const lead = new Set((await ctx.leadClasses()).map((c) => String(c.id)));
-      if (lead.size === 0) return null;
-      // One read: the term's discipline students with their latest register
-      // class (resolveStudentClassGroups' local rule, without its MIS fallback --
-      // a student never registered is in nobody's class yet).
-      const term = termFilter(ctx, 'd.academic_term_id');
-      const rows = await ctx.db.all(
-        `SELECT s.student_id,
-                (SELECT a.class_id FROM attendance_records a WHERE a.student_id = s.student_id
-                  ORDER BY (a.academic_year_id IS ?) DESC, a.session_date DESC, a.id DESC LIMIT 1) AS class_id
-           FROM (SELECT DISTINCT d.student_id FROM discipline_records d WHERE d.deleted_at IS NULL${term.sql}) s`,
-        ctx.academicYearId ?? null, ...term.params
-      );
-      const classOf = new Map<string, number | null>();
-      const allowed = new Set<string>();
-      for (const r of rows as Array<{ student_id: string; class_id: string | null }>) {
-        const n = Number(r.class_id);
-        classOf.set(String(r.student_id), Number.isInteger(n) && r.class_id != null ? n : null);
-        if (r.class_id != null && lead.has(String(r.class_id))) allowed.add(String(r.student_id));
-      }
-      return allowed.size ? { all: false, allowed, classOf } : null;
-    }
-    const s = await accessScope(ctx.req, cap, 'detail');
-    if (s.unrestricted) return { all: true, allowed: new Set<string>(), classOf: new Map() };
-    if (!s.scope) return null;
-    const term = termFilter(ctx);
-    const candidates = (await ctx.db.all(
-      `SELECT DISTINCT student_id FROM discipline_records WHERE deleted_at IS NULL${term.sql}`,
-      ...term.params
-    )).map((r: any) => String(r.student_id));
-    const classOf = await resolveStudentClassGroups(ctx.db, candidates, {
-      misToken: ctx.req.user?.misToken,
-      academicYearId: ctx.academicYearId ?? null,
-    });
-    const allowed = new Set(candidates.filter((id) =>
-      decide(s.snapshot, cap, studentTarget(id, classOf.get(id) ?? null), 'detail').allowed));
-    return allowed.size ? { all: false, allowed, classOf } : null;
+    const scope = await disciplineScopeOf(ctx);
+    return scope ? { ...scope, inactive: await inactiveIdSet(ctx.db) } : null;
   })();
   return ctx.disciplineScope;
+}
+
+async function disciplineScopeOf(ctx: Ctx): Promise<Omit<StudentScope, 'inactive'> | null> {
+  const cap = 'DISCIPLINE_VIEW_ALL';
+  if (!ctx.enforce) {
+    if (!ctx.req.user!.permissions.has(cap)) return null;
+    if (ctx.req.user!.roleLevel === 'ADMIN') return { all: true, allowed: new Set<string>(), classOf: new Map() };
+    const lead = new Set((await ctx.leadClasses()).map((c) => String(c.id)));
+    if (lead.size === 0) return null;
+    // One read: the term's discipline students with their latest register
+    // class (resolveStudentClassGroups' local rule, without its MIS fallback --
+    // a student never registered is in nobody's class yet).
+    const term = termFilter(ctx, 'd.academic_term_id');
+    const rows = await ctx.db.all(
+      `SELECT s.student_id,
+              (SELECT a.class_id FROM attendance_records a WHERE a.student_id = s.student_id
+                ORDER BY (a.academic_year_id IS ?) DESC, a.session_date DESC, a.id DESC LIMIT 1) AS class_id
+         FROM (SELECT DISTINCT d.student_id FROM discipline_records d WHERE d.deleted_at IS NULL${term.sql}) s`,
+      ctx.academicYearId ?? null, ...term.params
+    );
+    const classOf = new Map<string, number | null>();
+    const allowed = new Set<string>();
+    for (const r of rows as Array<{ student_id: string; class_id: string | null }>) {
+      const n = Number(r.class_id);
+      classOf.set(String(r.student_id), Number.isInteger(n) && r.class_id != null ? n : null);
+      if (r.class_id != null && lead.has(String(r.class_id))) allowed.add(String(r.student_id));
+    }
+    return allowed.size ? { all: false, allowed, classOf } : null;
+  }
+  const s = await accessScope(ctx.req, cap, 'detail');
+  if (s.unrestricted) return { all: true, allowed: new Set<string>(), classOf: new Map() };
+  if (!s.scope) return null;
+  const term = termFilter(ctx);
+  const candidates = (await ctx.db.all(
+    `SELECT DISTINCT student_id FROM discipline_records WHERE deleted_at IS NULL${term.sql}`,
+    ...term.params
+  )).map((r: any) => String(r.student_id));
+  const classOf = await resolveStudentClassGroups(ctx.db, candidates, {
+    misToken: ctx.req.user?.misToken,
+    academicYearId: ctx.academicYearId ?? null,
+  });
+  const allowed = new Set(candidates.filter((id) =>
+    decide(s.snapshot, cap, studentTarget(id, classOf.get(id) ?? null), 'detail').allowed));
+  return allowed.size ? { all: false, allowed, classOf } : null;
 }
 
 /**
@@ -1053,7 +1061,8 @@ function demeritRows(ctx: Ctx): Promise<any[]> {
   return ctx.demerits;
 }
 
-const studentInScope = (scope: StudentScope, studentId: unknown) => scope.all || scope.allowed.has(String(studentId));
+const studentInScope = (scope: StudentScope, studentId: unknown) =>
+  !scope.inactive.has(String(studentId)) && (scope.all || scope.allowed.has(String(studentId)));
 /** School-wide scopes carry no class (that would be one lookup per student). */
 const disciplineLens = (ctx: Ctx, scope: StudentScope, studentId: unknown) =>
   scope.all ? schoolLens(ctx.lenses) : lensForClass(ctx.lenses, scope.classOf.get(String(studentId)) ?? null);
@@ -1195,7 +1204,7 @@ async function accountsAwaitingRole(ctx: Ctx): Promise<AttentionItem[]> {
     return [];
   }
   const rows = await ctx.db.all(
-    `SELECT name, created_at FROM users WHERE role = 'unassigned' ORDER BY created_at ASC, name ASC`
+    `SELECT name, created_at FROM users WHERE role = 'unassigned' AND status = 'active' ORDER BY created_at ASC, name ASC`
   );
   if (rows.length === 0) return [];
   const lens = schoolLens(ctx.lenses);
