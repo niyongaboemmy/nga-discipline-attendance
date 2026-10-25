@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CloudOff, RefreshCw, AlertTriangle } from 'lucide-react';
 import { list, remove } from './outbox';
-import { OUTBOX_EVENT, sendWaiting } from './registers';
+import { OUTBOX_EVENT, sendWaiting, skippedInactiveNotice } from './registers';
 
 /**
  * Shown at the top of every page: no connection, registers waiting to be
@@ -12,13 +12,20 @@ export default function OfflineBanner() {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   const [items, setItems] = useState(() => list(localStorage));
   const [sending, setSending] = useState(false);
+  // Sent registers that left out students disabled on the MIS meanwhile.
+  const [notice, setNotice] = useState<string | null>(null);
+  const send = async () => {
+    const r = await sendWaiting();
+    const text = skippedInactiveNotice(r?.skippedInactive ?? 0);
+    if (text) setNotice(`Queued registers sent. ${text}`);
+  };
 
   useEffect(() => {
     const refresh = () => setItems(list(localStorage));
     const tryNow = async () => {
       setSending(true);
       try {
-        await sendWaiting();
+        await send();
       } finally {
         setSending(false);
         refresh();
@@ -46,7 +53,7 @@ export default function OfflineBanner() {
 
   const waiting = items.filter((w) => !w.error);
   const refused = items.filter((w) => w.error);
-  if (online && !waiting.length && !refused.length) return null;
+  if (online && !waiting.length && !refused.length && !notice) return null;
 
   return (
     <div role="status" aria-live="polite" data-testid="offline-banner" className="offline-banner">
@@ -60,10 +67,16 @@ export default function OfflineBanner() {
           <RefreshCw size={16} aria-hidden className={sending ? 'spin' : ''} />
           {waiting.length} register{waiting.length === 1 ? '' : 's'} waiting to be sent
           {online && (
-            <button type="button" className="offline-banner__btn" disabled={sending} onClick={() => void sendWaiting()}>
+            <button type="button" className="offline-banner__btn" disabled={sending} onClick={() => void send()}>
               Send now
             </button>
           )}
+        </p>
+      )}
+      {notice && (
+        <p className="offline-banner__row">
+          <AlertTriangle size={16} aria-hidden /> {notice}
+          <button type="button" className="offline-banner__btn" onClick={() => setNotice(null)}>Dismiss</button>
         </p>
       )}
       {refused.map((w) => (

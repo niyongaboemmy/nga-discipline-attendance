@@ -206,13 +206,23 @@ describe('active users only', () => {
         classId: 'class-9', className: 'Grade 9A', date: '2026-05-11', period: 'Morning', records,
       });
 
-    it('/attendance/mark answers 422 STUDENT_INACTIVE and writes nothing when a student is inactive', async () => {
+    it('/attendance/mark skips inactive students and records the rest (200 + skipped_inactive)', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
       await roster('701', 'Active Ann', 'ACTIVE');
       await roster('702', 'Gone Gus', 'INACTIVE');
       const res = await register([
         { studentId: '701', studentName: 'Active Ann', status: 'present' },
         { studentId: '702', studentName: 'Gone Gus', status: 'absent' },
       ]);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ success: true, skipped_inactive: ['702'], data: { inserted: 1, skipped_inactive: ['702'] } });
+      const rows = await db.all(`SELECT student_id FROM attendance_records`);
+      expect(rows.map((r: any) => r.student_id)).toEqual(['701']);
+    });
+
+    it('/attendance/mark answers 422 STUDENT_INACTIVE when every student is inactive', async () => {
+      await roster('702', 'Gone Gus', 'INACTIVE');
+      const res = await register([{ studentId: '702', studentName: 'Gone Gus', status: 'absent' }]);
       expect(res.status).toBe(422);
       expect(res.body).toMatchObject({ success: false, code: 'STUDENT_INACTIVE', ids: ['702'] });
       expect((await db.get(`SELECT COUNT(*) AS n FROM attendance_records`)).n).toBe(0);
@@ -227,10 +237,12 @@ describe('active users only', () => {
         { studentId: '799', studentName: 'Never Synced', status: 'present' },
       ]);
       expect(res.status).toBe(200);
+      expect(res.body.skipped_inactive).toEqual([]);
       expect((await db.get(`SELECT COUNT(*) AS n FROM attendance_records`)).n).toBe(2);
     });
 
-    it('/discipline (single and bulk) answers 422 STUDENT_INACTIVE for an inactive student', async () => {
+    it('/discipline answers 422 for an inactive student; bulk skips them (422 only if all are inactive)', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
       await db.run(`INSERT INTO users (id, name, role, status) VALUES ('702', 'Gone Gus', 'student', 'inactive')`);
       const incident = {
         type: 'demerit', category: 'Tardiness', severity: 'minor', title: 'Late', incidentDate: '2026-05-04',
@@ -243,13 +255,17 @@ describe('active users only', () => {
       const bulk = await request(app).post('/api/discipline/bulk').set(authHeader(teacherToken)).send({
         ...incident, students: [{ studentId: 'stu-a', studentName: 'A' }, { studentId: '702', studentName: 'Gone Gus' }],
       });
-      expect(bulk.status).toBe(422);
-      expect(bulk.body.ids).toEqual(['702']);
-      expect((await db.get(`SELECT COUNT(*) AS n FROM discipline_records`)).n).toBe(0);
+      expect(bulk.status).toBe(200);
+      expect(bulk.body).toMatchObject({ skipped_inactive: ['702'], data: { count: 1 } });
+      const rows = await db.all(`SELECT student_id FROM discipline_records`);
+      expect(rows.map((r: any) => r.student_id)).toEqual(['stu-a']);
 
-      const ok = await request(app).post('/api/discipline').set(authHeader(teacherToken))
-        .send({ ...incident, studentId: 'stu-a', studentName: 'A' });
-      expect(ok.status).toBe(200);
+      const allGone = await request(app).post('/api/discipline/bulk').set(authHeader(teacherToken)).send({
+        ...incident, title: 'Other', students: [{ studentId: '702', studentName: 'Gone Gus' }],
+      });
+      expect(allGone.status).toBe(422);
+      expect(allGone.body).toMatchObject({ code: 'STUDENT_INACTIVE', ids: ['702'] });
+      expect((await db.get(`SELECT COUNT(*) AS n FROM discipline_records`)).n).toBe(1);
     });
   });
 

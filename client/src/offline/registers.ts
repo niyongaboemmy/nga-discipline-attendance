@@ -10,10 +10,22 @@ const changed = () => window.dispatchEvent(new Event(OUTBOX_EVENT));
  * later; resolves `{ queued: true }` so the page can say so. Server refusals
  * (validation, permission) still throw, as before.
  */
-export async function saveRegister(payload: RegisterPayload): Promise<{ queued: boolean; inserted?: number; updated?: number }> {
+type MarkResult = { inserted: number; updated: number; skipped_inactive?: string[] };
+
+/** "N students are no longer active and were skipped" -- the server drops
+ *  students disabled on the MIS from a register instead of refusing it. */
+export function skippedInactiveNotice(n: number): string | null {
+  if (!n) return null;
+  return `${n} student${n === 1 ? ' is' : 's are'} no longer active and ${n === 1 ? 'was' : 'were'} skipped.`;
+}
+
+export async function saveRegister(
+  payload: RegisterPayload
+): Promise<{ queued: boolean; inserted?: number; updated?: number; skippedInactive?: string[] }> {
   try {
-    const res = await apiPost<{ inserted: number; updated: number }>('/api/attendance/mark', payload);
-    return { queued: false, ...(res.data ?? {}) };
+    const res = await apiPost<MarkResult>('/api/attendance/mark', payload);
+    const { skipped_inactive, ...counts } = res.data ?? ({} as MarkResult);
+    return { queued: false, ...counts, skippedInactive: skipped_inactive ?? [] };
   } catch (err) {
     if (err instanceof OfflineError || (err instanceof ApiError && err.status >= 502 && err.status <= 504)) {
       if (enqueue(localStorage, payload)) {
@@ -25,9 +37,11 @@ export async function saveRegister(payload: RegisterPayload): Promise<{ queued: 
   }
 }
 
+let replaySkipped = 0;
 const sendOne = async (p: RegisterPayload): Promise<SendOutcome> => {
   try {
-    await apiPost('/api/attendance/mark', p);
+    const res = await apiPost<MarkResult>('/api/attendance/mark', p);
+    replaySkipped += res.data?.skipped_inactive?.length ?? 0;
     return { ok: true };
   } catch (err) {
     if (err instanceof OfflineError) return { ok: false, refused: false };
@@ -41,10 +55,11 @@ let flushing = false;
 export async function sendWaiting() {
   if (flushing || !list(localStorage).length) return null;
   flushing = true;
+  replaySkipped = 0;
   try {
     const r = await flush(localStorage, sendOne);
     changed();
-    return r;
+    return { ...r, skippedInactive: replaySkipped };
   } finally {
     flushing = false;
   }

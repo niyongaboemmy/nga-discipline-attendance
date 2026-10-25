@@ -278,6 +278,28 @@ export function studentInactiveBody(ids: string[]) {
 }
 
 /**
+ * For multi-student writes (a whole register, a bulk conduct record): one
+ * disabled student must never fail the rest. Returns the known-inactive ids to
+ * skip, or null after answering 422 STUDENT_INACTIVE when every student in the
+ * request is inactive (nothing left to write).
+ */
+export async function skipInactiveStudents(
+  res: Response, db: Database, ids: unknown[], context: string
+): Promise<Set<string> | null> {
+  const { inactive, unknown } = await checkStudentsActive(db, ids, context);
+  if (unknown.length > 0) {
+    console.warn(`[active-students] ${context}: ${unknown.length} student(s) with no known MIS status accepted: ${unknown.slice(0, 10).join(', ')}`);
+  }
+  const requested = new Set(ids.filter((v) => v != null && v !== '').map(String));
+  if (inactive.length > 0 && inactive.length >= requested.size) {
+    res.status(422).json(studentInactiveBody(inactive));
+    return null;
+  }
+  if (inactive.length > 0) console.warn(`[active-students] ${context}: skipped ${inactive.length} inactive student(s): ${inactive.slice(0, 10).join(', ')}`);
+  return new Set(inactive);
+}
+
+/**
  * Guard for writes that create records for students (registers, conduct
  * records): answers 422 STUDENT_INACTIVE and returns true when any id is a
  * known-inactive student. Unknown ids pass (logged), so a stale cache or an
