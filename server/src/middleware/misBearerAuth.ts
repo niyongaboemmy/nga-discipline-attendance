@@ -5,6 +5,7 @@ import { getDb } from '../database.js';
 import { AuthenticatedRequest, Role, resolvePermissions } from './auth.js';
 import { fetchWithTimeout, noteAccessVersion } from '../access/snapshot.js';
 import { noteAiPolicyVersion } from '../services/aiPolicy.js';
+import { noteAiRoutesVersion } from '../services/myAiGateway.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 
 /**
@@ -99,6 +100,8 @@ async function verifyWithMis(token: string): Promise<VerifyResult> {
   // cached access snapshot so this request decides with fresh grants.
   noteAccessVersion(misUserId, data?.access_version);
   noteAiPolicyVersion(data?.ai_policy_v);
+  // My AI: a new ai_routes_v (or ai_policy_v) drops this person's cached route map.
+  noteAiRoutesVersion(misUserId, data?.ai_routes_v, data?.ai_policy_v);
 
   const entry: Verified = { misUserId, at: Date.now() };
   remember(key, entry);

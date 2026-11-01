@@ -20,6 +20,7 @@ import subjectAttendanceRoutes from './modules/attendance/subjectAttendance.rout
 import scheduleRoutes from './modules/attendance/schedule.routes.js';
 import reportingRoutes from './modules/reporting/reporting.routes.js';
 import accessRoutes from './routes/access.js';
+import aiRoutes from './routes/ai.js';
 import integrationRoutes, { integrationErrorHandler } from './modules/integration/integration.routes.js';
 import { activityRouter } from './routes/activity.js';
 import { activityRelay } from './activity/relay.js';
@@ -70,6 +71,8 @@ app.use('/api/roles-permissions', rolesPermissionsRoutes);
 app.use('/api/settings', settingsRoutes);
 // Access control v2: the user's MIS access snapshot (see access/snapshot.ts).
 app.use('/api/access', accessRoutes);
+// My AI: the person's own AI keys (held in the MIS) they may pick in AI panels.
+app.use('/api/ai', aiRoutes);
 
 // Server-to-server calls from the NGA Central MIS (the Home page), made with
 // the user's own MIS token -- see middleware/misBearerAuth.ts.

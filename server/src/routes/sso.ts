@@ -7,6 +7,7 @@ import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.j
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 import { misUserIdOf, noteAccessVersion } from '../access/snapshot.js';
 import { noteAiPolicyVersion } from '../services/aiPolicy.js';
+import { noteAiRoutesVersion } from '../services/myAiGateway.js';
 import { recheckMisStatus, recordMisStatus } from '../services/activeStudents.js';
 
 const router = Router();
@@ -336,6 +337,8 @@ router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) =>
       noteAccessVersion(misUserIdOf((req as AuthenticatedRequest).user), body?.data?.access_version);
       // Same for the school's AI policy: a new ai_policy_v drops the cached copy.
       noteAiPolicyVersion(body?.data?.ai_policy_v);
+      // My AI: a new ai_routes_v (or ai_policy_v) drops this person's cached route map.
+      noteAiRoutesVersion(misUserIdOf((req as AuthenticatedRequest).user), body?.data?.ai_routes_v, body?.data?.ai_policy_v);
       avatar = body?.data?.avatar === undefined ? undefined : misAvatarOf(body.data);
     } catch {
       // Not JSON / no version (older MIS): nothing to note.
