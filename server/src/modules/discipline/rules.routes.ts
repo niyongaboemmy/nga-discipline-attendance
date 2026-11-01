@@ -12,6 +12,8 @@ import * as rulesRepo from './rules.repository.js';
 import { generateStructuredContent, isAnyProviderConfigured } from '../../services/aiProviders/index.js';
 import type { JSONSchema } from '../../services/aiProviders/index.js';
 import { aiDisabledBody, daAiState, isAiDisabledError } from '../../services/aiPolicy.js';
+import { gatewayJson, isPersonalAiUnavailableError, myAiSummary, withPersonalAi } from '../../services/myAiGateway.js';
+import { misUserIdOf } from '../../access/snapshot.js';
 import { getStudentTermBalance, listTermBalances } from './ledger.service.js';
 import { accessScope, allowedStudents, classGroupOfStudent, shadowListLeak, studentTarget } from '../../access/policy.js';
 import { sanctionDenied, sanctionForbidden } from '../../access/sanctions.js';
@@ -123,9 +125,17 @@ const AI_RULES_SCHEMA: JSONSchema = {
   required: ['rules'],
 };
 
+/** What answers "author" for this person by default, as an aiRoute value ("school" or "<credentialId>:<model>"). */
+function authorRoute(byTask: Record<string, { route?: string; credentialId?: number; model?: string } | undefined>): string {
+  const r = byTask?.author;
+  return r?.route === 'personal' && r.credentialId ? `${r.credentialId}${r.model ? `:${r.model}` : ''}` : 'school';
+}
+
 const aiDraftSchema = z.object({
   prompt: z.string().min(3).max(2000),
   count: z.number().int().min(1).max(25).optional(),
+  /** My AI: a one-off choice from the panel ("school", "<credentialId>[:<model>]"), passed to the MIS unchanged. */
+  aiRoute: z.string().max(200).optional().nullable(),
 });
 
 /**
@@ -138,12 +148,21 @@ const aiDraftSchema = z.object({
 router.get(
   '/rules/ai-status',
   authorizePermission('DISCIPLINE_RULES_MANAGE'),
-  async (_req: any, res: Response) => {
+  async (req: any, res: Response) => {
     const policy = await daAiState();
     const configured = isAnyProviderConfigured();
+    // My AI: the person's own keys they may pick for this draft (cached route map; no secrets).
+    const myAi = policy.enabled
+      ? await myAiSummary(misUserIdOf((req as AuthenticatedRequest).user)).catch(() => null)
+      : null;
     return res.json({
       success: true,
-      data: { available: policy.enabled && configured, configured, policy },
+      data: {
+        available: policy.enabled && configured,
+        configured,
+        policy,
+        ...(myAi?.enabled ? { myAi: { enabled: true, choices: myAi.choices, manageUrl: myAi.manageUrl, defaultRoute: authorRoute(myAi.byTask) } } : {}),
+      },
     });
   }
 );
@@ -153,7 +172,7 @@ router.post(
   authorizePermission('DISCIPLINE_RULES_MANAGE'),
   validateBody(aiDraftSchema),
   async (req: any, res: Response) => {
-    const { prompt, count } = req.body as { prompt: string; count?: number };
+    const { prompt, count, aiRoute } = req.body as { prompt: string; count?: number; aiRoute?: string | null };
     const db = getDb();
 
     // The super admin's switch first: nothing on this server can override it.
@@ -164,7 +183,12 @@ router.post(
       });
     }
 
-    if (!isAnyProviderConfigured()) {
+    // Without a school provider only a personal key could answer: keep the old
+    // clear 503 unless My AI is on for this person (checked inside the school branch).
+    const notConfigured = () =>
+      Object.assign(new Error('AI drafting is not configured on this server.'), { status: 503 });
+    const misUserId = misUserIdOf((req as AuthenticatedRequest).user);
+    if (!isAnyProviderConfigured() && !(await myAiSummary(misUserId)).enabled) {
       return res.status(503).json({
         success: false,
         message: 'AI drafting is not configured on this server.',
@@ -195,12 +219,22 @@ router.post(
           : '',
       ].join('\n');
 
-      const { data, providerUsed } = await generateStructuredContent<{ rules: any[] }>(
+      const params = {
+        prompt: fullPrompt,
+        schema: AI_RULES_SCHEMA,
+        schemaName: 'discipline_rules',
+        maxOutputTokens: 4000,
+      };
+      // My AI picks which AI answers (the person's own key via the MIS, or the
+      // school's); both get exactly the same prompt and schema.
+      const { data, providerUsed, ai } = await withPersonalAi<{ rules: any[] }>(
+        { misUserId, task: 'author', feature: 'da.rules-draft', inAssessment: false, aiRoute: aiRoute ?? null },
         {
-          prompt: fullPrompt,
-          schema: AI_RULES_SCHEMA,
-          schemaName: 'discipline_rules',
-          maxOutputTokens: 4000,
+          personal: gatewayJson<{ rules: any[] }>(misUserId ?? 0, params),
+          school: () => {
+            if (!isAnyProviderConfigured()) throw notConfigured();
+            return generateStructuredContent<{ rules: any[] }>(params);
+          },
         },
       );
 
@@ -232,12 +266,16 @@ router.post(
 
       return res.json({
         success: true,
-        data: { drafts, providerUsed },
+        data: { drafts, providerUsed, ai },
         message: `Drafted ${drafts.length} rule${drafts.length === 1 ? '' : 's'}.`,
       });
     } catch (error: any) {
       // Switched off between the check above and the provider call.
       if (isAiDisabledError(error)) return res.status(403).json(aiDisabledBody(error));
+      // Their own key failed and they did not let the school AI answer instead.
+      if (isPersonalAiUnavailableError(error)) {
+        return res.status(503).json({ success: false, code: error.code, message: error.message, label: error.label ?? null });
+      }
       const status = error?.status === 503 ? 503 : 500;
       console.error('Error drafting rules with AI:', error?.message);
       return res.status(status).json({

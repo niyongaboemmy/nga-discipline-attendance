@@ -1,7 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Download, Upload, FileSpreadsheet, CheckCircle2, AlertTriangle, X, Sparkles } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import { apiPost, ApiError } from '../../api/client';
+import { disciplineApi } from '../../api/discipline';
+import type { AiAnswerLabel, MyAiStatus } from '../../api/discipline';
 
 type Mode = 'file' | 'ai';
 
@@ -11,6 +13,31 @@ interface AiDraft {
   error: string | null;
   duplicate: boolean;
 }
+
+/** Why a person's own key could not answer, as a phrase after "Your key 'X' …". */
+const FALLBACK_PHRASES: Record<string, string> = {
+  AI_KEY_NO_CREDIT: 'was out of credit',
+  AI_KEY_INVALID: 'was not accepted by its provider',
+  AI_KEY_RATE_LIMITED: 'hit its rate limit',
+  AI_PERSONAL_FAILED: 'could not answer',
+};
+
+/** The line under the drafts saying which AI answered (MY_AI_GATEWAY.md "After the call"). */
+function aiAnswerLine(ai: AiAnswerLabel | null | undefined, providerUsed: string | null, myAiOn: boolean): string | null {
+  if (ai?.route === 'personal') {
+    return `Drafted via ${ai.label || 'My AI'}${ai.model ? ` · ${ai.model}` : ''}.`;
+  }
+  if (ai?.fallbackFrom) {
+    const phrase = FALLBACK_PHRASES[ai.fallbackFrom] ?? 'could not answer';
+    return `Your key '${ai.label || 'My AI'}' ${phrase}, so School AI answered.`;
+  }
+  if (myAiOn && ai?.reason === 'GATEWAY_UNAVAILABLE') {
+    return 'My AI could not be reached, so School AI answered.';
+  }
+  return providerUsed ? `Drafted by ${providerUsed}.` : null;
+}
+
+const MANAGE_MY_AI = '__manage_my_ai__';
 
 const AI_EXAMPLES = [
   'Standard secondary-school rules for lateness, uniform and phone use',
@@ -154,6 +181,37 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
   const fileRef = useRef<HTMLInputElement>(null);
   const [prompt, setPrompt] = useState('');
   const [providerUsed, setProviderUsed] = useState<string | null>(null);
+  const [answeredBy, setAnsweredBy] = useState<AiAnswerLabel | null>(null);
+  /** My AI: the person's own keys they may pick for this draft (null: control hidden). */
+  const [myAi, setMyAi] = useState<MyAiStatus | null>(null);
+  const [aiRoute, setAiRoute] = useState('school');
+
+  useEffect(() => {
+    if (!open || mode !== 'ai') return;
+    let live = true;
+    disciplineApi.rulesAiStatus()
+      .then((r) => {
+        if (!live) return;
+        const m = r.data?.myAi;
+        if (m?.enabled && m.choices.length) {
+          setMyAi(m);
+          setAiRoute(m.defaultRoute || 'school');
+        } else setMyAi(null);
+      })
+      .catch(() => { if (live) setMyAi(null); });
+    return () => { live = false; };
+  }, [open, mode]);
+
+  /** The choice to send: nothing when it's the person's default (the MIS decides), else the pick. */
+  const routeToSend = () => (myAi && aiRoute !== myAi.defaultRoute ? aiRoute : null);
+
+  const pickRoute = (value: string) => {
+    if (value === MANAGE_MY_AI) {
+      if (myAi) window.open(myAi.manageUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    setAiRoute(value);
+  };
   /** The school turned AI off (403 AI_DISABLED): its message, and no more drafting. */
   const [aiOff, setAiOff] = useState<string | null>(null);
 
@@ -165,6 +223,7 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
     setBusy(false);
     setPrompt('');
     setProviderUsed(null);
+    setAnsweredBy(null);
   };
 
   /** Ask the server to draft rules. Nothing is written — the drafts land in
@@ -177,10 +236,12 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
     setReport(null);
     setRows(null);
     setProviderUsed(null);
+    setAnsweredBy(null);
     try {
-      const res = await apiPost<{ drafts: AiDraft[]; providerUsed: string }>(
+      const route = routeToSend();
+      const res = await apiPost<{ drafts: AiDraft[]; providerUsed: string; ai?: AiAnswerLabel }>(
         '/api/discipline/rules/ai-draft',
-        { prompt: prompt.trim() }
+        route ? { prompt: prompt.trim(), aiRoute: route } : { prompt: prompt.trim() }
       );
       const drafts = res.data?.drafts ?? [];
       if (drafts.length === 0) {
@@ -188,6 +249,7 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
         return;
       }
       setProviderUsed(res.data?.providerUsed ?? null);
+      setAnsweredBy(res.data?.ai ?? null);
       setRows(
         drafts.map((d, i) => ({
           // Drafts have no spreadsheet row, so number them from 1 for display.
@@ -418,19 +480,49 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
               </button>
             ))}
           </div>
-          <div className="flex items-center justify-between mt-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
             <p className="text-xs text-secondary" role={aiOff ? 'note' : undefined}>
               {aiOff
                 ? `${aiOff} Rules can still be imported or added by hand.`
                 : 'Nothing is saved until you review the drafts and confirm.'}
             </p>
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={draftWithAi}
-              disabled={busy || !!aiOff || prompt.trim().length < 3}
-            >
-              <Sparkles size={14} /> {busy ? 'Drafting…' : 'Draft rules'}
-            </button>
+            <div className="flex items-center gap-2">
+              {myAi && !aiOff && (
+                <label className="text-xs text-secondary flex items-center gap-2">
+                  Answers with:
+                  <select
+                    className="select"
+                    style={{ width: 'auto', height: 30, fontSize: 12 }}
+                    value={aiRoute}
+                    disabled={busy}
+                    onChange={(e) => pickRoute(e.target.value)}
+                    aria-label="Which AI answers"
+                  >
+                    <option value="school">School AI</option>
+                    {myAi.choices.map((c) => {
+                      const value = `${c.credentialId}:${c.model}`;
+                      return (
+                        <option key={value} value={value}>
+                          {c.label} · {c.model}
+                        </option>
+                      );
+                    })}
+                    {/* The default may name a key without a model suffix; keep it selectable. */}
+                    {aiRoute !== 'school' && !myAi.choices.some((c) => `${c.credentialId}:${c.model}` === aiRoute) && (
+                      <option value={aiRoute}>My AI (default)</option>
+                    )}
+                    <option value={MANAGE_MY_AI}>Manage My AI ↗</option>
+                  </select>
+                </label>
+              )}
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={draftWithAi}
+                disabled={busy || !!aiOff || prompt.trim().length < 3}
+              >
+                <Sparkles size={14} /> {busy ? 'Drafting…' : 'Draft rules'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -531,7 +623,10 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
             )}
             <span className="text-xs text-secondary">
               {mode === 'ai'
-                ? `Only the valid drafts are added — review them before confirming.${providerUsed ? ` Drafted by ${providerUsed}.` : ''}`
+                ? (() => {
+                    const line = aiAnswerLine(answeredBy, providerUsed, !!myAi);
+                    return `Only the valid drafts are added — review them before confirming.${line ? ` ${line}` : ''}`;
+                  })()
                 : 'Only the valid rows are imported — fix the rest and upload again.'}
             </span>
           </div>

@@ -33,6 +33,33 @@ export interface TermBalance {
   eventCount: number;
 }
 
+/** One of the person's own AI keys (held in the MIS; no secrets here). */
+export interface MyAiChoice {
+  credentialId: number;
+  provider: string;
+  model: string;
+  label: string;
+}
+
+export interface MyAiStatus {
+  enabled: boolean;
+  choices: MyAiChoice[];
+  /** The MIS front end's My AI page. */
+  manageUrl: string;
+  /** What answers by default: "school" or "<credentialId>:<model>". */
+  defaultRoute: string;
+}
+
+/** What answered an AI call (MY_AI_GATEWAY.md), returned beside providerUsed. */
+export interface AiAnswerLabel {
+  route: 'personal' | 'school';
+  reason: string;
+  fallbackFrom?: string;
+  label?: string;
+  provider?: string;
+  model?: string;
+}
+
 export const disciplineApi = {
   listRules: (params?: { type?: string; active?: boolean }) => {
     const qs = new URLSearchParams();
@@ -50,6 +77,8 @@ export const disciplineApi = {
     available: boolean;
     configured: boolean;
     policy: { enabled: boolean; reason: string; message: string };
+    /** My AI: present only when the person may pick one of their own keys here. */
+    myAi?: MyAiStatus;
   }>('/api/discipline/rules/ai-status'),
 
   adjust: (input: {
