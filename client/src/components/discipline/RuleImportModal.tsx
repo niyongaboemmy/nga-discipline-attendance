@@ -4,6 +4,7 @@ import { Modal } from '../common/Modal';
 import { apiPost, ApiError } from '../../api/client';
 import { disciplineApi } from '../../api/discipline';
 import type { AiAnswerLabel, MyAiStatus } from '../../api/discipline';
+import { HandoffControl, type HandoffPayload } from '../ai/HandoffControl';
 
 type Mode = 'file' | 'ai';
 
@@ -24,6 +25,7 @@ const FALLBACK_PHRASES: Record<string, string> = {
 
 /** The line under the drafts saying which AI answered (MY_AI_GATEWAY.md "After the call"). */
 function aiAnswerLine(ai: AiAnswerLabel | null | undefined, providerUsed: string | null, myAiOn: boolean): string | null {
+  if (ai?.route === 'handoff') return 'Drafted via your own AI (pasted).';
   if (ai?.route === 'personal') {
     return `Drafted via ${ai.label || 'My AI'}${ai.model ? ` · ${ai.model}` : ''}.`;
   }
@@ -38,6 +40,8 @@ function aiAnswerLine(ai: AiAnswerLabel | null | undefined, providerUsed: string
 }
 
 const MANAGE_MY_AI = '__manage_my_ai__';
+
+type DraftResponse = { drafts: AiDraft[]; providerUsed: string; ai?: AiAnswerLabel };
 
 const AI_EXAMPLES = [
   'Standard secondary-school rules for lateness, uniform and phone use',
@@ -185,6 +189,8 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
   /** My AI: the person's own keys they may pick for this draft (null: control hidden). */
   const [myAi, setMyAi] = useState<MyAiStatus | null>(null);
   const [aiRoute, setAiRoute] = useState('school');
+  /** "Open in my AI": the school allows hand-off and this person may use it. */
+  const [handoffOn, setHandoffOn] = useState(false);
 
   useEffect(() => {
     if (!open || mode !== 'ai') return;
@@ -192,13 +198,14 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
     disciplineApi.rulesAiStatus()
       .then((r) => {
         if (!live) return;
+        setHandoffOn(!!r.data?.handoff);
         const m = r.data?.myAi;
         if (m?.enabled && m.choices.length) {
           setMyAi(m);
           setAiRoute(m.defaultRoute || 'school');
         } else setMyAi(null);
       })
-      .catch(() => { if (live) setMyAi(null); });
+      .catch(() => { if (live) { setMyAi(null); setHandoffOn(false); } });
     return () => { live = false; };
   }, [open, mode]);
 
@@ -226,6 +233,47 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
     setAnsweredBy(null);
   };
 
+  /** Drafts from any AI (school, My AI, or a pasted hand-off answer) into the preview table. */
+  const showDrafts = (data: DraftResponse | undefined) => {
+    const drafts = data?.drafts ?? [];
+    if (drafts.length === 0) {
+      setParseError('The AI returned no rules. Try describing the rules you want more specifically.');
+      return;
+    }
+    setProviderUsed(data?.providerUsed ?? null);
+    setAnsweredBy(data?.ai ?? null);
+    setRows(
+      drafts.map((d, i) => ({
+        // Drafts have no spreadsheet row, so number them from 1 for display.
+        rowNumber: i + 1,
+        rule: d.rule,
+        error: d.error ?? (d.duplicate ? 'A rule with this type and title already exists.' : null),
+      }))
+    );
+  };
+
+  /** "Open in my AI": the exact prompt, for the person's own Claude / ChatGPT. Nothing is called. */
+  const handoffPrompt = async (): Promise<HandoffPayload> => {
+    const res = (await apiPost<DraftResponse>('/api/discipline/rules/ai-draft', {
+      prompt: prompt.trim(),
+      aiHandoff: { mode: 'prompt' },
+    })) as { handoff?: HandoffPayload };
+    if (!res.handoff) throw new Error('Could not prepare the prompt.');
+    return res.handoff;
+  };
+
+  /** "Paste the answer": the server checks it like any AI answer, then the usual preview. */
+  const handoffImport = async (text: string) => {
+    setParseError(null);
+    setReport(null);
+    setRows(null);
+    const res = await apiPost<DraftResponse>('/api/discipline/rules/ai-draft', {
+      prompt: prompt.trim(),
+      aiHandoff: { mode: 'import', text },
+    });
+    showDrafts(res.data);
+  };
+
   /** Ask the server to draft rules. Nothing is written — the drafts land in
    *  the same preview table the spreadsheet path uses, and only reach the
    *  database if the user confirms. */
@@ -239,25 +287,11 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
     setAnsweredBy(null);
     try {
       const route = routeToSend();
-      const res = await apiPost<{ drafts: AiDraft[]; providerUsed: string; ai?: AiAnswerLabel }>(
+      const res = await apiPost<DraftResponse>(
         '/api/discipline/rules/ai-draft',
         route ? { prompt: prompt.trim(), aiRoute: route } : { prompt: prompt.trim() }
       );
-      const drafts = res.data?.drafts ?? [];
-      if (drafts.length === 0) {
-        setParseError('The AI returned no rules. Try describing the rules you want more specifically.');
-        return;
-      }
-      setProviderUsed(res.data?.providerUsed ?? null);
-      setAnsweredBy(res.data?.ai ?? null);
-      setRows(
-        drafts.map((d, i) => ({
-          // Drafts have no spreadsheet row, so number them from 1 for display.
-          rowNumber: i + 1,
-          rule: d.rule,
-          error: d.error ?? (d.duplicate ? 'A rule with this type and title already exists.' : null),
-        }))
-      );
+      showDrafts(res.data);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'AI_DISABLED') {
         setAiOff(err.message || 'AI is turned off for the school.');
@@ -524,6 +558,16 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
               </button>
             </div>
           </div>
+          {handoffOn && !aiOff && (
+            <div className="mt-2">
+              {/* Rule drafting carries no pupil data, so no "Include pupil details" here. */}
+              <HandoffControl
+                requestPrompt={handoffPrompt}
+                importAnswer={handoffImport}
+                disabled={busy || prompt.trim().length < 3}
+              />
+            </div>
+          )}
         </div>
       )}
 

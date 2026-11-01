@@ -10,6 +10,8 @@ export interface DisciplineRule {
   fine_amount: number;
   severity: string | null;
   is_active: number;
+  /** 1: drafted from someone's own AI (NGA connector); inactive until approved. */
+  is_draft?: number;
 }
 
 export interface RuleInput {
@@ -52,7 +54,8 @@ export interface MyAiStatus {
 
 /** What answered an AI call (MY_AI_GATEWAY.md), returned beside providerUsed. */
 export interface AiAnswerLabel {
-  route: 'personal' | 'school';
+  /** 'handoff': the person pasted an answer from their own Claude / ChatGPT. */
+  route: 'personal' | 'school' | 'handoff';
   reason: string;
   fallbackFrom?: string;
   label?: string;
@@ -79,6 +82,8 @@ export const disciplineApi = {
     policy: { enabled: boolean; reason: string; message: string };
     /** My AI: present only when the person may pick one of their own keys here. */
     myAi?: MyAiStatus;
+    /** "Open in my AI" (own Claude / ChatGPT, prompt + paste back) is allowed for this person. */
+    handoff?: boolean;
   }>('/api/discipline/rules/ai-status'),
 
   adjust: (input: {
