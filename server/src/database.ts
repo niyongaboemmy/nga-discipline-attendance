@@ -446,6 +446,14 @@ async function migrateDisciplineRules(db: Database) {
     CREATE INDEX IF NOT EXISTS idx_rule_versions_rule ON discipline_rule_versions(rule_id);
   `);
 
+  // A rule drafted from someone's own Claude/ChatGPT (the NGA connector, da_draft_rule)
+  // is saved inactive with is_draft = 1 until a person with DISCIPLINE_RULES_MANAGE
+  // approves it on the rules page (activating it clears the flag).
+  const ruleCols = await db.all(`PRAGMA table_info(discipline_rules)`);
+  if (!ruleCols.some((c: any) => c.name === 'is_draft')) {
+    await db.run(`ALTER TABLE discipline_rules ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 0`);
+  }
+
   const cols = await db.all(`PRAGMA table_info(discipline_records)`);
   if (!cols.some((c: any) => c.name === 'rule_id')) {
     await db.run(`ALTER TABLE discipline_records ADD COLUMN rule_id INTEGER REFERENCES discipline_rules(id)`);
