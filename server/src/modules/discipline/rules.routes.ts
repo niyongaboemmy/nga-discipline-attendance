@@ -11,7 +11,7 @@ import { SANCTIONS } from '../../utils/conduct.js';
 import * as rulesRepo from './rules.repository.js';
 import { generateStructuredContent, isAnyProviderConfigured } from '../../services/aiProviders/index.js';
 import type { JSONSchema } from '../../services/aiProviders/index.js';
-import { aiDisabledBody, daAiState, isAiDisabledError } from '../../services/aiPolicy.js';
+import { aiDisabledBody, daAiState, getAiPolicy, isAiDisabledError } from '../../services/aiPolicy.js';
 import { gatewayJson, isPersonalAiUnavailableError, myAiSummary, withPersonalAi } from '../../services/myAiGateway.js';
 import { misUserIdOf } from '../../access/snapshot.js';
 import { getStudentTermBalance, listTermBalances } from './ledger.service.js';
@@ -19,6 +19,9 @@ import { accessScope, allowedStudents, classGroupOfStudent, shadowListLeak, stud
 import { sanctionDenied, sanctionForbidden } from '../../access/sanctions.js';
 import { notifyStaff } from '../../access/notify.js';
 import { rejectInactiveStudents } from '../../services/activeStudents.js';
+import {
+  HANDOFF_AI, externalAiBody, handoffFor, holdsExternalCap, isExternalAiError, runJsonHandoff,
+} from '../../services/externalAi.js';
 
 /**
  * Discipline rules catalog (B.1), permission-gated point adjustment (B.2),
@@ -28,7 +31,7 @@ import { rejectInactiveStudents } from '../../services/activeStudents.js';
 const router = Router();
 router.use(authMiddleware);
 
-const ruleSchema = z.object({
+export const ruleSchema = z.object({
   type: z.enum(['demerit', 'merit']),
   category: z.string().min(1).max(60),
   title: z.string().min(1).max(150),
@@ -136,6 +139,8 @@ const aiDraftSchema = z.object({
   count: z.number().int().min(1).max(25).optional(),
   /** My AI: a one-off choice from the panel ("school", "<credentialId>[:<model>]"), passed to the MIS unchanged. */
   aiRoute: z.string().max(200).optional().nullable(),
+  /** External AI: { mode:"prompt", pupilConsent? } or { mode:"import", text } (EXTERNAL_AI_CONTRACT.md §1). */
+  aiHandoff: z.unknown().optional(),
 });
 
 /**
@@ -155,12 +160,17 @@ router.get(
     const myAi = policy.enabled
       ? await myAiSummary(misUserIdOf((req as AuthenticatedRequest).user)).catch(() => null)
       : null;
+    // "Open in my AI": offered when the school allows hand-off and this person may use it.
+    const handoff = policy.enabled
+      && !!(await getAiPolicy())?.external.handoff
+      && (await holdsExternalCap((req as AuthenticatedRequest).user));
     return res.json({
       success: true,
       data: {
         available: policy.enabled && configured,
         configured,
         policy,
+        ...(handoff ? { handoff: true } : {}),
         ...(myAi?.enabled ? { myAi: { enabled: true, choices: myAi.choices, manageUrl: myAi.manageUrl, defaultRoute: authorRoute(myAi.byTask) } } : {}),
       },
     });
@@ -188,7 +198,18 @@ router.post(
     const notConfigured = () =>
       Object.assign(new Error('AI drafting is not configured on this server.'), { status: 503 });
     const misUserId = misUserIdOf((req as AuthenticatedRequest).user);
-    if (!isAnyProviderConfigured() && !(await myAiSummary(misUserId)).enabled) {
+
+    // External AI hand-off: "Open in Claude / ChatGPT" (prompt) or "Paste the answer" (import).
+    // Rule drafting carries no pupil data. Never touches a provider, so it skips the config check.
+    let handoff: Awaited<ReturnType<typeof handoffFor>>;
+    try {
+      handoff = await handoffFor(req as AuthenticatedRequest);
+    } catch (error) {
+      if (isExternalAiError(error)) return res.status(error.status).json(externalAiBody(error));
+      throw error;
+    }
+
+    if (!handoff && !isAnyProviderConfigured() && !(await myAiSummary(misUserId)).enabled) {
       return res.status(503).json({
         success: false,
         message: 'AI drafting is not configured on this server.',
@@ -225,18 +246,26 @@ router.post(
         schemaName: 'discipline_rules',
         maxOutputTokens: 4000,
       };
-      // My AI picks which AI answers (the person's own key via the MIS, or the
-      // school's); both get exactly the same prompt and schema.
-      const { data, providerUsed, ai } = await withPersonalAi<{ rules: any[] }>(
-        { misUserId, task: 'author', feature: 'da.rules-draft', inAssessment: false, aiRoute: aiRoute ?? null },
-        {
-          personal: gatewayJson<{ rules: any[] }>(misUserId ?? 0, params),
-          school: () => {
-            if (!isAnyProviderConfigured()) throw notConfigured();
-            return generateStructuredContent<{ rules: any[] }>(params);
+      let result: { data: { rules: any[] }; providerUsed: string; ai?: unknown };
+      if (handoff) {
+        const out = runJsonHandoff<{ rules: any[] }>(handoff, params);
+        if ('prompt' in out) return res.json({ success: true, handoff: out.prompt });
+        result = { data: out.data, providerUsed: 'handoff', ai: HANDOFF_AI };
+      } else {
+        // My AI picks which AI answers (the person's own key via the MIS, or the
+        // school's); both get exactly the same prompt and schema.
+        result = await withPersonalAi<{ rules: any[] }>(
+          { misUserId, task: 'author', feature: 'da.rules-draft', inAssessment: false, aiRoute: aiRoute ?? null },
+          {
+            personal: gatewayJson<{ rules: any[] }>(misUserId ?? 0, params),
+            school: () => {
+              if (!isAnyProviderConfigured()) throw notConfigured();
+              return generateStructuredContent<{ rules: any[] }>(params);
+            },
           },
-        },
-      );
+        );
+      }
+      const { data, providerUsed, ai } = result;
 
       // The model is untrusted input: normalise here, but let the same
       // ruleSchema used everywhere else decide what's actually valid, and
@@ -270,6 +299,8 @@ router.post(
         message: `Drafted ${drafts.length} rule${drafts.length === 1 ? '' : 's'}.`,
       });
     } catch (error: any) {
+      // A hand-off answer that isn't in the expected format, or a refusal.
+      if (isExternalAiError(error)) return res.status(error.status).json(externalAiBody(error));
       // Switched off between the check above and the provider call.
       if (isAiDisabledError(error)) return res.status(403).json(aiDisabledBody(error));
       // Their own key failed and they did not let the school AI answer instead.

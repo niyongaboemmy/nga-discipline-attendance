@@ -4,6 +4,7 @@ import { misBearerAuth, IntegrationRequest } from '../../middleware/misBearerAut
 import { DATE_RE } from '../../shared/validation.js';
 import { addDays, schoolDateString } from '../../shared/schoolTime.js';
 import { buildHomeSummary, emptyHomeSummary, LensHint, LessonHint } from './homeSummary.service.js';
+import { mcpCall, mcpTools } from './mcp.js';
 
 /**
  * Server-to-server endpoints for the NGA Central MIS, authenticated with the
@@ -150,6 +151,13 @@ async function homeSummary(req: any, res: Response) {
 
 router.post('/home-summary', homeSummary);
 router.get('/home-summary', homeSummary);
+
+// The NGA connector: tools the MIS MCP server relays for this person (mcp.ts).
+const wrap = (fn: (req: any, res: Response) => Promise<unknown>) => (req: any, res: Response, next: NextFunction) => {
+  fn(req, res).catch(next);
+};
+router.get('/mcp/tools', wrap(mcpTools));
+router.post('/mcp/call', wrap(mcpCall));
 
 /**
  * JSON errors for /api/integration/* (mounted after the router in app.ts, so

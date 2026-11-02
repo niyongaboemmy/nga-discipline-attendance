@@ -11,7 +11,7 @@ import { ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { RuleImportModal } from '../components/discipline/RuleImportModal';
 import { Pager, clampPage } from '../components/common/Pager';
-import { Plus, Trash2, Pencil, Gavel, Award, ShieldCheck, Upload, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Pencil, Gavel, Award, ShieldCheck, Upload, Sparkles, CheckCircle2 } from 'lucide-react';
 
 const emptyForm: RuleInput = {
   type: 'demerit', category: '', title: '', description: '', defaultPoints: 5, fineAmount: 0, severity: 'minor',
@@ -147,6 +147,22 @@ export const DisciplineRules: React.FC = () => {
     }
   };
 
+  /** A connector draft becomes an active rule only when a rules manager approves it here. */
+  const [approving, setApproving] = useState<number | null>(null);
+  const approve = async (rule: DisciplineRule) => {
+    setApproving(rule.id);
+    try {
+      const res = await disciplineApi.updateRule(rule.id, { isActive: true });
+      setRules((list) => list.map((r) => (r.id === rule.id ? res.data! : r)));
+      toast.success('Rule approved', `"${rule.title}" is now available for logging.`);
+    } catch (err) {
+      toast.error('Could not approve the rule', (err as ApiError).message);
+    } finally {
+      setApproving(null);
+    }
+  };
+  const draftCount = rules.filter((r) => r.is_draft).length;
+
   const demerits = rules.filter((r) => r.type === 'demerit');
   const merits = rules.filter((r) => r.type === 'merit');
 
@@ -178,13 +194,22 @@ export const DisciplineRules: React.FC = () => {
               <td className="text-sm">{r.category}{r.severity ? ` · ${r.severity}` : ''}</td>
               <td><span className={`badge ${r.type === 'merit' ? 'badge-success' : 'badge-danger'}`}>{r.type === 'merit' ? '+' : '−'}{r.default_points}</span></td>
               <td className="text-sm">{r.fine_amount > 0 ? r.fine_amount.toLocaleString() : '—'}</td>
-              <td><span className={`badge ${r.is_active ? 'badge-success' : 'badge-neutral'}`}>{r.is_active ? 'Active' : 'Retired'}</span></td>
+              <td>
+                {r.is_draft
+                  ? <span className="badge badge-warning" title="Drafted from someone's own AI. Not used until approved.">Draft</span>
+                  : <span className={`badge ${r.is_active ? 'badge-success' : 'badge-neutral'}`}>{r.is_active ? 'Active' : 'Retired'}</span>}
+              </td>
               {canManage && (
                 <td>
                   <div className="flex gap-1">
                     <button className="btn btn-outline btn-sm" onClick={() => openEdit(r)} title="Edit rule">
                       <Pencil size={14} />
                     </button>
+                    {!!r.is_draft && (
+                      <button className="btn btn-outline btn-sm" onClick={() => approve(r)} disabled={approving === r.id} title="Approve this draft: it becomes an active rule">
+                        <CheckCircle2 size={14} /> Approve
+                      </button>
+                    )}
                     {r.is_active === 1 && (
                       <button className="btn btn-outline btn-sm" onClick={() => setRetireTarget(r)} title="Retire rule">
                         <Trash2 size={14} />
@@ -242,6 +267,13 @@ export const DisciplineRules: React.FC = () => {
         <p className="text-xs text-secondary mb-3" role="note">
           <Sparkles size={12} /> {aiOff} Rules can still be imported or added by hand.
         </p>
+      )}
+
+      {canManage && draftCount > 0 && (
+        <div className="alert alert-warning mb-3" role="status">
+          {draftCount === 1 ? '1 rule was' : `${draftCount} rules were`} drafted from someone's own AI (NGA connector).
+          Drafts are not used until a rules manager approves them below.
+        </div>
       )}
 
       {canManage && addMode && (

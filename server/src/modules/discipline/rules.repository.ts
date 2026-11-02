@@ -10,6 +10,8 @@ export interface DisciplineRule {
   fine_amount: number;
   severity: string | null;
   is_active: number;
+  /** 1 = drafted through the NGA connector, inactive until a person approves it. */
+  is_draft?: number;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -24,6 +26,8 @@ export interface CreateRuleInput {
   fineAmount?: number;
   severity?: string | null;
   createdBy: string;
+  /** Saved inactive as a draft awaiting approval (connector drafts). */
+  draft?: boolean;
 }
 
 export interface UpdateRuleInput {
@@ -61,8 +65,8 @@ export async function getRule(db: Database, id: number): Promise<DisciplineRule 
 export async function createRule(db: Database, input: CreateRuleInput): Promise<DisciplineRule> {
   const result = await db.run(
     `INSERT INTO discipline_rules
-       (type, category, title, description, default_points, fine_amount, severity, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (type, category, title, description, default_points, fine_amount, severity, created_by, is_active, is_draft)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.type,
     input.category,
     input.title,
@@ -70,7 +74,9 @@ export async function createRule(db: Database, input: CreateRuleInput): Promise<
     input.defaultPoints,
     input.fineAmount ?? 0,
     input.severity ?? null,
-    input.createdBy
+    input.createdBy,
+    input.draft ? 0 : 1,
+    input.draft ? 1 : 0
   );
   const rule = await getRule(db, result.lastID!);
   await recordRuleVersion(db, rule!.id, null, input.defaultPoints, input.fineAmount ?? 0);
@@ -90,6 +96,7 @@ export async function updateRule(db: Database, id: number, input: UpdateRuleInpu
        fine_amount = COALESCE(?, fine_amount),
        severity = COALESCE(?, severity),
        is_active = COALESCE(?, is_active),
+       is_draft = CASE WHEN ? = 1 THEN 0 ELSE is_draft END,
        updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
     input.category ?? null,
@@ -99,6 +106,8 @@ export async function updateRule(db: Database, id: number, input: UpdateRuleInpu
     input.fineAmount ?? null,
     input.severity ?? null,
     input.isActive === undefined ? null : (input.isActive ? 1 : 0),
+    // Activating a rule approves it: it is no longer a draft.
+    input.isActive === true ? 1 : 0,
     id
   );
 

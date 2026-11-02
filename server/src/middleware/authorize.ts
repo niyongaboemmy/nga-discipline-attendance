@@ -38,6 +38,23 @@ function decideWithV2(
     .catch(next);
 }
 
+/**
+ * The same verdict as authorizePermission, for code that is not a route guard
+ * (the connector tools): legacy local RBAC, or v2 "held anywhere" in enforce
+ * mode (no snapshot = no).
+ */
+export async function holdsAnyPermission(req: any, keys: string[]): Promise<boolean> {
+  const user = (req as AuthenticatedRequest).user;
+  if (!user) return false;
+  const legacyAllowed = keys.some((k) => user.permissions.has(k));
+  const mode = accessMode();
+  if (mode !== 'enforce') {
+    if (mode === 'shadow') shadowCompareLegacy(req, keys, legacyAllowed, false);
+    return legacyAllowed;
+  }
+  return (await enforceHeldAnywhere(req, keys, false)) === true;
+}
+
 /** Allow the request if the user holds ANY of the given permission keys. */
 export function authorizePermission(...keys: string[]) {
   return (req: any, res: Response, next: NextFunction) => {
