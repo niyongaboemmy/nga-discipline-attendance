@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import type { Depth, Target } from '../vendor/nga-access/index.js';
 import { fetchWithTimeout } from './snapshot.js';
+import { scopedKey, tenantHeader } from '../tenancy/index.js';
 
 /**
  * App-to-MIS access calls made with this app's own SSO client credentials
@@ -35,12 +36,14 @@ function targetQuery(target: Target | null | undefined): Record<string, string> 
 export async function fetchHolders(cap: string, target: Target | null | undefined, minDepth?: Depth | null): Promise<Holder[]> {
   const params = new URLSearchParams({ app: 'da', cap, ...targetQuery(target) });
   if (minDepth) params.set('minDepth', minDepth);
-  const key = params.toString();
+  const query = params.toString();
+  // Per school: the same capability has different holders in each tenant.
+  const key = scopedKey(query);
   const hit = holdersCache.get(key);
   if (hit && Date.now() - hit.at < HOLDERS_TTL_MS) return hit.holders;
 
-  const resp = await fetchWithTimeout(`${config.ngaMisBaseUrl}/access/holders?${key}`, {
-    headers: { Authorization: basicAuthHeader(), Accept: 'application/json' },
+  const resp = await fetchWithTimeout(`${config.ngaMisBaseUrl}/access/holders?${query}`, {
+    headers: { Authorization: basicAuthHeader(), Accept: 'application/json', ...tenantHeader() },
   });
   if (!resp.ok) throw new Error(`MIS /access/holders returned ${resp.status}`);
   const body = (await resp.json()) as any;
@@ -65,7 +68,7 @@ export async function postAccessAudit(entry: {
   try {
     const resp = await fetchWithTimeout(`${config.ngaMisBaseUrl}/access/audit`, {
       method: 'POST',
-      headers: { Authorization: basicAuthHeader(), 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers: { Authorization: basicAuthHeader(), 'Content-Type': 'application/json', Accept: 'application/json', ...tenantHeader() },
       body: JSON.stringify(entry),
     });
     return resp.ok;

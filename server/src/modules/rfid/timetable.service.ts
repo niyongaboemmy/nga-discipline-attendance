@@ -1,6 +1,7 @@
 import { Database } from 'sqlite';
 import { dayOfWeekFor, periodForTime, schoolLocalToUtc } from '../../shared/schoolTime.js';
 import { Lesson, Period } from './engine.js';
+import { homeroomPeriod, rfidBreakMinGapMs, rfidDebounceSeconds, rfidGraceMinutes } from '../../tenancy/settings.js';
 
 /**
  * Each class's timetable, as Tendo's attendance calendar shows it (MIS
@@ -16,6 +17,13 @@ export const BREAK_MIN_GAP_MS = Number(process.env.RFID_BREAK_MIN_GAP_MINUTES ||
 export const HOMEROOM_PERIOD = (process.env.HOMEROOM_PERIOD || 'Morning') as Period;
 /** Taps of one card closer together than this are one tap. */
 export const DEBOUNCE_SECONDS = Number(process.env.RFID_DEBOUNCE_SECONDS || 10);
+
+/** Per-school values for the tenant code runs for (tenancy/settings.ts); the
+ *  constants above are only tenant 1's env defaults, kept for reference. */
+export const graceMinutes = (): number => rfidGraceMinutes();
+export const breakMinGapMs = (): number => rfidBreakMinGapMs();
+export const homeroomPeriodSetting = (): Period => homeroomPeriod() as Period;
+export const debounceSeconds = (): number => rfidDebounceSeconds();
 
 const hhmm = (v: string) => String(v).slice(0, 5);
 

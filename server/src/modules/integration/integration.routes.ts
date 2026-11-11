@@ -5,6 +5,7 @@ import { DATE_RE } from '../../shared/validation.js';
 import { addDays, schoolDateString } from '../../shared/schoolTime.js';
 import { buildHomeSummary, emptyHomeSummary, LensHint, LessonHint } from './homeSummary.service.js';
 import { mcpCall, mcpTools } from './mcp.js';
+import { scopedKey } from '../../tenancy/index.js';
 
 /**
  * Server-to-server endpoints for the NGA Central MIS, authenticated with the
@@ -19,15 +20,17 @@ const router = Router();
 // ---------------------------------------------------------------------------
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX = 30;
-const hits = new Map<number, number[]>();
+/** Keyed `t<tid>:<MIS user id>`. */
+const hits = new Map<string, number[]>();
 
 function rateLimit(req: Request, res: Response, next: NextFunction) {
   const userId = (req as IntegrationRequest).misUserId;
   if (userId == null) return next();
   const now = Date.now();
-  const recent = (hits.get(userId) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  const key = scopedKey(userId);
+  const recent = (hits.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS);
   recent.push(now);
-  hits.set(userId, recent);
+  hits.set(key, recent);
   if (hits.size > 10_000) {
     for (const [key, times] of hits) if (times.every((t) => now - t >= RATE_WINDOW_MS)) hits.delete(key);
   }

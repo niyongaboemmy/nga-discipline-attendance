@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { basicAuthHeader } from '../access/misService.js';
 import { misAvatarOf, type MisAvatar } from './sso.js';
+import { scopedKey, tenantHeader } from '../tenancy/index.js';
 
 /**
  * POST /api/avatars/lookup { ids: string[] } -- NGA profile photos for the people on
@@ -14,13 +15,14 @@ const router = Router();
 
 const TTL_MS = 5 * 60_000;
 const MAX_IDS = 500;
-const cache = new Map<number, { avatar: MisAvatar | null; at: number }>();
+/** Keyed `t<tid>:<MIS user id>`: one school's photos never answer for another's ids. */
+const cache = new Map<string, { avatar: MisAvatar | null; at: number }>();
 
 type Transport = (ids: number[]) => Promise<Array<{ user_id: number; avatar?: unknown }>>;
 const defaultTransport: Transport = async (ids) => {
   const res = await fetch(`${config.ngaMisBaseUrl.replace(/\/+$/, '')}/users/profile-media/lookup`, {
     method: 'POST',
-    headers: { Authorization: basicAuthHeader(), 'Content-Type': 'application/json' },
+    headers: { Authorization: basicAuthHeader(), 'Content-Type': 'application/json', ...tenantHeader() },
     body: JSON.stringify({ user_ids: ids }),
     signal: AbortSignal.timeout(8000),
   });
@@ -41,7 +43,7 @@ export async function lookupAvatars(rawIds: unknown[], now = Date.now()): Promis
   const out: Record<string, MisAvatar> = {};
   const missing: number[] = [];
   for (const id of ids) {
-    const hit = cache.get(id);
+    const hit = cache.get(scopedKey(id));
     if (hit && now - hit.at < TTL_MS) {
       if (hit.avatar) out[id] = hit.avatar;
     } else missing.push(id);
@@ -52,11 +54,11 @@ export async function lookupAvatars(rawIds: unknown[], now = Date.now()): Promis
     for (const u of users) {
       const avatar = misAvatarOf(u);
       answered.add(Number(u.user_id));
-      cache.set(Number(u.user_id), { avatar, at: now });
+      cache.set(scopedKey(Number(u.user_id)), { avatar, at: now });
       if (avatar) out[u.user_id] = avatar;
     }
     // Ids MIS doesn't know get initials; remember that too, so they aren't re-asked.
-    for (const id of missing) if (!answered.has(id)) cache.set(id, { avatar: null, at: now });
+    for (const id of missing) if (!answered.has(id)) cache.set(scopedKey(id), { avatar: null, at: now });
   }
   return out;
 }

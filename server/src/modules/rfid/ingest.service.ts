@@ -7,10 +7,10 @@ import {
   RegisterTarget, ScanOutcome, buildBlocks, decideRecord, effectiveScanTime, isDebounced, pickBlock, registersForTap,
 } from './engine.js';
 import {
-  BREAK_MIN_GAP_MS, DEBOUNCE_SECONDS, GRACE_MINUTES, HOMEROOM_PERIOD, dayStartFor, isSchoolDay, lessonsFor,
+  breakMinGapMs, debounceSeconds, graceMinutes, homeroomPeriodSetting, dayStartFor, isSchoolDay, lessonsFor,
 } from './timetable.service.js';
 import { resolveEnrolment, schoolYearForDate } from './roster.service.js';
-import { enqueue, rfidEvents, ScanProcessedEvent } from './workQueue.js';
+import { emitRfidEvent, enqueue, ScanProcessedEvent } from './workQueue.js';
 
 /**
  * Raw tap → scan event → the registers a teacher would otherwise have marked.
@@ -183,7 +183,7 @@ async function processEvent(db: Database, scanId: number): Promise<void> {
     uid: ev.uid,
     deviceName: device?.name ?? null,
   };
-  rfidEvents.emit('event', evt);
+  emitRfidEvent(evt);
 }
 
 async function resolve(db: Database, ev: any): Promise<Resolution> {
@@ -251,7 +251,7 @@ async function resolve(db: Database, ev: any): Promise<Resolution> {
   if (lessons.length === 0) {
     return { ...base, outcome: 'no_active_session', detail: `No lessons on ${enrol.className}'s timetable today` };
   }
-  const block = pickBlock(t, buildBlocks(lessons, BREAK_MIN_GAP_MS, dayStartFor(sessionDate)));
+  const block = pickBlock(t, buildBlocks(lessons, breakMinGapMs(), dayStartFor(sessionDate)));
   if (!block) return { ...base, outcome: 'no_active_session', detail: 'After the last lesson of the day' };
 
   // --- repeats ------------------------------------------------------------
@@ -261,12 +261,12 @@ async function resolve(db: Database, ev: any): Promise<Resolution> {
       ORDER BY effective_at DESC LIMIT 1`,
     card.id, ev.id, atIso
   );
-  if (isDebounced(t, previous ? Date.parse(previous.effective_at) : null, DEBOUNCE_SECONDS)) {
+  if (isDebounced(t, previous ? Date.parse(previous.effective_at) : null, debounceSeconds())) {
     return { ...base, outcome: 'debounced' };
   }
 
   // --- registers ----------------------------------------------------------
-  const targets = registersForTap(t, block, GRACE_MINUTES, HOMEROOM_PERIOD);
+  const targets = registersForTap(t, block, graceMinutes(), homeroomPeriodSetting());
   const clock = schoolClockLabel(new Date(t));
   const who = {
     studentId: holder.student_id as string, studentName: base.studentName as string, classId: enrol.classId,

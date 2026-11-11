@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { config } from '../config.js';
-import { getDb } from '../database.js';
+import { ensureTenantDb, getDb } from '../database.js';
+import {
+  TENANT_HEADER, gateTenant, legacyDefaultTid, parseTid, runWithTenant, tenantOfMisPayload, tidOfMisToken,
+} from '../tenancy/index.js';
 import { AuthenticatedRequest, Role, resolvePermissions } from './auth.js';
 import { fetchWithTimeout, noteAccessVersion } from '../access/snapshot.js';
 import { noteAiPolicyVersion } from '../services/aiPolicy.js';
@@ -39,6 +42,8 @@ const MAX_TOKEN_LENGTH = 4096;
 
 interface Verified {
   misUserId: number;
+  /** The school the MIS token speaks for (verify response `tenant`, else the token's `tid`, else legacy). */
+  tid: number | null;
   at: number;
   period?: { academicYearId?: number; academicTermId?: number };
 }
@@ -103,7 +108,8 @@ async function verifyWithMis(token: string): Promise<VerifyResult> {
   // My AI: a new ai_routes_v (or ai_policy_v) drops this person's cached route map.
   noteAiRoutesVersion(misUserId, data?.ai_routes_v, data?.ai_policy_v);
 
-  const entry: Verified = { misUserId, at: Date.now() };
+  const tid = tenantOfMisPayload(data)?.tid ?? tidOfMisToken(token) ?? legacyDefaultTid();
+  const entry: Verified = { misUserId, tid, at: Date.now() };
   remember(key, entry);
   return { ok: true, entry };
 }
@@ -127,38 +133,58 @@ export async function misBearerAuth(req: Request, res: Response, next: NextFunct
         : res.status(503).json({ success: false, code: 'MIS_UNAVAILABLE', message: 'Could not verify the session with the MIS.' });
     }
 
-    const r = req as IntegrationRequest;
     const { entry } = result;
-    r.misUserId = entry.misUserId;
-    const id = String(entry.misUserId);
-    const user = await getDb().get('SELECT id, name, email, role FROM users WHERE id = ?', id);
-    if (!user) {
-      r.homeProvisioned = false;
-      return next();
+    // Tenancy (contract §3, §6): the token names the school; a service
+    // header naming another one is refused.
+    const headerRaw = req.headers[TENANT_HEADER];
+    if (headerRaw !== undefined) {
+      const headerTid = parseTid(Array.isArray(headerRaw) ? headerRaw[0] : headerRaw);
+      if (headerTid == null || headerTid !== entry.tid) {
+        return res.status(403).json({ success: false, code: 'TENANT_MISMATCH', message: 'The tenant header does not match the MIS session.' });
+      }
     }
-
-    const resolved = (await resolvePermissions(id)) ?? { permissions: new Set<string>() };
-    // Once per verification, not per request (it may call MIS /users/me).
-    entry.period ??= await resolveCurrentAcademicPeriod(token);
-    const { academicYearId, academicTermId } = entry.period;
-    r.homeProvisioned = true;
-    r.user = {
-      id,
-      name: user.name,
-      email: user.email ?? '',
-      role: user.role as Role,
-      misToken: token,
-      academicYearId,
-      academicTermId,
-      roleId: resolved.roleId,
-      roleName: resolved.roleName,
-      roleLevel: resolved.roleLevel,
-      permissions: resolved.permissions,
-    };
-    return next();
+    const gate = await gateTenant(entry.tid);
+    if (!gate.ok) {
+      return res.status(gate.status).json({ success: false, code: gate.code, message: gate.message });
+    }
+    await ensureTenantDb(gate.tenant.tid);
+    return await runWithTenant(gate.tenant, () => attachUser(req, next, token, entry));
   } catch (err) {
     return next(err);
   }
+}
+
+/** The local user behind a verified MIS token, inside its tenant's context. */
+async function attachUser(req: Request, next: NextFunction, token: string, entry: Verified) {
+  const r = req as IntegrationRequest;
+  r.misUserId = entry.misUserId;
+  const id = String(entry.misUserId);
+  const user = await getDb().get('SELECT id, name, email, role FROM users WHERE id = ?', id);
+  if (!user) {
+    r.homeProvisioned = false;
+    return next();
+  }
+
+  const resolved = (await resolvePermissions(id)) ?? { permissions: new Set<string>() };
+  // Once per verification, not per request (it may call MIS /users/me).
+  entry.period ??= await resolveCurrentAcademicPeriod(token);
+  const { academicYearId, academicTermId } = entry.period;
+  r.homeProvisioned = true;
+  r.user = {
+    id,
+    name: user.name,
+    email: user.email ?? '',
+    role: user.role as Role,
+    misToken: token,
+    tid: entry.tid ?? undefined,
+    academicYearId,
+    academicTermId,
+    roleId: resolved.roleId,
+    roleName: resolved.roleName,
+    roleLevel: resolved.roleLevel,
+    permissions: resolved.permissions,
+  };
+  return next();
 }
 
 /** Test hook. */

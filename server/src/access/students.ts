@@ -1,5 +1,6 @@
 import type { Database } from 'sqlite';
 import { misGetListOrNull } from '../services/misClient.js';
+import { scopedKey } from '../tenancy/index.js';
 
 /**
  * A student's class group, for access targets ("pass the student's class
@@ -43,7 +44,7 @@ export async function resolveStudentClassGroups(
   const missing = ids.filter((id) => !out.has(id));
   let lookups = 0;
   for (const id of missing) {
-    const hit = misCache.get(id);
+    const hit = misCache.get(scopedKey(id));
     if (hit && Date.now() - hit.at < MIS_TTL_MS) {
       out.set(id, hit.classGroupId);
       continue;
@@ -65,7 +66,7 @@ export async function resolveStudentClassGroups(
     } catch {
       classGroupId = null;
     }
-    misCache.set(id, { at: Date.now(), classGroupId });
+    misCache.set(scopedKey(id), { at: Date.now(), classGroupId });
     out.set(id, classGroupId);
   }
   if (misCache.size > 20000) misCache.clear();

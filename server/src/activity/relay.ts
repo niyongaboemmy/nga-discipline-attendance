@@ -1,7 +1,8 @@
 import type { Request } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
-import { getDb } from '../database.js';
+import { ensureTenantDb } from '../database.js';
+import { PRIMARY_TENANT_ID, effectiveTid, tenantHeader, tidOfClaims } from '../tenancy/index.js';
 import { issuedBeforeRevocation } from '../utils/ssoLogout.js';
 import { createActivityRelay, type ActivityRelay, type RelayOptions } from '../vendor/nga-activity-relay/relay.js';
 
@@ -42,7 +43,10 @@ export async function misUserIdOf(req: Request): Promise<number | null> {
     }
     if (!decoded || typeof decoded !== 'object' || decoded.id == null) return null;
 
-    const db = getDb();
+    // The session's own school file (never creates one).
+    const tid = tidOfClaims(decoded);
+    if (tid == null) return null;
+    const db = await ensureTenantDb(tid, { create: false });
     try {
       const revoked = await db.get('SELECT revoked_at FROM session_revocations WHERE user_id = ?', String(decoded.id));
       if (issuedBeforeRevocation(decoded.iat, revoked?.revoked_at)) return null;
@@ -62,9 +66,10 @@ export async function misUserIdOf(req: Request): Promise<number | null> {
 }
 
 /** Stand-in used when MIS is not configured: answers like a relay, forwards nothing. */
+const disabledRelays = new WeakSet<object>();
 const disabledRelay = (): ActivityRelay => {
   const stats = { forwarded: 0, dropped: 0, failures: 0, lastOkAt: 0 };
-  return {
+  const relay: ActivityRelay = {
     handler: async (_req: any, res: any) => res.status(204).end(),
     configHandler: async (_req: any, res: any) => {
       res.set?.('Cache-Control', 'no-store');
@@ -78,6 +83,8 @@ const disabledRelay = (): ActivityRelay => {
     stats,
     _queue: () => ({ batches: 0, serverEvents: 0 }),
   };
+  disabledRelays.add(relay);
+  return relay;
 };
 
 export interface ActivityEnv {
@@ -121,8 +128,73 @@ export function buildActivityRelay(
   });
 }
 
-/** One relay per process. */
-export const activityRelay = buildActivityRelay();
+/** The school a request's Tendo session belongs to; anonymous visitors count for tenant 1. */
+export function tidOfRequest(req: Request): number {
+  try {
+    const header = req.headers.authorization;
+    if (header?.startsWith('Bearer ')) {
+      const decoded = jwt.verify(header.split(' ')[1], config.jwtSecret);
+      return tidOfClaims(decoded) ?? PRIMARY_TENANT_ID;
+    }
+  } catch {
+    /* anonymous */
+  }
+  return PRIMARY_TENANT_ID;
+}
+
+/** fetch that adds X-NGA-Tenant, so MIS files each school's batches under it (contract §3). */
+function tenantFetch(tid: number, base: typeof fetch = fetch): typeof fetch {
+  return ((url: any, init: any = {}) =>
+    base(url, { ...init, headers: { ...(init.headers || {}), ...tenantHeader(tid) } })) as typeof fetch;
+}
+
+/**
+ * One vendored relay per school, behind the single ActivityRelay interface
+ * the app uses: each relay queues and forwards only its own tenant's events,
+ * with that tenant's X-NGA-Tenant header. The vendored relay is unchanged.
+ */
+export function buildTenantActivityRelay(
+  env: ActivityEnv = process.env,
+  overrides: Partial<RelayOptions> = {},
+): ActivityRelay {
+  const first = buildActivityRelay(env, { ...overrides, fetchImpl: tenantFetch(PRIMARY_TENANT_ID, overrides.fetchImpl) });
+  // Not configured: the same no-op for every school.
+  if (disabledRelays.has(first)) return first;
+  const relays = new Map<number, ActivityRelay>([[PRIMARY_TENANT_ID, first]]);
+  const relayFor = (tid: number): ActivityRelay => {
+    let r = relays.get(tid);
+    if (!r) {
+      r = buildActivityRelay(env, { ...overrides, fetchImpl: tenantFetch(tid, overrides.fetchImpl) });
+      relays.set(tid, r);
+    }
+    return r;
+  };
+  const all = () => [...relays.values()];
+  const stats = {
+    get forwarded() { return all().reduce((n, r) => n + r.stats.forwarded, 0); },
+    get dropped() { return all().reduce((n, r) => n + r.stats.dropped, 0); },
+    get failures() { return all().reduce((n, r) => n + r.stats.failures, 0); },
+    get lastOkAt() { return Math.max(0, ...all().map((r) => r.stats.lastOkAt)); },
+  };
+  return {
+    handler: (req: any, res: any) => relayFor(tidOfRequest(req)).handler(req, res),
+    configHandler: (req: any, res: any) => relayFor(tidOfRequest(req)).configHandler(req, res),
+    track: (...args: Parameters<ActivityRelay['track']>) => relayFor(effectiveTid('activity event')).track(...args),
+    // The feature catalog is the app's, not a school's: published once (tenant 1).
+    pushCatalog: (...args: Parameters<ActivityRelay['pushCatalog']>) => first.pushCatalog(...args),
+    deviceIdOf: (req: any) => first.deviceIdOf(req),
+    flush: async () => { await Promise.all(all().map((r) => r.flush())); },
+    stop: async () => { await Promise.all(all().map((r) => r.stop())); },
+    stats,
+    _queue: () => all().reduce(
+      (acc, r) => { const q = r._queue(); return { batches: acc.batches + q.batches, serverEvents: acc.serverEvents + q.serverEvents }; },
+      { batches: 0, serverEvents: 0 },
+    ),
+  } as ActivityRelay;
+}
+
+/** One relay per process (fanning out per school, see buildTenantActivityRelay). */
+export const activityRelay = buildTenantActivityRelay();
 
 /**
  * Server-side key event for the signed-in actor (counted even if the browser

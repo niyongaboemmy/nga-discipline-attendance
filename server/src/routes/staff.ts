@@ -4,9 +4,10 @@ import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 import { schoolDateString, schoolMinutesOfDay } from '../shared/schoolTime.js';
+import { staffLateCutoffMinutes } from '../tenancy/settings.js';
 
 /** Staff are "late" if they clock in after this local time (minutes from midnight). */
-const LATE_CUTOFF_MINUTES = Number(process.env.STAFF_LATE_CUTOFF_MINUTES || 8 * 60 + 30);
+const LATE_CUTOFF_MINUTES = (): number => staffLateCutoffMinutes();
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (r
   // school's timezone, not a mix of UTC and server-local.
   const today = schoolDateString();
   const now = new Date().toISOString();
-  const status = schoolMinutesOfDay() > LATE_CUTOFF_MINUTES ? 'late' : 'present';
+  const status = schoolMinutesOfDay() > LATE_CUTOFF_MINUTES() ? 'late' : 'present';
 
   const db = getDb();
   try {

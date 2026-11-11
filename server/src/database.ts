@@ -1,21 +1,122 @@
+import fs from 'fs';
+import path from 'path';
 import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
 import { config } from './config.js';
 import { PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, SYSTEM_ROLES } from './constants/permissions.js';
 import { migrateRfidAttendance } from './modules/rfid/rfid.migrations.js';
+import { PRIMARY_TENANT_ID, effectiveTid, parseTid } from './tenancy/index.js';
+import { loadSchoolSettings, migrateSchoolSettings } from './tenancy/settings.js';
 
-let db: Database;
+/**
+ * One SQLite file per tenant (MULTI_TENANCY_GAP_FIX_PLAN.md ADR-1, Phase 5):
+ *
+ *   tenant 1 (NGA, primary)  config.databasePath (DATABASE_PATH), in place
+ *   tenant N                 ${TENDO_DATA_DIR || dirname(DATABASE_PATH)}/t<N>/attendance.db
+ *
+ * `getDb()` resolves the handle from the current tenant context, so the ~126
+ * call sites never name a tenant. Handles are opened (and migrated) by
+ * `initDatabase(tid)` / `ensureTenantDb(tid)`; the auth middlewares and the
+ * scheduler loop call the latter before entering a tenant's context.
+ */
+const dbs = new Map<number, Database>();
+const opening = new Map<number, Promise<Database>>();
 
-/** `filenameOverride` lets tests point at `:memory:` without touching the
- *  process-wide config/env (config.databasePath stays the on-disk default
- *  for the real server). */
-export async function initDatabase(filenameOverride?: string) {
-  const filename = filenameOverride ?? config.databasePath;
-  db = await open({
+/** Where tenant `tid`'s file lives. */
+export function tenantDbPath(tid: number): string {
+  if (tid === PRIMARY_TENANT_ID) return config.databasePath;
+  const dir = (process.env.TENDO_DATA_DIR || '').trim() || path.dirname(config.databasePath);
+  return path.join(dir, `t${tid}`, 'attendance.db');
+}
+
+/** Does tenant `tid` already have storage (an open handle or a file on disk)? */
+export function tenantDbExists(tid: number): boolean {
+  if (dbs.has(tid)) return true;
+  const file = tenantDbPath(tid);
+  return tid === PRIMARY_TENANT_ID || fs.existsSync(file);
+}
+
+/**
+ * Open (creating if needed) and migrate a tenant's file, and make it the
+ * handle `getDb()` returns for that tenant.
+ *
+ *   initDatabase()               tenant 1 at DATABASE_PATH (the server boot)
+ *   initDatabase(':memory:')     tenant 1 at the given file (tests)
+ *   initDatabase(7)              tenant 7 at tenantDbPath(7)
+ *   initDatabase(7, ':memory:')  tenant 7 at the given file (tests)
+ *
+ * `filenameOverride` lets tests point at `:memory:` without touching the
+ * process-wide config/env (config.databasePath stays the on-disk default
+ * for the real server).
+ */
+export async function initDatabase(tidOrFilename?: number | string, filenameOverride?: string) {
+  const tid = typeof tidOrFilename === 'number' ? tidOrFilename : PRIMARY_TENANT_ID;
+  if (!parseTid(tid)) throw new Error(`initDatabase: invalid tenant id ${tidOrFilename}`);
+  const filename =
+    (typeof tidOrFilename === 'string' ? tidOrFilename : filenameOverride) ?? tenantDbPath(tid);
+  if (filename !== ':memory:') {
+    const dir = path.dirname(filename);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
+  const db = await open({
     filename,
     driver: sqlite3.Database,
   });
+  await migrateTenantDb(db, { tid, isPrimary: tid === PRIMARY_TENANT_ID });
+  dbs.set(tid, db);
+  console.log(`Database initialized successfully at: ${filename} (tenant ${tid})`);
+  return db;
+}
 
+/**
+ * The tenant's handle, opening and migrating its file on first use. With
+ * `create: false` a tenant that has no file yet is refused instead of
+ * created (a file is only ever created for a tenant the registry knows, or
+ * by the provisioning endpoint).
+ */
+export async function ensureTenantDb(tid: number, opts: { create?: boolean } = {}): Promise<Database> {
+  const existing = dbs.get(tid);
+  if (existing) return existing;
+  if (opts.create === false && !tenantDbExists(tid)) {
+    throw new Error(`No database for tenant ${tid}`);
+  }
+  let p = opening.get(tid);
+  if (!p) {
+    p = initDatabase(tid).finally(() => opening.delete(tid));
+    opening.set(tid, p);
+  }
+  return p;
+}
+
+/** The handle for an explicit tenant (already opened), or throws. */
+export function getDbFor(tid: number): Database {
+  const db = dbs.get(tid);
+  if (!db) {
+    throw new Error(`Database for tenant ${tid} not initialized. Call initDatabase/ensureTenantDb first.`);
+  }
+  return db;
+}
+
+/** Close every tenant handle (tests, shutdown). */
+export async function closeAllDatabases(): Promise<void> {
+  const all = [...dbs.values()];
+  dbs.clear();
+  await Promise.allSettled(all.map((d) => d.close()));
+}
+
+/** Close one tenant's handle (tests). */
+export async function closeTenantDb(tid: number): Promise<void> {
+  const d = dbs.get(tid);
+  dbs.delete(tid);
+  if (d) await d.close().catch(() => undefined);
+}
+
+/**
+ * Schema + migrations for one tenant file. Everything here is generic
+ * (`@tenant: generic`) except the data fixes guarded by `isPrimary`
+ * (`@tenant: primary-only`, NGA's own history -- TD-2).
+ */
+export async function migrateTenantDb(db: Database, { tid, isPrimary }: { tid: number; isPrimary: boolean }) {
   // Enable foreign keys
   await db.run('PRAGMA foreign_keys = ON');
 
@@ -243,8 +344,8 @@ export async function initDatabase(filenameOverride?: string) {
   }
   await db.run(`CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id)`);
 
-  await seedRbac();
-  await backfillUserRoleIds();
+  await seedRbac(db);
+  await backfillUserRoleIds(db);
 
   await migrateAcademicPeriodCache(db);
   await migrateRosterCache(db);
@@ -258,15 +359,16 @@ export async function initDatabase(filenameOverride?: string) {
   await migrateNotificationsSchema(db);
   await migrateStaffType(db);
   await migrateDataMigrationLedger(db);
-  await purgeAttendanceForCorrectedDates(db);
+  // @tenant: primary-only -- NGA's Term 1 2026-2027 register correction.
+  if (isPrimary) await purgeAttendanceForCorrectedDates(db);
   await migrateAccessShadowDiffs(db);
   await migrateAppState(db);
   await migrateRfidAttendance(db);
+  await migrateSchoolSettings(db);
+  await loadSchoolSettings(tid, db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)
   // and the admin MIS sync (routes/admin.ts); all operational records start empty.
-
-  console.log('Database initialized successfully at:', filename);
 }
 
 /**
@@ -281,7 +383,7 @@ export async function initDatabase(filenameOverride?: string) {
  * so an admin who later revokes a default permission from a system role has
  * that decision respected on every subsequent boot.
  */
-async function seedRbac() {
+async function seedRbac(db: Database) {
   for (const p of PERMISSIONS) {
     await db.run(
       `INSERT INTO permissions (key, category, description) VALUES (?, ?, ?)
@@ -308,7 +410,7 @@ async function seedRbac() {
       );
       if (alreadySeeded) continue;
 
-      await grantPermissionToRole(systemRole.id, key);
+      await grantPermissionToRole(db, systemRole.id, key);
       await db.run(
         `INSERT OR IGNORE INTO role_permission_seed_log (role_id, permission_key) VALUES (?, ?)`,
         systemRole.id, key
@@ -317,7 +419,7 @@ async function seedRbac() {
   }
 }
 
-async function grantPermissionToRole(roleId: number, permissionKey: string) {
+async function grantPermissionToRole(db: Database, roleId: number, permissionKey: string) {
   const perm = await db.get(`SELECT id FROM permissions WHERE key = ?`, permissionKey);
   if (perm) {
     await db.run(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)`, roleId, perm.id);
@@ -327,7 +429,7 @@ async function grantPermissionToRole(roleId: number, permissionKey: string) {
 /** Backfill role_id for users created before RBAC existed, matching their
  *  legacy 'role' string to the corresponding system role's level. Leaves
  *  'unassigned' users (and anyone already assigned a role_id) untouched. */
-async function backfillUserRoleIds() {
+async function backfillUserRoleIds(db: Database) {
   const levelByRole: Record<string, string> = { student: 'STUDENT', teacher: 'TEACHER', admin: 'ADMIN' };
   for (const [roleValue, level] of Object.entries(levelByRole)) {
     const systemRole = await db.get(`SELECT id FROM roles WHERE level = ? AND is_system = 1`, level);
@@ -791,9 +893,19 @@ async function migrateAppState(db: Database) {
   `);
 }
 
-export function getDb() {
+/**
+ * The current tenant's database. No tenant context: tenant 1 under
+ * TENANCY_MODE=shadow, TenantContextMissing under enforce.
+ */
+export function getDb(): Database {
+  const tid = effectiveTid('database access');
+  const db = dbs.get(tid);
   if (!db) {
-    throw new Error('Database not initialized. Call initDatabase first.');
+    throw new Error(
+      tid === PRIMARY_TENANT_ID
+        ? 'Database not initialized. Call initDatabase first.'
+        : `Database for tenant ${tid} not initialized. Call ensureTenantDb first.`
+    );
   }
   return db;
 }
