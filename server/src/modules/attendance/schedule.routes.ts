@@ -4,6 +4,7 @@ import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
 import { resolveLiveAcademicPeriod } from '../../utils/academicPeriod.js';
 import { misGetOrNullObject, misGetListOrNull, fetchClassTeacherClasses } from '../../services/misClient.js';
+import { homeroomPeriod } from '../../tenancy/settings.js';
 import {
   schoolDateString,
   schoolMinutesOfDay,
@@ -49,7 +50,7 @@ interface Slot {
   teacherName: string | null;
 }
 
-const HOMEROOM_PERIOD = process.env.HOMEROOM_PERIOD || 'Morning';
+const HOMEROOM_PERIOD = (): string => homeroomPeriod();
 
 const str = (v: unknown): string | undefined =>
   v == null || v === '' ? undefined : String(v);
@@ -176,7 +177,7 @@ const deepLink = (
   subjectId: number | null
 ) => {
   const qs = new URLSearchParams({ classId, date, sessionType: kind });
-  qs.set('period', kind === 'homeroom' ? HOMEROOM_PERIOD : periodForTime(startTime));
+  qs.set('period', kind === 'homeroom' ? HOMEROOM_PERIOD() : periodForTime(startTime));
   if (kind === 'subject' && subjectId != null) qs.set('subjectId', String(subjectId));
   return `/attendance/mark?${qs.toString()}`;
 };

@@ -1,8 +1,12 @@
 import express, { Router, Request, Response } from 'express';
-import { LogoutTokenError, verifyLogoutToken } from '../utils/ssoLogout.js';
+import { LogoutTokenError, verifyLogoutTokenSubject } from '../utils/ssoLogout.js';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
-import { getDb } from '../database.js';
+import { ensureTenantDb, getDb, tenantDbExists } from '../database.js';
+import {
+  gateTenant, legacyDefaultTid, normalizeTenant, runWithTenant, tenantOfMisPayload, tenantRegistry, tidOfMisToken,
+  type TenantCtx,
+} from '../tenancy/index.js';
 import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 import { misUserIdOf, noteAccessVersion } from '../access/snapshot.js';
@@ -196,6 +200,59 @@ function rateLimited(ip: string): boolean {
   return recent.length > MAX_ATTEMPTS;
 }
 
+/** The rest of the SSO exchange, inside the tenant's context (its own file). */
+async function completeExchange(res: Response, result: any, tenant: TenantCtx) {
+  const { token: misToken, user: misUser, permissions } = result.data;
+  // Sign-in is a natural refresh point: drop a cached access snapshot if
+  // MIS says this user's access changed since it was fetched.
+  noteAccessVersion(Number(misUser?.user_id), result.data?.access_version);
+
+  const id = String(misUser.user_id ?? misUser.id ?? misUser.uuid ?? misUser.email ?? 'MIS-USER');
+  const name = misUser.name || misUser.username || 'Discipline User';
+  const email = misUser.email || '';
+
+  // Bootstrap admins (config allowlist) outrank MIS permissions and are forced
+  // so the app owner can never be locked out of administration.
+  const isBootstrapAdmin =
+    config.adminUsernames.includes(String(misUser.username || name).toLowerCase()) ||
+    config.adminEmails.includes(String(email).toLowerCase());
+  const computedRole: Role = isBootstrapAdmin ? 'admin' : resolveMisRole(misUser, permissions);
+
+  const role = await resolveAndPersistUser(id, name, email, computedRole, isBootstrapAdmin);
+  // Keep the local copy of the MIS account status current (active users
+  // only, ACTIVE_USERS_CONTRACTS.md). Only when the MIS sends one.
+  await recordMisStatus(getDb(), id, misUser.status ?? misUser.user_status);
+  const rolePermissions = await fetchRolePermissions(id);
+
+  // Carry the user's MIS theme preference through so the app opens in the same
+  // light/dark mode they use in the MIS. Only honor the known values.
+  const preferredTheme =
+    misUser.preferred_theme === 'light' || misUser.preferred_theme === 'dark'
+      ? misUser.preferred_theme
+      : undefined;
+
+  const { academicYearId, academicTermId } = await resolveCurrentAcademicPeriod(misToken);
+
+  const localUser = {
+    id, name, email, role, preferred_theme: preferredTheme,
+    academicYearId, academicTermId,
+    // The school: in the session JWT (every later request enters this
+    // tenant's context from it) and in the client's user payload (offline
+    // storage keys, the install cookie).
+    tid: tenant.tid, tenantSlug: tenant.slug,
+  };
+  const token = jwt.sign({ ...localUser, tslug: tenant.slug, misToken }, config.jwtSecret, { expiresIn: '24h' });
+
+  // The central NGA MIS profile picture (signed URLs, three sizes). Not put in the
+  // session JWT: it can change mid-session, and /verify-mis below keeps it current.
+  const avatar = misAvatarOf(result.data);
+
+  return res.json({
+    success: true,
+    data: { token, user: { ...localUser, avatar }, permissions: permissions || [], rolePermissions },
+  });
+}
+
 router.post('/exchange', async (req: Request, res: Response) => {
   const { code } = req.body;
 
@@ -225,50 +282,22 @@ router.post('/exchange', async (req: Request, res: Response) => {
     }
 
     const { token: misToken, user: misUser, permissions } = result.data;
-    // Sign-in is a natural refresh point: drop a cached access snapshot if
-    // MIS says this user's access changed since it was fetched.
-    noteAccessVersion(Number(misUser?.user_id), result.data?.access_version);
 
-    const id = String(misUser.user_id ?? misUser.id ?? misUser.uuid ?? misUser.email ?? 'MIS-USER');
-    const name = misUser.name || misUser.username || 'Discipline User';
-    const email = misUser.email || '';
-
-    // Bootstrap admins (config allowlist) outrank MIS permissions and are forced
-    // so the app owner can never be locked out of administration.
-    const isBootstrapAdmin =
-      config.adminUsernames.includes(String(misUser.username || name).toLowerCase()) ||
-      config.adminEmails.includes(String(email).toLowerCase());
-    const computedRole: Role = isBootstrapAdmin ? 'admin' : resolveMisRole(misUser, permissions);
-
-    const role = await resolveAndPersistUser(id, name, email, computedRole, isBootstrapAdmin);
-    // Keep the local copy of the MIS account status current (active users
-    // only, ACTIVE_USERS_CONTRACTS.md). Only when the MIS sends one.
-    await recordMisStatus(getDb(), id, misUser.status ?? misUser.user_status);
-    const rolePermissions = await fetchRolePermissions(id);
-
-    // Carry the user's MIS theme preference through so the app opens in the same
-    // light/dark mode they use in the MIS. Only honor the known values.
-    const preferredTheme =
-      misUser.preferred_theme === 'light' || misUser.preferred_theme === 'dark'
-        ? misUser.preferred_theme
-        : undefined;
-
-    const { academicYearId, academicTermId } = await resolveCurrentAcademicPeriod(misToken);
-
-    const localUser = {
-      id, name, email, role, preferred_theme: preferredTheme,
-      academicYearId, academicTermId,
-    };
-    const token = jwt.sign({ ...localUser, misToken }, config.jwtSecret, { expiresIn: '24h' });
-
-    // The central NGA MIS profile picture (signed URLs, three sizes). Not put in the
-    // session JWT: it can change mid-session, and /verify-mis below keeps it current.
-    const avatar = misAvatarOf(result.data);
-
-    return res.json({
-      success: true,
-      data: { token, user: { ...localUser, avatar }, permissions: permissions || [], rolePermissions },
-    });
+    // Tenancy (contract §2, §6): the school comes from the MIS response
+    // (`tenant`) or the MIS SSO token's `tid`; an older MIS sends neither,
+    // which means tenant 1 while TENANCY_LEGACY_DEFAULT_TID allows it.
+    const bodyTenant = tenantOfMisPayload(result.data);
+    const tokenTid = tidOfMisToken(misToken);
+    if (bodyTenant && tokenTid != null && bodyTenant.tid !== tokenTid) {
+      return res.status(401).json({ success: false, code: 'TENANT_MISMATCH', message: 'The MIS answered for two different schools.' });
+    }
+    const gate = await gateTenant(bodyTenant?.tid ?? tokenTid ?? legacyDefaultTid());
+    if (!gate.ok) {
+      return res.status(gate.status).json({ success: false, code: gate.code, message: gate.message });
+    }
+    const tenant = gate.tenant;
+    await ensureTenantDb(tenant.tid);
+    return await runWithTenant(tenant, () => completeExchange(res, result, tenant));
   } catch (error) {
     console.error('SSO exchange error:', error);
     return res.status(502).json({
@@ -295,18 +324,29 @@ router.post('/exchange', async (req: Request, res: Response) => {
 router.post('/backchannel-logout', express.urlencoded({ extended: false, limit: '20kb' }), async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
   try {
-    const misUserId = await verifyLogoutToken((req.body || {}).logout_token, {
+    const { sub: misUserId, tid: tokenTid } = await verifyLogoutTokenSubject((req.body || {}).logout_token, {
       misBaseUrl: config.ngaMisBaseUrl,
       clientId: config.ssoClientId,
     });
-    await getDb().run(
-      'INSERT INTO session_revocations (user_id, revoked_at) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET revoked_at = excluded.revoked_at',
-      misUserId,
-      Date.now(),
-    );
-    // A sign-out from MIS may be a deactivation: re-check this person's
-    // status now instead of waiting for the next roster sync. Not awaited.
-    void recheckMisStatus(getDb(), String(misUserId));
+    // Revoke on (tid, sub): the revocation lands in that school's own file.
+    const tid = tokenTid ?? legacyDefaultTid();
+    if (tid == null) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'logout_token has no tid' });
+    }
+    const tenant = (await tenantRegistry().get(tid)) ?? (tenantDbExists(tid) ? normalizeTenant({ tid }) : null);
+    // A school Tendo has never stored anything for has no sessions to end.
+    if (!tenant) return res.status(200).json({ success: true });
+    await ensureTenantDb(tid);
+    await runWithTenant(tenant, async () => {
+      await getDb().run(
+        'INSERT INTO session_revocations (user_id, revoked_at) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET revoked_at = excluded.revoked_at',
+        misUserId,
+        Date.now(),
+      );
+      // A sign-out from MIS may be a deactivation: re-check this person's
+      // status now instead of waiting for the next roster sync. Not awaited.
+      void recheckMisStatus(getDb(), String(misUserId));
+    });
     return res.status(200).json({ success: true });
   } catch (error: any) {
     if (error instanceof LogoutTokenError) {

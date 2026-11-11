@@ -10,6 +10,13 @@
  *
  * Plain functions over a Storage-like object, so they're unit-tested without
  * a browser (tests/offlineOutbox.test.ts).
+ *
+ * Keys carry the school as well as the person (TD-9: one device can be used
+ * by two schools): `tendo.outbox.v2.<tid>.<uid>` and
+ * `tendo.cache.v2.<tid>.<uid>.<path>`. The `uid` parameter of every function
+ * below is that `<tid>.<uid>` owner (see currentOwner). Keys written before
+ * tenancy (v1, no tid) belong to tenant 1 and are moved once
+ * (migrateV1Keys).
  */
 
 export interface KV {
@@ -50,13 +57,79 @@ export function currentUserId(kv: KV): string | null {
   }
 }
 
-const boxKey = (uid: string) => `tendo.outbox.v1.${uid}`;
+/** The signed-in person's school (sso_user.tid). A session from before tenancy is NGA, tenant 1. */
+export function currentTenantId(kv: KV): string {
+  try {
+    const u = JSON.parse(kv.getItem('sso_user') || 'null');
+    const tid = Number(u?.tid);
+    return Number.isSafeInteger(tid) && tid > 0 ? String(tid) : '1';
+  } catch {
+    return '1';
+  }
+}
+
+/** `<tid>.<uid>` for the signed-in person, or null when nobody is signed in. */
+export function currentOwner(kv: KV): string | null {
+  const uid = currentUserId(kv);
+  if (!uid) return null;
+  migrateV1Keys(kv, uid);
+  return `${currentTenantId(kv)}.${uid}`;
+}
+
+const boxKey = (owner: string) => `tendo.outbox.v2.${owner}`;
+const V1_BOX = 'tendo.outbox.v1.';
+const V1_CACHE = 'tendo.cache.v1.';
+
+/**
+ * One-time move of pre-tenancy keys into tenant 1's v2 keys. A v1 outbox is
+ * merged into any v2 one already there (v2 wins for the same register).
+ * Cached reads are moved when the storage can be enumerated, else dropped
+ * from view (they are only a convenience copy). Safe to call repeatedly.
+ */
+export function migrateV1Keys(kv: KV & { length?: number; key?(i: number): string | null }, uid?: string) {
+  const moveBox = (id: string) => {
+    const raw = kv.getItem(V1_BOX + id);
+    if (raw === null) return;
+    try {
+      const old = JSON.parse(raw);
+      const target = boxKey(`1.${id}`);
+      const cur = JSON.parse(kv.getItem(target) || '[]');
+      const curItems: Waiting[] = Array.isArray(cur) ? cur : [];
+      const merged = [...(Array.isArray(old) ? old : []).filter((w: Waiting) => !curItems.some((c) => c.key === w?.key)), ...curItems];
+      if (merged.length) kv.setItem(target, JSON.stringify(merged));
+    } catch {
+      /* unreadable v1 queue: nothing to keep */
+    }
+    kv.removeItem(V1_BOX + id);
+  };
+  if (uid) moveBox(uid);
+  if (typeof kv.length !== 'number' || !kv.key) return;
+  const keys: string[] = [];
+  for (let i = 0; i < kv.length; i++) {
+    const k = kv.key(i);
+    if (k && (k.startsWith(V1_BOX) || k.startsWith(V1_CACHE))) keys.push(k);
+  }
+  for (const k of keys) {
+    if (k.startsWith(V1_BOX)) moveBox(k.slice(V1_BOX.length));
+    else {
+      const v = kv.getItem(k);
+      if (v !== null) {
+        try {
+          kv.setItem(`tendo.cache.v2.1.${k.slice(V1_CACHE.length)}`, v);
+        } catch {
+          /* storage full: the copy is just not kept */
+        }
+      }
+      kv.removeItem(k);
+    }
+  }
+}
 
 /** One register = one slot in the outbox. */
 export const registerKey = (p: RegisterPayload) =>
   [p.classId, p.date, String(p.period), p.sessionType, p.sessionType === 'subject' ? p.subjectId ?? '' : ''].join('|');
 
-export function list(kv: KV, uid: string | null = currentUserId(kv)): Waiting[] {
+export function list(kv: KV, uid: string | null = currentOwner(kv)): Waiting[] {
   if (!uid) return [];
   try {
     const v = JSON.parse(kv.getItem(boxKey(uid)) || '[]');
@@ -71,7 +144,7 @@ function save(kv: KV, uid: string, items: Waiting[]) {
   else kv.removeItem(boxKey(uid));
 }
 
-export function enqueue(kv: KV, payload: RegisterPayload, now = Date.now(), uid: string | null = currentUserId(kv)): Waiting | null {
+export function enqueue(kv: KV, payload: RegisterPayload, now = Date.now(), uid: string | null = currentOwner(kv)): Waiting | null {
   if (!uid) return null;
   const key = registerKey(payload);
   const items = list(kv, uid).filter((w) => w.key !== key);
@@ -81,7 +154,7 @@ export function enqueue(kv: KV, payload: RegisterPayload, now = Date.now(), uid:
   return item;
 }
 
-export function remove(kv: KV, key: string, uid: string | null = currentUserId(kv)) {
+export function remove(kv: KV, key: string, uid: string | null = currentOwner(kv)) {
   if (!uid) return;
   save(kv, uid, list(kv, uid).filter((w) => w.key !== key));
 }
@@ -93,7 +166,7 @@ export type SendOutcome = { ok: true } | { ok: false; refused: true; message: st
  * Sends everything waiting, oldest first. Stops at the first "no connection"
  * (no point hammering a dead network). Returns what happened.
  */
-export async function flush(kv: KV, send: (p: RegisterPayload) => Promise<SendOutcome>, uid: string | null = currentUserId(kv)) {
+export async function flush(kv: KV, send: (p: RegisterPayload) => Promise<SendOutcome>, uid: string | null = currentOwner(kv)) {
   const result = { sent: 0, refused: 0, waiting: 0 };
   if (!uid) return result;
   const items = list(kv, uid).sort((a, b) => a.savedAt - b.savedAt);
@@ -129,9 +202,9 @@ export async function flush(kv: KV, send: (p: RegisterPayload) => Promise<SendOu
 /** GETs worth keeping for offline use: rosters, subjects and the timetable. */
 export const OFFLINE_GET = /^\/api\/(mis\/(classes|students|class-subjects)|academics\/subjects|attendance\/(schedule\/|session|coverage|me)|discipline\/overview|roles-permissions\/me)/;
 
-const cacheKey = (uid: string, path: string) => `tendo.cache.v1.${uid}.${path}`;
+const cacheKey = (owner: string, path: string) => `tendo.cache.v2.${owner}.${path}`;
 
-export function writeCache(kv: KV, path: string, body: unknown, uid: string | null = currentUserId(kv)) {
+export function writeCache(kv: KV, path: string, body: unknown, uid: string | null = currentOwner(kv)) {
   if (!uid || !OFFLINE_GET.test(path)) return;
   try {
     kv.setItem(cacheKey(uid, path), JSON.stringify({ at: Date.now(), body }));
@@ -140,7 +213,7 @@ export function writeCache(kv: KV, path: string, body: unknown, uid: string | nu
   }
 }
 
-export function readCache<T>(kv: KV, path: string, uid: string | null = currentUserId(kv)): { at: number; body: T } | null {
+export function readCache<T>(kv: KV, path: string, uid: string | null = currentOwner(kv)): { at: number; body: T } | null {
   if (!uid || !OFFLINE_GET.test(path)) return null;
   try {
     return JSON.parse(kv.getItem(cacheKey(uid, path)) || 'null');
@@ -155,7 +228,7 @@ export function clearCache(kv: KV & { length?: number; key?(i: number): string |
   const doomed: string[] = [];
   for (let i = 0; i < kv.length; i++) {
     const k = kv.key(i);
-    if (k && k.startsWith('tendo.cache.v1.')) doomed.push(k);
+    if (k && (k.startsWith('tendo.cache.v2.') || k.startsWith(V1_CACHE))) doomed.push(k);
   }
   doomed.forEach((k) => kv.removeItem(k));
 }

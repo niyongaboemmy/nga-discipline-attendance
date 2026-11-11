@@ -2,6 +2,7 @@ import { Database } from 'sqlite';
 import type { Response } from 'express';
 import { config } from '../config.js';
 import { basicAuthHeader } from '../access/misService.js';
+import { scopedKey, tenantHeader } from '../tenancy/index.js';
 
 /**
  * Active users only (ACTIVE_USERS_CONTRACTS.md, "Tendo").
@@ -149,7 +150,7 @@ type StatusTransport = (ids: number[]) => Promise<Array<{ user_id: number; statu
 const defaultTransport: StatusTransport = async (ids) => {
   const res = await fetch(`${config.ngaMisBaseUrl.replace(/\/+$/, '')}/users/profile-media/lookup`, {
     method: 'POST',
-    headers: { Authorization: basicAuthHeader(), 'Content-Type': 'application/json' },
+    headers: { Authorization: basicAuthHeader(), 'Content-Type': 'application/json', ...tenantHeader() },
     body: JSON.stringify({ user_ids: ids }),
     signal: AbortSignal.timeout(4000),
   });
@@ -182,7 +183,7 @@ async function misActiveStates(db: Database, ids: string[]): Promise<Map<string,
   const now = Date.now();
   const ask: number[] = [];
   for (const id of ids) {
-    const hit = misCache.get(id);
+    const hit = misCache.get(scopedKey(id));
     if (hit && now - hit.at < TTL_MS) out.set(id, hit.state);
     else if (/^\d+$/.test(id)) ask.push(Number(id));
     else out.set(id, 'unknown');
@@ -197,7 +198,7 @@ async function misActiveStates(db: Database, ids: string[]): Promise<Map<string,
     const active = misStatusIsActive(u.status);
     const state: ActiveState = active == null ? 'unknown' : active ? 'active' : 'inactive';
     out.set(id, state);
-    misCache.set(id, { state, at: now });
+    misCache.set(scopedKey(id), { state, at: now });
     if (active != null) await recordMisStatus(db, id, u.status);
   }
   for (const n of ask) {
@@ -206,7 +207,7 @@ async function misActiveStates(db: Database, ids: string[]): Promise<Map<string,
     // Only a status-aware MIS's silence means REMOVED.
     const state: ActiveState = statusAware ? 'inactive' : 'unknown';
     out.set(id, state);
-    misCache.set(id, { state, at: now });
+    misCache.set(scopedKey(id), { state, at: now });
     if (statusAware) await recordMisStatus(db, id, 'REMOVED');
   }
   return out;
@@ -217,7 +218,7 @@ async function misActiveStates(db: Database, ids: string[]): Promise<Map<string,
  * deactivation). Best effort: failures are logged, never thrown.
  */
 export async function recheckMisStatus(db: Database, id: string): Promise<ActiveState> {
-  misCache.delete(String(id));
+  misCache.delete(scopedKey(String(id)));
   try {
     return (await misActiveStates(db, [String(id)])).get(String(id)) ?? 'unknown';
   } catch (err) {

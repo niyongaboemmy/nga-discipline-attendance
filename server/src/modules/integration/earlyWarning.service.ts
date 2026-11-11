@@ -1,10 +1,11 @@
 import type { Database } from 'sqlite';
 import { config } from '../../config.js';
-import { getDb } from '../../database.js';
+import { ensureTenantDb, getDb, tenantDbExists } from '../../database.js';
 import { basicAuthHeader } from '../../access/misService.js';
 import { fetchWithTimeout } from '../../access/snapshot.js';
 import { inactiveIdSet } from '../../services/activeStudents.js';
 import { addDays, schoolDateString, schoolMinutesOfDay } from '../../shared/schoolTime.js';
+import { effectiveTid, forEachActiveTenant, tenantHeader, tenantRegistry } from '../../tenancy/index.js';
 
 /**
  * Early-warning signals -> NGA MIS.
@@ -224,6 +225,7 @@ export async function sendEarlyWarningSignals(
     Authorization: basicAuthHeader(env.clientId, env.clientSecret),
     'Content-Type': 'application/json',
     Accept: 'application/json',
+    ...tenantHeader(),
   };
 
   const result: SendResult = { asOf, students: students.length, batches: 0, saved: 0, skipped: 0 };
@@ -282,28 +284,30 @@ export function startupRunDue(now: Date, last: Date | null): boolean {
   return !last || now.getTime() - last.getTime() > STARTUP_STALE_MS;
 }
 
-let running = false;
-let lastFailureAt = 0;
+/** Per school (tenant id): one school's run or failure never blocks another's. */
+const running = new Set<number>();
+const lastFailureAt = new Map<number, number>();
 
 /** One guarded run: never throws, logs a one-line summary (counts only). */
 export async function runEarlyWarningPush(trigger: string, db: Database = getDb()): Promise<SendResult | null> {
-  if (running) return null;
-  running = true;
+  const tid = effectiveTid('early-warning push');
+  if (running.has(tid)) return null;
+  running.add(tid);
   try {
     const result = await sendEarlyWarningSignals(db);
     await setState(db, STATE_LAST_SUCCESS, new Date().toISOString());
     await setState(db, STATE_LAST_RESULT, JSON.stringify(result));
     console.log(
-      `[early-warning] ${trigger}: as_of ${result.asOf}, ${result.students} student(s) in ${result.batches} batch(es); ` +
+      `[early-warning] tenant ${tid} ${trigger}: as_of ${result.asOf}, ${result.students} student(s) in ${result.batches} batch(es); ` +
       `MIS saved ${result.saved}, skipped ${result.skipped}`
     );
     return result;
   } catch (err: any) {
-    lastFailureAt = Date.now();
-    console.error(`[early-warning] ${trigger} failed (will retry): ${err?.message ?? err}`);
+    lastFailureAt.set(tid, Date.now());
+    console.error(`[early-warning] tenant ${tid} ${trigger} failed (will retry): ${err?.message ?? err}`);
     return null;
   } finally {
-    running = false;
+    running.delete(tid);
   }
 }
 
@@ -325,13 +329,7 @@ export function startEarlyWarningScheduler(): void {
 
   const check = async (startup: boolean) => {
     try {
-      const db = getDb();
-      const last = await lastSuccessAt(db);
-      const now = new Date();
-      if (startup ? startupRunDue(now, last) : dailyRunDue(now, last)) {
-        if (!startup && Date.now() - lastFailureAt < RETRY_BACKOFF_MS) return;
-        await runEarlyWarningPush(startup ? 'startup' : 'daily', db);
-      }
+      await checkEarlyWarningForTenants(startup);
     } catch (err: any) {
       console.error(`[early-warning] scheduler check failed: ${err?.message ?? err}`);
     }
@@ -344,12 +342,33 @@ export function startEarlyWarningScheduler(): void {
   timers = [startupTimer, tick];
 }
 
+/**
+ * One scheduler check for every active school that has a Tendo file, each in
+ * its own tenant context: due-ness (school-local 18:30 in that school's
+ * timezone), last success and backoff are all per school.
+ */
+export async function checkEarlyWarningForTenants(
+  startup: boolean,
+  registry: Pick<ReturnType<typeof tenantRegistry>, 'list'> = tenantRegistry(),
+): Promise<void> {
+  await forEachActiveTenant(registry, async (t) => {
+    if (!tenantDbExists(t.tid)) return;
+    const db = await ensureTenantDb(t.tid);
+    const last = await lastSuccessAt(db);
+    const now = new Date();
+    if (startup ? startupRunDue(now, last) : dailyRunDue(now, last)) {
+      if (!startup && Date.now() - (lastFailureAt.get(t.tid) ?? 0) < RETRY_BACKOFF_MS) return;
+      await runEarlyWarningPush(startup ? 'startup' : 'daily', db);
+    }
+  }, { onError: (t, err: any) => console.error(`[early-warning] tenant ${t.tid} check failed: ${err?.message ?? err}`) });
+}
+
 export function stopEarlyWarningScheduler(): void {
   for (const t of timers) clearTimeout(t);
   timers = [];
 }
 
 export function __resetEarlyWarningState(): void {
-  running = false;
-  lastFailureAt = 0;
+  running.clear();
+  lastFailureAt.clear();
 }

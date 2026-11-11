@@ -83,3 +83,39 @@ test('only rosters and the timetable are cached, per person, and sign-out clears
   assert.equal([...kv.m.keys()].filter((k) => k.startsWith('tendo.cache.')).length, 0);
   assert.equal(list(kv).length, 1); // the queue stays for its owner
 });
+
+test('keys carry the school: the same person id in two schools has two queues and two caches', () => {
+  const kv = new Mem();
+  kv.setItem('sso_user', JSON.stringify({ id: '42', tid: 1 }));
+  enqueue(kv, reg(), 1);
+  writeCache(kv, '/api/mis/students?class_id=c7', { school: 'A' });
+  assert.ok(kv.getItem('tendo.outbox.v2.1.42'));
+  kv.setItem('sso_user', JSON.stringify({ id: '42', tid: 2 }));
+  assert.equal(list(kv).length, 0);
+  assert.equal(readCache(kv, '/api/mis/students?class_id=c7'), null);
+  enqueue(kv, reg({ period: 5 }), 2);
+  assert.equal(list(kv).length, 1);
+  assert.ok(kv.getItem('tendo.outbox.v2.2.42'));
+  kv.setItem('sso_user', JSON.stringify({ id: '42', tid: 1 }));
+  assert.equal(list(kv)[0].payload.period, 2);
+});
+
+test('v1 keys (before tenancy) move once into tenant 1, merged with any v2 queue', () => {
+  const kv = new Mem();
+  kv.setItem('tendo.outbox.v1.42', JSON.stringify([{ key: 'old', payload: reg({ period: 1 }), savedAt: 1, attempts: 0 }]));
+  kv.setItem('tendo.cache.v1.42./api/mis/classes', JSON.stringify({ at: 1, body: { kept: true } }));
+  kv.setItem('tendo.outbox.v1.77', JSON.stringify([{ key: 'other', payload: reg(), savedAt: 1, attempts: 0 }]));
+  // A pre-tenancy session (no tid) is tenant 1.
+  kv.setItem('sso_user', JSON.stringify({ id: '42' }));
+  assert.deepEqual(list(kv).map((w) => w.key), ['old']);
+  assert.equal(kv.getItem('tendo.outbox.v1.42'), null);
+  assert.equal(kv.getItem('tendo.outbox.v1.77'), null);
+  assert.ok(kv.getItem('tendo.outbox.v2.1.77'));
+  assert.deepEqual(readCache<any>(kv, '/api/mis/classes')!.body, { kept: true });
+  // Idempotent, and a later enqueue keeps both.
+  enqueue(kv, reg({ period: 9 }), 5);
+  assert.equal(list(kv).length, 2);
+  // A school-2 session of the same id never sees tenant 1's moved queue.
+  kv.setItem('sso_user', JSON.stringify({ id: '42', tid: 2 }));
+  assert.equal(list(kv).length, 0);
+});

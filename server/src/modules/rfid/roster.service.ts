@@ -2,6 +2,7 @@ import { Database } from 'sqlite';
 import { config } from '../../config.js';
 import { replaceTimetable, upsertReference } from './timetable.service.js';
 import { isActiveStudent, localUserStatus } from '../../services/activeStudents.js';
+import { tenantHeader } from '../../tenancy/index.js';
 
 /**
  * Local copy of "which students exist and which class group each is in", read
@@ -46,7 +47,7 @@ async function misServiceGet(fetchImpl: FetchLike, path: string, query: Record<s
   }
   const url = new URL(`${config.ngaMisBaseUrl}${path}`);
   for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
-  const resp = await fetchImpl(url.toString(), { headers: { Authorization: auth, Accept: 'application/json' } });
+  const resp = await fetchImpl(url.toString(), { headers: { Authorization: auth, Accept: 'application/json', ...tenantHeader() } });
   if (!resp.ok) {
     throw new Error(
       resp.status === 401

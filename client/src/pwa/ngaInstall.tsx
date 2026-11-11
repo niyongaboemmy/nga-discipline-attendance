@@ -92,10 +92,25 @@ export const installerKeyFrom = (returnUrl: string | null) => {
  * app's window when it has no opener. Short-lived; the installer clears it.
  */
 export const reportCookieName = (key: string) => `nga_inst_${key.replace(/[^a-z0-9_-]/gi, "")}`;
-export const writeReportCookie = (key: string, status: InstallReport, host = window.location.hostname, now = Date.now()) => {
+/** The signed-in person's school (sso_user.tid), or null before sign-in / before tenancy. */
+export const currentTidForCookie = (): number | null =>
+  safe(() => {
+    const tid = Number(JSON.parse(localStorage.getItem("sso_user") || "null")?.tid);
+    return Number.isSafeInteger(tid) && tid > 0 ? tid : null;
+  }, null);
+/** `<status>.<ms>[.<tid>]` -- the installer reads the first two parts, so the tid is additive. */
+export const reportCookieValue = (status: InstallReport, now: number, tid: number | null) =>
+  tid ? `${status}.${now}.${tid}` : `${status}.${now}`;
+export const writeReportCookie = (
+  key: string,
+  status: InstallReport,
+  host = window.location.hostname,
+  now = Date.now(),
+  tid: number | null = currentTidForCookie(),
+) => {
   const domain = host === "amashuri.com" || host.endsWith(".amashuri.com") ? "; domain=.amashuri.com; secure" : "";
   safe(() => {
-    document.cookie = `${reportCookieName(key)}=${status}.${now}; path=/; max-age=900; samesite=lax${domain}`;
+    document.cookie = `${reportCookieName(key)}=${reportCookieValue(status, now, tid)}; path=/; max-age=900; samesite=lax${domain}`;
   }, undefined);
 };
 

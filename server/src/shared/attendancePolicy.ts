@@ -22,6 +22,9 @@ export const ATTENDANCE_WARN_THRESHOLD = Number(process.env.ATTENDANCE_WARN_THRE
 /** Minimum recorded sessions before the rate is considered meaningful. */
 export const ATTENDANCE_MIN_SESSIONS = Number(process.env.ATTENDANCE_MIN_SESSIONS || 3);
 
+/** Per-school values (tenancy/settings.ts): the constants above are only tenant 1's env defaults. */
+export { attendanceWarnThreshold, attendanceMinSessions } from '../tenancy/settings.js';
+
 export function isAttended(status: string): boolean {
   return (ATTENDED_STATUSES as readonly string[]).includes(status);
 }

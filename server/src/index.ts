@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { initDatabase, getDb } from './database.js';
+import { initDatabase } from './database.js';
 import { startRfidScheduler } from './modules/rfid/rfid.scheduler.js';
 import { app } from './app.js';
 import { activityRelay } from './activity/relay.js';
@@ -8,8 +8,10 @@ import { startEarlyWarningScheduler } from './modules/integration/earlyWarning.s
 
 async function startServer() {
   try {
+    // Tenant 1 (NGA) at DATABASE_PATH; other schools' files open on first use
+    // (sign-in, a scheduler pass over the registry, or provisioning).
     await initDatabase();
-    startRfidScheduler(getDb());
+    startRfidScheduler();
     app.listen(config.port, () => {
       console.log(`🚀 NGA Attendance Express server running on http://localhost:${config.port}`);
     });

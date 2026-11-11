@@ -20,11 +20,12 @@ import {
 } from '../../shared/schoolTime.js';
 import {
   ATTENDED_SQL_CASE,
-  ATTENDANCE_MIN_SESSIONS,
-  ATTENDANCE_WARN_THRESHOLD,
+  attendanceMinSessions,
+  attendanceWarnThreshold,
   attendanceRate,
 } from '../../shared/attendancePolicy.js';
 import { excludeInactiveSql, inactiveIdSet } from '../../services/activeStudents.js';
+import { homeroomStartTime, schoolDays } from '../../tenancy/settings.js';
 
 /**
  * The Discipline & Attendance slice of the MIS Home page (contract:
@@ -133,11 +134,9 @@ export interface HomeSummaryInput {
 }
 
 /** When the morning (homeroom) register is due, school-local. */
-const HOMEROOM_START_TIME = process.env.HOMEROOM_START_TIME || '08:00';
+const HOMEROOM_START_TIME = (): string => homeroomStartTime();
 /** School days, MIS convention 0=Sunday .. 6=Saturday. */
-const SCHOOL_DAYS = new Set(
-  (process.env.SCHOOL_DAYS || '1,2,3,4,5').split(',').map((d) => Number(d.trim())).filter(Number.isInteger)
-);
+const SCHOOL_DAYS = (): Set<number> => schoolDays();
 /** Conduct balance below this is flagged to the student (S-08). */
 const CONDUCT_FLAG_BELOW = 70;
 /** A pending excuse older than this blocks (C-02). */
@@ -320,7 +319,7 @@ function termFilter(ctx: Ctx, column = 'academic_term_id'): { sql: string; param
 /** Is `date` a school day? Configured weekdays, and inside a known term when
  *  the term calendar has been synced. */
 async function isSchoolDay(db: Database, date: string): Promise<boolean> {
-  if (!SCHOOL_DAYS.has(dayOfWeekFor(date))) return false;
+  if (!SCHOOL_DAYS().has(dayOfWeekFor(date))) return false;
   const terms = await db.get(
     `SELECT COUNT(*) AS n,
             SUM(CASE WHEN date(?) BETWEEN date(start_date) AND date(end_date) THEN 1 ELSE 0 END) AS covering
@@ -472,7 +471,7 @@ async function teachingSignals(ctx: Ctx, marked: MarkedLesson[]): Promise<{ item
 
 /** C-01: morning register not taken in a class the viewer is Class Teacher of. */
 async function homeroomMissing(ctx: Ctx): Promise<AttentionItem[]> {
-  if (ctx.date !== ctx.today || ctx.nowMin < timeToMinutes(HOMEROOM_START_TIME)) return [];
+  if (ctx.date !== ctx.today || ctx.nowMin < timeToMinutes(HOMEROOM_START_TIME())) return [];
   if (!(await holds(ctx, ['ATTENDANCE_MARK']))) return [];
   if (!(await ctx.schoolDay())) return [];
 
@@ -507,8 +506,8 @@ async function homeroomMissing(ctx: Ctx): Promise<AttentionItem[]> {
       : `Morning register not taken for ${classes.length} classes`,
     entities: classes.slice(0, MAX_ENTITIES).map((c) => c.name),
     why: 'Nobody knows who is in school today until the morning register is taken.',
-    cta: { label: 'Take register', href: appHref(deepLink('homeroom', classes[0].id, ctx.date, HOMEROOM_START_TIME, null)), external: true },
-    waiting_since: schoolLocalToIso(ctx.date, HOMEROOM_START_TIME),
+    cta: { label: 'Take register', href: appHref(deepLink('homeroom', classes[0].id, ctx.date, HOMEROOM_START_TIME(), null)), external: true },
+    waiting_since: schoolLocalToIso(ctx.date, HOMEROOM_START_TIME()),
   }));
 }
 
@@ -640,7 +639,7 @@ async function belowThreshold(ctx: Ctx): Promise<AttentionItem[]> {
   const items: AttentionItem[] = [];
   for (const [lens, list] of groupBy(rows, (r: any) => lensForClass(ctx.lenses, r.class_id))) {
     const atRisk = list
-      .filter((r: any) => r.total > 0 && attendanceRate(r.attended, r.total) < ATTENDANCE_WARN_THRESHOLD)
+      .filter((r: any) => r.total > 0 && attendanceRate(r.attended, r.total) < attendanceWarnThreshold())
       .map((r: any) => ({ ...r, rate: attendanceRate(r.attended, r.total) }))
       .sort((a: any, b: any) => a.rate - b.rate);
     if (atRisk.length === 0) continue;
@@ -660,7 +659,7 @@ async function belowThreshold(ctx: Ctx): Promise<AttentionItem[]> {
       via: [],
       depth: detail ? 'detail' : 'summary',
       count: atRisk.length,
-      title: `${atRisk.length} ${plural(atRisk.length, 'student', 'students')} below ${ATTENDANCE_WARN_THRESHOLD}% attendance this term`,
+      title: `${atRisk.length} ${plural(atRisk.length, 'student', 'students')} below ${attendanceWarnThreshold()}% attendance this term`,
       entities: detail ? atRisk.slice(0, MAX_ENTITIES).map((r: any) => `${r.student_name} · ${r.rate}%`) : [],
       why: 'Each missed day makes the gap harder to close before the term ends.',
       cta: {
@@ -747,7 +746,7 @@ async function presentTodayTile(ctx: Ctx): Promise<GlanceTile | null> {
     ...base,
     value: `${row.present}/${row.total}`,
     hint: `${rate}% in school`,
-    status: rate >= ATTENDANCE_WARN_THRESHOLD ? 'good' : 'warning',
+    status: rate >= attendanceWarnThreshold() ? 'good' : 'warning',
   };
 }
 
@@ -877,9 +876,9 @@ async function learnerSignals(ctx: Ctx): Promise<{ items: AttentionItem[]; tiles
 
   const own = await ownAttendance(ctx);
   if (own) {
-    const below = own.rate < ATTENDANCE_WARN_THRESHOLD;
+    const below = own.rate < attendanceWarnThreshold();
     // S-07: below the bar, once there are enough sessions for it to mean something.
-    if (below && own.total >= ATTENDANCE_MIN_SESSIONS) {
+    if (below && own.total >= attendanceMinSessions()) {
       items.push({
         id: 'attendance:S-07:SELF',
         source: 'attendance',
@@ -889,7 +888,7 @@ async function learnerSignals(ctx: Ctx): Promise<{ items: AttentionItem[]; tiles
         via: [],
         depth: 'detail',
         count: 1,
-        title: `Your attendance is ${own.rate}%, below ${ATTENDANCE_WARN_THRESHOLD}%`,
+        title: `Your attendance is ${own.rate}%, below ${attendanceWarnThreshold()}%`,
         entities: [],
         why: 'Falling attendance is flagged to your class teacher and is hard to recover late in the term.',
         cta: { label: 'My attendance', href: appHref('/attendance'), external: true },
@@ -1168,7 +1167,7 @@ async function recentMajorIncidents(ctx: Ctx): Promise<AttentionItem[]> {
 
 /** O-07: the viewer clocks in as staff and has not today (POST /staff/clock-in). */
 async function ownClockInMissing(ctx: Ctx): Promise<AttentionItem[]> {
-  if (ctx.date !== ctx.today || ctx.nowMin < timeToMinutes(HOMEROOM_START_TIME)) return [];
+  if (ctx.date !== ctx.today || ctx.nowMin < timeToMinutes(HOMEROOM_START_TIME())) return [];
   if (!(await holds(ctx, ['STAFF_ATTENDANCE_CLOCK']))) return [];
   if (!(await ctx.schoolDay())) return [];
   const row = await ctx.db.get(
@@ -1189,7 +1188,7 @@ async function ownClockInMissing(ctx: Ctx): Promise<AttentionItem[]> {
     entities: [],
     why: 'Your day is recorded as absent until you clock in, and a late clock-in is flagged.',
     cta: { label: 'Clock in', href: appHref('/staff/attendance'), external: true },
-    waiting_since: schoolLocalToIso(ctx.today, HOMEROOM_START_TIME),
+    waiting_since: schoolLocalToIso(ctx.today, HOMEROOM_START_TIME()),
   }];
 }
 

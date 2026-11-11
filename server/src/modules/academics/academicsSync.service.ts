@@ -1,5 +1,6 @@
 import { Database } from 'sqlite';
 import { config } from '../../config.js';
+import { tenantHeader } from '../../tenancy/index.js';
 
 /**
  * Phase 1 + Phase 3 roster/period cache sync.
@@ -21,7 +22,7 @@ import { config } from '../../config.js';
 async function fetchMisList(path: string, misToken: string, query?: Record<string, string>): Promise<any[]> {
   const url = new URL(`${config.ngaMisBaseUrl}${path}`);
   for (const [k, v] of Object.entries(query || {})) if (v) url.searchParams.set(k, v);
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json' } });
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json', ...tenantHeader() } });
   if (!resp.ok) throw new Error(`MIS returned ${resp.status} for ${path}`);
   const body = (await resp.json()) as any;
   return Array.isArray(body) ? body : body.data ?? body.results ?? [];

@@ -14,6 +14,10 @@ export interface User {
   preferred_theme?: 'light' | 'dark';
   academicYearId?: number;
   academicTermId?: number;
+  /** The school (tenant id) this session belongs to; absent on pre-tenancy sessions (= 1).
+   *  Offline storage keys and the install cookie carry it (src/offline/outbox.ts). */
+  tid?: number;
+  tenantSlug?: string;
   /** The central NGA MIS profile picture (null = none). */
   avatar?: MisAvatar | null;
 }

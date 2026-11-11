@@ -25,6 +25,7 @@ import integrationRoutes, { integrationErrorHandler } from './modules/integratio
 import { activityRouter } from './routes/activity.js';
 import { activityRelay } from './activity/relay.js';
 import rfidRoutes from './modules/rfid/rfid.routes.js';
+import tenantRoutes from './routes/tenants.js';
 
 /** The Express app, with no side effects (no DB init, no `listen`) — so
  *  tests can import it directly against an in-memory DB via supertest.
@@ -76,6 +77,9 @@ app.use('/api/ai', aiRoutes);
 
 // Server-to-server calls from the NGA Central MIS (the Home page), made with
 // the user's own MIS token -- see middleware/misBearerAuth.ts.
+// Tenancy control-plane hooks (provisioning secret, not a user token) --
+// before the /api/integration router, whose misBearerAuth would refuse them.
+app.use('/api/integration/tenants', tenantRoutes);
 app.use('/api/integration', integrationRoutes, integrationErrorHandler);
 
 // RFID cards, scan log, scanners and check-in sessions (modules/rfid).

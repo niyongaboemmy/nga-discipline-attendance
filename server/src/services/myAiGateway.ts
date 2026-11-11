@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { getAiPolicy, AiDisabledError } from './aiPolicy.js';
 import { AI_REASON_MESSAGES } from '../vendor/nga-access/index.js';
 import type { AiPolicy, AiReason, AiTask } from '../vendor/nga-access/index.js';
+import { scopedKey, tenantHeader } from '../tenancy/index.js';
 
 /**
  * My AI: people's own AI provider keys, held in the central MIS
@@ -95,6 +96,7 @@ function headers(misUserId: number): Record<string, string> {
     Authorization: `Basic ${auth}`,
     Accept: 'application/json',
     'X-Nga-On-Behalf-Of': String(misUserId),
+    ...tenantHeader(),
   };
 }
 
@@ -103,9 +105,10 @@ const base = () => `${config.ngaMisBaseUrl}/integrations/ai`;
 /* --------------------------------------------------------------- routes */
 
 interface RoutesEntry { data: MyAiRoutes; fetchedAt: number }
-const routesCache = new Map<number, RoutesEntry>();
-const routesInflight = new Map<number, Promise<MyAiRoutes | null>>();
-const routesFailedAt = new Map<number, number>();
+/** Keyed `t<tid>:<MIS user id>`: user ids are unique only inside one school. */
+const routesCache = new Map<string, RoutesEntry>();
+const routesInflight = new Map<string, Promise<MyAiRoutes | null>>();
+const routesFailedAt = new Map<string, number>();
 const MAX_CACHED = 2_000;
 
 async function fetchRoutes(misUserId: number): Promise<MyAiRoutes | null> {
@@ -115,11 +118,11 @@ async function fetchRoutes(misUserId: number): Promise<MyAiRoutes | null> {
       signal: AbortSignal.timeout(ROUTES_TIMEOUT_MS()),
     });
     if (!res.ok) {
-      routesFailedAt.set(misUserId, Date.now());
+      routesFailedAt.set(scopedKey(misUserId), Date.now());
       return null;
     }
     const body = (await res.json()) as { success?: boolean; data?: MyAiRoutes };
-    if (!body?.success || !body.data) { routesFailedAt.set(misUserId, Date.now()); return null; }
+    if (!body?.success || !body.data) { routesFailedAt.set(scopedKey(misUserId), Date.now()); return null; }
     const data: MyAiRoutes = {
       v: Number(body.data.v) || 0,
       policyV: Number(body.data.policyV) || 0,
@@ -131,12 +134,12 @@ async function fetchRoutes(misUserId: number): Promise<MyAiRoutes | null> {
       const oldest = routesCache.keys().next().value;
       if (oldest !== undefined) routesCache.delete(oldest);
     }
-    routesCache.set(misUserId, { data, fetchedAt: Date.now() });
-    routesFailedAt.delete(misUserId);
+    routesCache.set(scopedKey(misUserId), { data, fetchedAt: Date.now() });
+    routesFailedAt.delete(scopedKey(misUserId));
     return data;
   } catch (err) {
     console.warn('[my-ai] MIS routes unreachable:', err instanceof Error ? err.message : err);
-    routesFailedAt.set(misUserId, Date.now());
+    routesFailedAt.set(scopedKey(misUserId), Date.now());
     return null;
   }
 }
@@ -151,19 +154,19 @@ export async function getMyAiRoutes(misUserId: number | null | undefined): Promi
   if (!policy) return null;
 
   const now = Date.now();
-  const hit = routesCache.get(misUserId);
+  const hit = routesCache.get(scopedKey(misUserId));
   // A policy change since this copy was read makes it stale whatever its age.
-  if (hit && hit.data.policyV && policy.v && hit.data.policyV !== policy.v) routesCache.delete(misUserId);
-  const entry = routesCache.get(misUserId);
+  if (hit && hit.data.policyV && policy.v && hit.data.policyV !== policy.v) routesCache.delete(scopedKey(misUserId));
+  const entry = routesCache.get(scopedKey(misUserId));
   if (entry && now - entry.fetchedAt < ROUTES_FRESH_MS) return entry.data;
 
-  const failedAt = routesFailedAt.get(misUserId);
+  const failedAt = routesFailedAt.get(scopedKey(misUserId));
   if (failedAt && now - failedAt < ROUTES_RETRY_MS) return entry?.data ?? null;
 
-  let p = routesInflight.get(misUserId);
+  let p = routesInflight.get(scopedKey(misUserId));
   if (!p) {
-    p = fetchRoutes(misUserId).finally(() => routesInflight.delete(misUserId));
-    routesInflight.set(misUserId, p);
+    p = fetchRoutes(misUserId).finally(() => routesInflight.delete(scopedKey(misUserId)));
+    routesInflight.set(scopedKey(misUserId), p);
   }
   return (await p) ?? null;
 }
@@ -175,7 +178,7 @@ export async function getMyAiRoutes(misUserId: number | null | undefined): Promi
  */
 export function noteAiRoutesVersion(misUserId: number | null | undefined, routesV: unknown, policyV?: unknown): boolean {
   if (!misUserId) return false;
-  const hit = routesCache.get(misUserId);
+  const hit = routesCache.get(scopedKey(misUserId));
   if (!hit) return false;
   const differs = (seen: unknown, cached: number) => {
     if (seen === null || seen === undefined) return false;
@@ -183,8 +186,8 @@ export function noteAiRoutesVersion(misUserId: number | null | undefined, routes
     return Number.isFinite(n) && n !== cached;
   };
   if (differs(routesV, hit.data.v) || differs(policyV, hit.data.policyV)) {
-    routesCache.delete(misUserId);
-    routesFailedAt.delete(misUserId);
+    routesCache.delete(scopedKey(misUserId));
+    routesFailedAt.delete(scopedKey(misUserId));
     return true;
   }
   return false;
@@ -389,6 +392,6 @@ export function __resetMyAiCache(): void {
 }
 
 export function __ageMyAiRoutes(misUserId: number, ageMs: number): void {
-  const hit = routesCache.get(misUserId);
-  if (hit) routesCache.set(misUserId, { ...hit, fetchedAt: Date.now() - ageMs });
+  const hit = routesCache.get(scopedKey(misUserId));
+  if (hit) routesCache.set(scopedKey(misUserId), { ...hit, fetchedAt: Date.now() - ageMs });
 }

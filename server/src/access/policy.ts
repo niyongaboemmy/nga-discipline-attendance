@@ -10,6 +10,7 @@ import {
 } from '../vendor/nga-access/index.js';
 import { getSnapshot } from './snapshot.js';
 import { resolveStudentClassGroups } from './students.js';
+import { scopedKey } from '../tenancy/index.js';
 
 /**
  * How this app uses access control v2 (plan §13, packages/access README §7):
@@ -94,7 +95,7 @@ export async function recordShadowDiff(entry: {
   v2: Pick<Decision, 'allowed' | 'depth'>;
   target?: unknown;
 }) {
-  const key = `${entry.userId}|${entry.capability}|${entry.route}|${entry.legacyAllowed}|${entry.v2.allowed}`;
+  const key = `${scopedKey()}|${entry.userId}|${entry.capability}|${entry.route}|${entry.legacyAllowed}|${entry.v2.allowed}`;
   const last = recentDiffs.get(key) ?? 0;
   if (Date.now() - last < DIFF_THROTTLE_MS) return;
   recentDiffs.set(key, Date.now());

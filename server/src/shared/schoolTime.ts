@@ -6,13 +6,16 @@
  * One helper, one timezone. `SCHOOL_TIMEZONE` (IANA name, e.g. `Africa/Kigali`)
  * defaults to the school's actual zone; override via env for other deployments.
  */
-const SCHOOL_TIMEZONE = process.env.SCHOOL_TIMEZONE || 'Africa/Kigali';
+import { schoolTimezone } from '../tenancy/settings.js';
+
+/** Per tenant now (TD-6): the tenant's own zone, else SCHOOL_TIMEZONE, else Africa/Kigali. */
+const tz = () => schoolTimezone();
 
 /** `YYYY-MM-DD` for a given instant (default: now) in the school's timezone. */
 export function schoolDateString(at: Date = new Date()): string {
   // en-CA formats as ISO `YYYY-MM-DD`.
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: SCHOOL_TIMEZONE,
+    timeZone: tz(),
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -22,7 +25,7 @@ export function schoolDateString(at: Date = new Date()): string {
 /** Minutes since local midnight for a given instant in the school's timezone. */
 export function schoolMinutesOfDay(at: Date = new Date()): number {
   const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: SCHOOL_TIMEZONE,
+    timeZone: tz(),
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -85,7 +88,7 @@ export function addDays(dateStr: string, n: number): string {
 /** Offset (ms) of the school's timezone from UTC at instant `t`. */
 function schoolOffsetMs(t: number): number {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: SCHOOL_TIMEZONE,
+    timeZone: tz(),
     hourCycle: 'h23',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -112,6 +115,6 @@ export function schoolLocalToUtc(dateStr: string, hhmm: string): Date {
 /** "07:24" — the school-local clock time of an instant. */
 export function schoolClockLabel(at: Date | string): string {
   return new Intl.DateTimeFormat('en-GB', {
-    timeZone: SCHOOL_TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZone: tz(), hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(typeof at === 'string' ? new Date(at) : at);
 }

@@ -13,12 +13,13 @@
  * page, so they switch to the current release at once. Pages where someone
  * could be mid-task (a quiz, an editor, a chat) are never reloaded.
  */
-const VERSION = "app-shell-v3";
+const VERSION = "app-shell-v4";
+// v4: multi-tenancy -- offline keys now carry the school (tendo.outbox.v2.<tid>.<uid>).
 // v3: offline registers (src/offline). The built files under /assets/ have a
 // content hash in their names, so they're cached the first time they load and
 // served from the cache after that: the app opens with no connection. A new
 // worker version starts a fresh assets cache.
-const ASSETS = "app-assets-v3";
+const ASSETS = "app-assets-v4";
 
 // Exact paths that are safe to reload without losing anyone's work.
 const SAFE_TO_REFRESH = new Set(["/", "/dashboard", "/home", "/login", "/app", "/welcome", "/reminders", "/apps"]);

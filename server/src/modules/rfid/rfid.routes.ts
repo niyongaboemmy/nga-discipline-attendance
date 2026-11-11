@@ -9,13 +9,14 @@ import { schoolDateString, schoolLocalToUtc } from '../../shared/schoolTime.js';
 import {
   CardError, assignCard, registerCard, setCardStatus, unassignCard, updateCardLabel,
 } from './cards.service.js';
-import { GRACE_MINUTES, dayStartFor, isSchoolDay, lessonsFor } from './timetable.service.js';
+import { graceMinutes, dayStartFor, isSchoolDay, lessonsFor } from './timetable.service.js';
 import { lastRosterSync, schoolYearForDate, syncRosterFromMis } from './roster.service.js';
 import { ingestScan, OUTCOME_MESSAGES } from './ingest.service.js';
 import { SCAN_OUTCOMES, UNRESOLVED_CARD_OUTCOMES } from './engine.js';
 import { enqueue, rfidEvents } from './workQueue.js';
 import { bridgeStatus } from './supabase.bridge.js';
 import { INACTIVE_IDS_SQL, misStatusIsActive } from '../../services/activeStudents.js';
+import { currentTid } from '../../tenancy/index.js';
 
 /** Card management, scan log, scanners, roster cache and check-in sessions.
  *  Mounted at /api/rfid. */
@@ -501,7 +502,7 @@ router.get('/today', authorizePermission('RFID_CARDS_VIEW'), async (req: any, re
     }
     return res.json({
       success: true,
-      data: { date, schoolOpen: school.open, closedReason: school.reason, graceMinutes: GRACE_MINUTES, classes: data },
+      data: { date, schoolOpen: school.open, closedReason: school.reason, graceMinutes: graceMinutes(), classes: data },
     });
   } catch (err) {
     return sendError(res, err, 'Could not load today’s card attendance.');
@@ -580,9 +581,13 @@ router.get('/stream', authorizePermission('RFID_SCANS_VIEW', 'ATTENDANCE_VIEW_AL
   res.flushHeaders?.();
   res.write(`event: ready\ndata: {}\n\n`);
 
+  // Only this subscriber's school: the emitter is process-wide (TD-7).
+  const subscriberTid = currentTid('RFID stream');
   const onEvent = (evt: any) => {
+    if (evt.tid !== subscriberTid) return;
     if (evt.type === 'scan' && !canSeeRaw && !evt.studentId) return;
-    res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+    const { tid: _tid, ...payload } = evt;
+    res.write(`event: ${evt.type}\ndata: ${JSON.stringify(payload)}\n\n`);
   };
   rfidEvents.on('event', onEvent);
   const heartbeat = setInterval(() => res.write(`: ping\n\n`), 25_000);

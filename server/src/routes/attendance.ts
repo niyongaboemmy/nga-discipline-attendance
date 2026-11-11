@@ -21,8 +21,8 @@ import { notifyStaff } from '../access/notify.js';
 import {
   ATTENDANCE_STATUSES,
   ATTENDED_SQL_CASE,
-  ATTENDANCE_WARN_THRESHOLD,
-  ATTENDANCE_MIN_SESSIONS,
+  attendanceWarnThreshold,
+  attendanceMinSessions,
   attendanceRate,
 } from '../shared/attendancePolicy.js';
 
@@ -680,7 +680,7 @@ router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN', 'ATTENDANCE_DASHBOA
       excused: homeroom.filter((r: any) => r.status === 'excused').length,
       absent: homeroom.filter((r: any) => r.status === 'absent').length,
       rate: total > 0 ? Math.round((attended / total) * 100) : 100,
-      threshold: ATTENDANCE_WARN_THRESHOLD,
+      threshold: attendanceWarnThreshold(),
     };
 
     return res.json({
@@ -1302,7 +1302,7 @@ export async function triggerLowAttendanceCheck(
 
     for (const student of stats) {
       const percentage = attendanceRate(student.attended, student.total);
-      if (student.total < ATTENDANCE_MIN_SESSIONS || percentage >= ATTENDANCE_WARN_THRESHOLD) continue;
+      if (student.total < attendanceMinSessions() || percentage >= attendanceWarnThreshold()) continue;
 
       // One student alert per class per day — a real unique constraint now
       // (remediation X4), not a title LIKE match.

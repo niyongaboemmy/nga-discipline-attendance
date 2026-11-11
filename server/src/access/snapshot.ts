@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import type { AccessSnapshot } from '../vendor/nga-access/index.js';
+import { scopedKey } from '../tenancy/index.js';
 
 /**
  * Access control v2 snapshot client (packages/access/README.md §4-5).
@@ -31,12 +32,14 @@ interface CacheEntry {
   fetchedAt: number;
 }
 
-const cache = new Map<number, CacheEntry>();
+/** Every map below is keyed `t<tid>:<MIS user id>` (tenantKey): MIS user ids
+ *  are only unique inside one school. */
+const cache = new Map<string, CacheEntry>();
 /** Latest access_version MIS reported for a user (from the verify-mis poll). */
-const versionHints = new Map<number, number>();
-/** misUserId -> time before which we don't ask MIS again after a failure. */
-const backoffUntil = new Map<number, number>();
-const inflight = new Map<number, Promise<AccessSnapshot | null>>();
+const versionHints = new Map<string, number>();
+/** user key -> time before which we don't ask MIS again after a failure. */
+const backoffUntil = new Map<string, number>();
+const inflight = new Map<string, Promise<AccessSnapshot | null>>();
 
 export function misUserIdOf(localUser: { id?: string | number } | null | undefined): number | null {
   const n = Number(localUser?.id);
@@ -69,32 +72,34 @@ export async function getSnapshot(
   const misUserId = misUserIdOf(localUser);
   if (misUserId == null) return null;
 
+  const key = scopedKey(misUserId);
   const now = Date.now();
-  const entry = cache.get(misUserId);
-  const hint = versionHints.get(misUserId);
+  const entry = cache.get(key);
+  const hint = versionHints.get(key);
   const versionOk = !entry || hint === undefined || entry.snapshot.v === hint;
   if (usable(entry, now, FRESH_MS) && versionOk) return entry.snapshot;
 
   const stale = usable(entry, now, STALE_MAX_MS) ? entry.snapshot : null;
-  if (!misToken || (backoffUntil.get(misUserId) ?? 0) > now) return stale;
+  if (!misToken || (backoffUntil.get(key) ?? 0) > now) return stale;
 
-  let p = inflight.get(misUserId);
+  let p = inflight.get(key);
   if (!p) {
-    p = fetchSnapshot(misUserId, misToken, stale).finally(() => inflight.delete(misUserId));
-    inflight.set(misUserId, p);
+    p = fetchSnapshot(misUserId, misToken, stale).finally(() => inflight.delete(key));
+    inflight.set(key, p);
   }
   return p;
 }
 
 async function fetchSnapshot(misUserId: number, misToken: string, stale: AccessSnapshot | null): Promise<AccessSnapshot | null> {
+  const key = scopedKey(misUserId);
   try {
     const resp = await fetchWithTimeout(`${config.ngaMisBaseUrl}/access/me?app=da`, {
       headers: { Authorization: `Bearer ${misToken}`, Accept: 'application/json' },
     });
     if (resp.status === 503) {
       // Access v2 is not installed on this MIS: nothing to decide with.
-      cache.delete(misUserId);
-      backoffUntil.set(misUserId, Date.now() + UNAVAILABLE_BACKOFF_MS);
+      cache.delete(key);
+      backoffUntil.set(key, Date.now() + UNAVAILABLE_BACKOFF_MS);
       return null;
     }
     if (!resp.ok) throw new Error(`MIS /access/me returned ${resp.status}`);
@@ -103,12 +108,12 @@ async function fetchSnapshot(misUserId: number, misToken: string, stale: AccessS
     if (!snapshot || typeof snapshot !== 'object' || typeof snapshot.caps !== 'object') {
       throw new Error('MIS /access/me returned no snapshot');
     }
-    cache.set(misUserId, { snapshot, fetchedAt: Date.now() });
-    if (typeof snapshot.v === 'number') versionHints.set(misUserId, snapshot.v);
-    backoffUntil.delete(misUserId);
+    cache.set(key, { snapshot, fetchedAt: Date.now() });
+    if (typeof snapshot.v === 'number') versionHints.set(key, snapshot.v);
+    backoffUntil.delete(key);
     return snapshot;
   } catch (err) {
-    backoffUntil.set(misUserId, Date.now() + FAILURE_BACKOFF_MS);
+    backoffUntil.set(key, Date.now() + FAILURE_BACKOFF_MS);
     console.warn(`[access] snapshot fetch failed for MIS user ${misUserId}: ${(err as Error)?.message ?? err}`);
     return stale;
   }
@@ -122,11 +127,12 @@ async function fetchSnapshot(misUserId: number, misToken: string, stale: AccessS
  */
 export function noteAccessVersion(misUserId: number | null | undefined, v: unknown) {
   if (misUserId == null || typeof v !== 'number' || !Number.isFinite(v)) return;
-  versionHints.set(misUserId, v);
-  const entry = cache.get(misUserId);
+  const key = scopedKey(misUserId);
+  versionHints.set(key, v);
+  const entry = cache.get(key);
   if (entry && entry.snapshot.v !== v) {
-    cache.delete(misUserId);
-    backoffUntil.delete(misUserId);
+    cache.delete(key);
+    backoffUntil.delete(key);
   }
 }
 
@@ -140,6 +146,6 @@ export function __resetSnapshotCache() {
 
 /** Test hook: age a cached entry. */
 export function __ageSnapshot(misUserId: number, ms: number) {
-  const entry = cache.get(misUserId);
+  const entry = cache.get(scopedKey(misUserId));
   if (entry) entry.fetchedAt -= ms;
 }

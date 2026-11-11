@@ -5,7 +5,7 @@ import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 import { fetchClassTeacherClasses } from '../services/misClient.js';
 import { attendanceComment } from '../modules/reporting/attendanceReport.service.js';
-import { ATTENDANCE_WARN_THRESHOLD } from '../shared/attendancePolicy.js';
+import { attendanceWarnThreshold } from '../shared/attendancePolicy.js';
 import { accessScope, allowedStudents, shadowListLeak } from '../access/policy.js';
 
 const router = Router();
@@ -145,7 +145,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
              COUNT(*) as total
            FROM attendance_records WHERE 1=1${periodFilter} GROUP BY student_id`,
           ...periodParams
-        )).filter((s) => s.total > 0 && Math.round((s.attended / s.total) * 100) < ATTENDANCE_WARN_THRESHOLD).length
+        )).filter((s) => s.total > 0 && Math.round((s.attended / s.total) * 100) < attendanceWarnThreshold()).length
       : null;
 
     // 4. Daily attendance rate over the last 14 sessions (for the trend
@@ -217,7 +217,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
         overallRate,
         overallComment: attendanceComment(overallRate),
         atRiskCount,
-        atRiskThreshold: ATTENDANCE_WARN_THRESHOLD,
+        atRiskThreshold: attendanceWarnThreshold(),
         totalStudentsTracked: distinctStudents?.n || 0,
         today: {
           total: todayCount.total || 0,

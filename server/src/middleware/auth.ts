@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
-import { getDb } from '../database.js';
+import { ensureTenantDb, getDb } from '../database.js';
 import { issuedBeforeRevocation } from '../utils/ssoLogout.js';
+import { gateTenant, runWithTenant, tidOfClaims, tidOfMisToken, type TenantCtx } from '../tenancy/index.js';
 
 export type Role = 'teacher' | 'admin' | 'student' | 'unassigned';
 export type RoleLevel = 'STUDENT' | 'TEACHER' | 'ADMIN';
@@ -14,6 +15,8 @@ export interface AuthenticatedRequest extends Request {
     email: string;
     role: Role;
     misToken?: string;
+    /** The school (tenant) this session belongs to (contract §6). */
+    tid?: number;
     academicYearId?: number;
     academicTermId?: number;
     /** RBAC fields — resolved fresh from the DB on every request (not cached in
@@ -49,6 +52,33 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     });
   }
 
+  // Tenancy (nga_central_mis/packages/tenancy/CONTRACT.md §6): the session
+  // names its school; a token minted before tenancy belongs to tenant 1
+  // while TENANCY_LEGACY_DEFAULT_TID allows it.
+  const tid = tidOfClaims(decoded);
+  const gate = await gateTenant(tid);
+  if (!gate.ok) {
+    return res.status(gate.status).json({ success: false, code: gate.code, message: gate.message });
+  }
+  // The MIS token inside the session must speak for the same school.
+  const misTid = tidOfMisToken(decoded.misToken);
+  if (misTid != null && misTid !== gate.tenant.tid) {
+    return res.status(401).json({
+      success: false,
+      code: 'TENANT_MISMATCH',
+      message: 'This session belongs to a different school. Please sign in again.',
+    });
+  }
+
+  try {
+    await ensureTenantDb(gate.tenant.tid);
+  } catch (err) {
+    return next(err);
+  }
+  return runWithTenant(gate.tenant, () => continueAuth(req, res, next, decoded, gate.tenant));
+}
+
+async function continueAuth(req: Request, res: Response, next: NextFunction, decoded: any, tenant: TenantCtx) {
   // Single sign-out: this person signed out of NGA MIS after this token was
   // issued (back-channel logout) -- the session is over everywhere.
   try {
@@ -64,7 +94,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     /* never lock everyone out over a lookup failure */
   }
 
-  const resolved = await resolvePermissions(decoded.id);
+  let resolved: Awaited<ReturnType<typeof resolvePermissions>>;
+  try {
+    resolved = await resolvePermissions(decoded.id);
+  } catch (err) {
+    return next(err);
+  }
 
   // A cryptographically valid token whose subject no longer exists locally
   // is a dangling session, not an authorization failure. Returning 403 here
@@ -79,7 +114,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   }
 
   const { roleId, roleName, roleLevel, permissions } = resolved;
-  (req as AuthenticatedRequest).user = { ...decoded, roleId, roleName, roleLevel, permissions };
+  (req as AuthenticatedRequest).user = { ...decoded, tid: tenant.tid, roleId, roleName, roleLevel, permissions };
   next();
 }
 

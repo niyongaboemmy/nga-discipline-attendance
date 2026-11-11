@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { effectiveTid } from '../../tenancy/index.js';
 
 /**
  * Every RFID write (scan processing, roster sync, closing a session) runs
@@ -27,6 +28,14 @@ export function drain(): Promise<void> {
  */
 export const rfidEvents = new EventEmitter();
 rfidEvents.setMaxListeners(500);
+
+/** Every event carries the school it happened in; the SSE stream only
+ *  forwards a subscriber's own tenant's events (TD-7). */
+export type TenantStamped<T> = T & { tid: number };
+
+export function emitRfidEvent(evt: ScanProcessedEvent | RegisterChangedEvent): void {
+  rfidEvents.emit('event', { ...evt, tid: effectiveTid('RFID event') });
+}
 
 export interface ScanProcessedEvent {
   type: 'scan';

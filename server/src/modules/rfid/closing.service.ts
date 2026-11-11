@@ -4,10 +4,10 @@ import { recordAudit } from '../../shared/audit.js';
 import { notifyStudentMarked } from '../attendance/notifier.service.js';
 import { triggerLowAttendanceCheck } from '../../routes/attendance.js';
 import { buildBlocks, Lesson } from './engine.js';
-import { BREAK_MIN_GAP_MS, HOMEROOM_PERIOD, dayStartFor, isSchoolDay, lessonsFor } from './timetable.service.js';
+import { breakMinGapMs, homeroomPeriodSetting, dayStartFor, isSchoolDay, lessonsFor } from './timetable.service.js';
 import { schoolYearForDate } from './roster.service.js';
 import { excludeInactiveSql } from '../../services/activeStudents.js';
-import { rfidEvents, RegisterChangedEvent } from './workQueue.js';
+import { emitRfidEvent, RegisterChangedEvent } from './workQueue.js';
 
 /**
  * Closing registers: what a teacher does by marking the students who never
@@ -34,11 +34,11 @@ interface Register {
 
 /** The registers a class's timetable produces for one day, with close times. */
 export function registersForDay(lessons: Lesson[], dayStart: number): Register[] {
-  const blocks = buildBlocks(lessons, BREAK_MIN_GAP_MS, dayStart);
+  const blocks = buildBlocks(lessons, breakMinGapMs(), dayStart);
   if (blocks.length === 0) return [];
   const out: Register[] = [{
-    key: `homeroom|${HOMEROOM_PERIOD}`, sessionType: 'homeroom', subjectId: null, subjectName: null,
-    period: HOMEROOM_PERIOD, opensAt: blocks[0].start, closesAt: blocks[0].end,
+    key: `homeroom|${homeroomPeriodSetting()}`, sessionType: 'homeroom', subjectId: null, subjectName: null,
+    period: homeroomPeriodSetting(), opensAt: blocks[0].start, closesAt: blocks[0].end,
   }];
   const byKey = new Map<string, Register>();
   for (const l of lessons) {
@@ -181,7 +181,7 @@ async function closeRegister(
     }
     void triggerLowAttendanceCheck(classId, className, reg.sessionType, termId ?? undefined);
     const evt: RegisterChangedEvent = { type: 'register', sessionDate: dateStr, period: reg.period, classIds: [classId] };
-    rfidEvents.emit('event', evt);
+    emitRfidEvent(evt);
   }
   return marked.length;
 }
