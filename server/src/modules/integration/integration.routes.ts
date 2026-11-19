@@ -4,6 +4,9 @@ import { misBearerAuth, IntegrationRequest } from '../../middleware/misBearerAut
 import { DATE_RE } from '../../shared/validation.js';
 import { addDays, schoolDateString } from '../../shared/schoolTime.js';
 import { buildHomeSummary, emptyHomeSummary, LensHint, LessonHint } from './homeSummary.service.js';
+import { getClassSectionReport } from '../reporting/attendanceReport.service.js';
+import { resolveAcademicPeriod } from '../../utils/academicPeriod.js';
+import { accessScope, allowedStudents, shadowListLeak } from '../../access/policy.js';
 import { mcpCall, mcpTools } from './mcp.js';
 import { scopedKey } from '../../tenancy/index.js';
 
@@ -154,6 +157,65 @@ async function homeSummary(req: any, res: Response) {
 
 router.post('/home-summary', homeSummary);
 router.get('/home-summary', homeSummary);
+
+// ---------------------------------------------------------------------------
+// GET /api/integration/attendance/class/:classId/term?academic_term_id=
+// A class's homeroom attendance for one term, per student, in days -- what
+// Task Mentor's report card workbench imports (present / absent / late /
+// excused; this app has no "sick" status). Same rows and the same access
+// rules as GET /api/reporting/attendance/class/:classId, without the
+// per-day marks. Callers need REPORTS_VIEW or ATTENDANCE_VIEW_ALL; under
+// access v2 enforce, rows are filtered to the students they may see.
+// ---------------------------------------------------------------------------
+router.get('/attendance/class/:classId/term', async (req: any, res: Response) => {
+  const r = req as IntegrationRequest;
+  if (r.homeProvisioned === false || !r.user) {
+    return res.status(403).json({ success: false, code: 'NOT_PROVISIONED', message: 'Sign in to the attendance app once first.' });
+  }
+  const permissions: Set<string> = (r.user as any).permissions ?? new Set();
+  if (!permissions.has('REPORTS_VIEW') && !permissions.has('ATTENDANCE_VIEW_ALL')) {
+    return res.status(403).json({ success: false, code: 'FORBIDDEN', message: 'Not allowed to read attendance for this class.' });
+  }
+  const classId = String(req.params.classId ?? '').trim();
+  if (!/^\d+$/.test(classId)) return res.status(400).json({ success: false, message: 'classId must be a number.' });
+  const { academicTermId } = resolveAcademicPeriod(r);
+  try {
+    const data = await getClassSectionReport(getDb(), { classId, academicTermId, sessionType: 'homeroom' });
+    let students = data.students;
+    const classGroupId = Number(classId);
+    const v2 = await accessScope(req, 'ATTENDANCE_VIEW_ALL', 'detail');
+    if (!v2.unrestricted) {
+      const ids = students.map((s) => s.studentId);
+      const ok = v2.scope
+        ? await allowedStudents(req, v2.snapshot, 'ATTENDANCE_VIEW_ALL', 'detail', ids, new Map(ids.map((id) => [id, classGroupId])), null)
+        : new Set<string>();
+      students = students.filter((s) => ok.has(s.studentId));
+    } else {
+      shadowListLeak(req, 'ATTENDANCE_VIEW_ALL', 'detail', students.map((s) => ({ studentId: s.studentId, classGroupId, subjectId: null })));
+    }
+    return res.json({
+      success: true,
+      data: {
+        classId,
+        academicTermId: academicTermId ?? null,
+        sessions: data.dateColumns?.length ?? 0,
+        students: students.map((s) => ({
+          studentId: s.studentId,
+          studentName: s.studentName,
+          present: s.present,
+          absent: s.absent,
+          late: s.late,
+          excused: s.excused,
+          total: s.total,
+          rate: s.rate,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error building term attendance for integration:', (error as Error).message);
+    return res.status(500).json({ success: false, message: 'Could not build the term attendance.' });
+  }
+});
 
 // The NGA connector: tools the MIS MCP server relays for this person (mcp.ts).
 const wrap = (fn: (req: any, res: Response) => Promise<unknown>) => (req: any, res: Response, next: NextFunction) => {
