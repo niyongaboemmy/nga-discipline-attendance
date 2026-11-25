@@ -5,7 +5,7 @@ import { getDb } from '../../database.js';
 import { authMiddleware, type AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
 import { recordAudit } from '../../shared/audit.js';
-import { schoolClockLabel, schoolDateString, timeToMinutes } from '../../shared/schoolTime.js';
+import { safeClockLabel, schoolDateString, timeToMinutes } from '../../shared/schoolTime.js';
 import { setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
 import { currentTenant } from '../../tenancy/index.js';
 import { loadStaffRoster } from '../../routes/mis.js';
@@ -253,7 +253,7 @@ const FLAG_TEXT: Record<string, string> = {
 };
 
 function bucketsFor(rows: Array<{ clock_in: string | null }>, opens: string, lateAfter: number) {
-  const ins = rows.filter((r) => r.clock_in).map((r) => timeToMinutesOf(r.clock_in!));
+  const ins = rows.map((r) => timeToMinutesOf(r.clock_in)).filter((m): m is number => m != null);
   const lateEnd = lateAfter + 60;
   let start = Math.max(timeToMinutes(opens), Math.min(lateAfter - 120, ...ins.map((m) => Math.floor(m / 15) * 15)));
   start = Math.floor(start / 15) * 15;
@@ -267,8 +267,9 @@ function bucketsFor(rows: Array<{ clock_in: string | null }>, opens: string, lat
   return out;
 }
 
-function timeToMinutesOf(iso: string): number {
-  return timeToMinutes(schoolClockLabel(iso));
+function timeToMinutesOf(value: unknown): number | null {
+  const label = safeClockLabel(value);
+  return label ? timeToMinutes(label) : null;
 }
 
 router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
@@ -315,8 +316,8 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         userId: p.id,
         name: p.name,
         role: p.role === 'admin' ? 'Administrator' : p.role === 'teacher' ? 'Teacher' : 'Staff',
-        checkIn: r?.clock_in ? schoolClockLabel(r.clock_in) : null,
-        checkOut: r?.clock_out ? schoolClockLabel(r.clock_out) : null,
+        checkIn: safeClockLabel(r?.clock_in),
+        checkOut: safeClockLabel(r?.clock_out),
         status: r ? (r.review_state === 'invalid' ? 'invalid' : r.status) : 'not_in',
         outStatus: r?.out_status ?? null,
         distance: r?.in_distance_m ?? null,
@@ -330,7 +331,7 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     rows.sort((a, b) => (a.checkIn ?? '99') .localeCompare(b.checkIn ?? '99') || a.name.localeCompare(b.name));
 
     const valid = records.filter((r) => r.review_state !== 'invalid');
-    const lateMinutes = valid.filter((r) => r.status === 'late').map((r) => timeToMinutesOf(r.clock_in) - lateAfter).sort((a, b) => a - b);
+    const lateMinutes = valid.filter((r) => r.status === 'late').map((r) => timeToMinutesOf(r.clock_in)).filter((m): m is number => m != null).map((m) => m - lateAfter).sort((a, b) => a - b);
     const review = records
       .filter((r) => needsReview(r.flags, r.review_state))
       .map((r) => {
@@ -340,7 +341,7 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
           recordId: r.id,
           userId: String(r.staff_id),
           name: r.staff_name,
-          at: r.clock_in ? schoolClockLabel(r.clock_in) : null,
+          at: safeClockLabel(r.clock_in),
           flags: main,
           flagText: main.map((f) => FLAG_TEXT[f]),
           distance: r.in_distance_m,
@@ -478,7 +479,7 @@ router.get('/export', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (r
     };
     const header = ['Date', 'Staff', 'Check-in', 'Status', 'Check-out', 'Check-out status', 'Distance (m)', 'Source', 'Review', 'Flags'];
     const lines = rows.map((r) => [
-      r.date, r.staff_name, r.clock_in ? schoolClockLabel(r.clock_in) : '', r.status, r.clock_out ? schoolClockLabel(r.clock_out) : '',
+      r.date, r.staff_name, safeClockLabel(r.clock_in) ?? '', r.status, safeClockLabel(r.clock_out) ?? '',
       r.out_status ?? '', r.in_distance_m != null ? Math.round(r.in_distance_m) : '', r.source ?? '', r.review_state ?? '',
       (r.flags ? JSON.parse(r.flags) : []).join(' '),
     ].map(esc).join(','));

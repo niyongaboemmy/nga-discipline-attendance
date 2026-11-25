@@ -1,6 +1,6 @@
 import type { Database } from 'sqlite';
 import { randomBytes } from 'crypto';
-import { addDays, dayOfWeekFor, schoolDateString, schoolMinutesOfDay, timeToMinutes, weekStartFor, schoolClockLabel } from '../../shared/schoolTime.js';
+import { addDays, dayOfWeekFor, schoolDateString, schoolMinutesOfDay, timeToMinutes, weekStartFor, schoolClockLabel, safeClockLabel } from '../../shared/schoolTime.js';
 import { schoolDays, schoolSetting, schoolTimezone, numberSetting, staffLateCutoffMinutes } from '../../tenancy/settings.js';
 import { resolveAcademicPeriodForDate } from '../../utils/academicPeriod.js';
 import { cleanJwk, consumeNonce, hashDeviceToken, issueNonce, jwkThumbprint, newDeviceToken, punchMessage, verifyDeviceSignature, type EcJwk } from './deviceAuth.js';
@@ -399,12 +399,12 @@ export async function personState(db: Database, device: DeviceRow) {
     next = 'check_out';
     const inAt = Date.parse(row.clock_in!);
     const opensAt = inAt + rules.minShiftMinutes * 60_000;
-    if (opensAt > now.getTime()) checkoutOpensAt = schoolClockLabel(new Date(opensAt));
+    if (Number.isFinite(opensAt) && opensAt > now.getTime()) checkoutOpensAt = schoolClockLabel(new Date(opensAt));
   } else {
     next = 'done';
   }
 
-  const label = (iso: string | null) => (iso ? schoolClockLabel(iso) : null);
+  const label = (value: string | null) => safeClockLabel(value);
   return {
     serverNow: now.toISOString(),
     schoolDate: today,
@@ -419,7 +419,7 @@ export async function personState(db: Database, device: DeviceRow) {
           checkOut: label(row.clock_out),
           status: row.status,
           outStatus: row.out_status,
-          minutesAtSchool: row.clock_in ? Math.max(0, Math.round(((row.clock_out ? Date.parse(row.clock_out) : now.getTime()) - Date.parse(row.clock_in)) / 60000)) : 0,
+          minutesAtSchool: Math.max(0, Math.round(((row.clock_out ? Date.parse(row.clock_out) : now.getTime()) - Date.parse(row.clock_in ?? '')) / 60000)) || 0,
         }
       : null,
     week: weekDates.map((d) => {
@@ -566,7 +566,7 @@ export async function applyTap(
   }
   if (action === 'check_out') {
     const opensAt = Date.parse(row!.clock_in!) + rules.minShiftMinutes * 60_000;
-    if (opensAt > nowMs) {
+    if (Number.isFinite(opensAt) && opensAt > nowMs) {
       await refuse(409, 'TOO_SOON', `Check-out opens at ${schoolClockLabel(new Date(opensAt))}.`, 'too_soon', { checkoutOpensAt: schoolClockLabel(new Date(opensAt)) });
     }
   }
@@ -707,8 +707,8 @@ export async function scanCard(
       ...r,
       person: personView(card.user_name),
       userId: card.user_id,
-      checkIn: day?.clock_in ? schoolClockLabel(day.clock_in) : null,
-      checkOut: day?.clock_out ? schoolClockLabel(day.clock_out) : null,
+      checkIn: safeClockLabel(day?.clock_in),
+      checkOut: safeClockLabel(day?.clock_out),
     };
   } catch (err) {
     if (err instanceof ClockError) err.extra = { ...err.extra, name: card.user_name };

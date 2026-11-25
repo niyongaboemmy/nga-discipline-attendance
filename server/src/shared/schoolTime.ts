@@ -118,3 +118,14 @@ export function schoolClockLabel(at: Date | string): string {
     timeZone: tz(), hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(typeof at === 'string' ? new Date(at) : at);
 }
+
+/**
+ * "07:24" for a stored time, tolerant of legacy values: an ISO instant is shown in the
+ * school's zone, a bare "HH:MM[:SS]" is kept as it is, anything else gives null.
+ */
+export function safeClockLabel(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'string' && /^\d{1,2}:\d{2}(:\d{2})?$/.test(value.trim())) return value.trim().slice(0, 5).padStart(5, '0');
+  const d = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(d.getTime()) ? null : schoolClockLabel(d);
+}
