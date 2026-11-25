@@ -26,6 +26,28 @@ export const searchCatalog: SearchItem[] = [
     keywords: ['agenda', 'timetable', 'schedule', 'calendar', 'my day', 'week', 'registers', 'take attendance', 'lessons'],
   },
 
+  // Staff check-in (the phone clock)
+  {
+    label: 'Staff check-in settings', description: 'School zone, check-in times, the staff link and setup checklist', path: '/staff/clock/zone',
+    roles: ['admin'], keywords: ['attendance settings', 'staff attendance settings', 'staff clock', 'school zone', 'geofence', 'gps', 'location', 'check in settings', 'clock in', 'setup', 'staff link'],
+  },
+  {
+    label: 'Staff check-in dashboard', description: 'Who checked in today, late, not in yet, unusual check-ins', path: '/staff/clock',
+    roles: ['admin'], keywords: ['staff attendance', 'staff clock', 'check-ins', 'late staff', 'teachers attendance'],
+  },
+  {
+    label: 'Staff phones & QR cards', description: 'Approve or remove staff phones; print QR cards for staff without a smartphone', path: '/staff/clock/devices',
+    roles: ['admin'], keywords: ['devices', 'phones', 'tablets', 'qr cards', 'staff cards', 'approve phone'],
+  },
+  {
+    label: 'Scan a staff card', description: 'Check a colleague in or out with their QR card', path: '/staff/clock/scan',
+    roles: ['admin', 'teacher'], keywords: ['scan', 'qr', 'staff card', 'no smartphone'],
+  },
+  {
+    label: 'Staff check-in poster', description: 'Print the staffroom poster with the check-in link', path: '/staff/clock/poster',
+    roles: ['admin'], keywords: ['poster', 'print', 'qr code', 'staff link'],
+  },
+
   // Administration
   {
     label: 'Admin Console', description: 'School-wide administration', path: '/admin',

@@ -144,7 +144,11 @@ export const StaffClockZone: React.FC = () => {
       setDirty(true);
     });
     map.current = m;
+    // The map's box changes (sticky column, window resize): redraw tiles, never blank.
+    const ro = new ResizeObserver(() => m.invalidateSize());
+    if (mapEl.current) ro.observe(mapEl.current);
     return () => {
+      ro.disconnect();
       m.remove();
       map.current = null;
     };
@@ -395,7 +399,7 @@ export const StaffClockZone: React.FC = () => {
     <DashboardLayout>
       <div className="sc-page">
         <StaffClockHeader
-          title="School zone"
+          title="Zone & settings"
           lead="Staff can check in and out only inside these areas. Draw them while standing at school for the best result."
           actions={cfg && rules && canEdit ? (
             <>
@@ -405,7 +409,6 @@ export const StaffClockZone: React.FC = () => {
               ) : (
                 <button className="sc-btn sc-btn-soft" disabled={saving || zones.filter((z) => z.active).length === 0} onClick={() => void save(true)}>Turn on</button>
               )}
-              <button className="sc-btn sc-btn-primary" disabled={saving || !dirty} onClick={() => void save()}>{saving && <Spinner />}Save changes</button>
             </>
           ) : undefined}
         />
@@ -427,10 +430,10 @@ export const StaffClockZone: React.FC = () => {
         )}
 
         {!cfg && !error ? (
-          <div className="sc-row"><div className="sc-skel sc-grow" style={{ height: 680, borderRadius: 24 }} /><div className="sc-skel sc-side" style={{ height: 680, borderRadius: 24 }} /></div>
+          <div className="sc-zone-layout"><div className="sc-skel sc-zone-map" /><div className="sc-skel" style={{ height: 680, borderRadius: 24 }} /></div>
         ) : cfg && rules && (
-          <div className="sc-row" style={{ alignItems: 'flex-start' }}>
-            <section className="sc-map sc-grow" aria-label="Map" id="zone-map">
+          <div className="sc-zone-layout">
+            <section className="sc-map sc-zone-map" aria-label="Map" id="zone-map">
               <div ref={mapEl} className="sc-map-el" />
               <div className="sc-map-top">
                 <form className="sc-map-search" onSubmit={(e) => void search(e)} role="search">
@@ -462,7 +465,7 @@ export const StaffClockZone: React.FC = () => {
               <span className="sc-map-hint">{placing ? 'Click the map where the new zone’s centre is' : canEdit ? 'Click the map or drag the pin to move · drag the white handle to resize' : 'School zones'}</span>
             </section>
 
-            <aside className="sc-side" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <aside className="sc-zone-panel">
               <section className="sc-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <h2>Zones</h2>
@@ -539,6 +542,16 @@ export const StaffClockZone: React.FC = () => {
                 </div>
               </section>
             </aside>
+          </div>
+        )}
+        {cfg && rules && canEdit && (
+          <div className={`sc-savebar${dirty ? ' dirty' : ''}`} role="region" aria-label="Save">
+            <span className="sc-savebar-text">
+              <i aria-hidden="true" />
+              {dirty ? 'Unsaved changes' : 'All changes saved'}
+            </span>
+            <button className="sc-btn sc-btn-sm" disabled={!dirty || saving} onClick={() => void load()}>Discard</button>
+            <button className="sc-btn sc-btn-primary" disabled={!dirty || saving} onClick={() => void save()}>{saving && <Spinner />}Save changes</button>
           </div>
         )}
       </div>

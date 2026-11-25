@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+import { usePermissions } from '../hooks/usePermissions';
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
@@ -38,6 +40,8 @@ const Row: React.FC<{ title: string; desc: string; children: React.ReactNode }> 
  *  own tab. */
 export const Settings: React.FC = () => {
   const { user } = useAuth();
+  const { can } = usePermissions();
+  const canClockSettings = can(['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL']);
   const toast = useToast();
   const [tab, setTab] = useState<Tab>('account');
 
@@ -77,6 +81,16 @@ export const Settings: React.FC = () => {
           <p className="page-subtitle">Manage your preferences and account details.</p>
         </div>
       </div>
+
+      {canClockSettings && (
+        <div className="card card-pad mb-4" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
+          <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+            <span className="section-title">Staff check-in (school)</span>
+            <p className="text-sm text-secondary mt-1">The school zone, check-in times, the staff link and the setup checklist for the phone check-in.</p>
+          </div>
+          <Link className="btn btn-primary" style={{ borderRadius: 999 }} to="/staff/clock/zone">Open staff check-in settings</Link>
+        </div>
+      )}
 
       <div className="grid grid-sidebar" style={{ ['--sidebar-col-width' as string]: '220px', gap: '24px', alignItems: 'start' }}>
         <nav className="vtabs">

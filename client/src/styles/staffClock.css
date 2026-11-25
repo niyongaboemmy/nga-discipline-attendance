@@ -201,8 +201,13 @@
 .sc-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin-top: 12px; max-height: 360px; overflow-y: auto; }
 
 /* poster */
-.sc-poster { width: 595px; max-width: 100%; aspect-ratio: 595 / 842; margin: 0 auto; background: #fff; color: #111827; border: 1px solid var(--border); border-radius: 12px; padding: 48px 52px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; text-align: center; }
-.sc-poster h1 { margin: 30px 0 0; font-size: 44px; line-height: 50px; font-weight: 700; letter-spacing: -1px; }
+.sc-poster { width: 595px; max-width: 100%; min-height: 842px; margin: 0 auto; background: #fff; color: #111827; border: 1px solid var(--border); border-radius: 12px; padding: 48px 52px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.sc-poster h1 { margin: 30px 0 0; font-size: 44px; line-height: 50px; font-weight: 700; letter-spacing: -1px; color: #111827; }
+/* A printed sheet: always dark ink on white, whatever the app theme. */
+.sc-poster, .sc-poster h1, .sc-poster h2, .sc-poster b, .sc-poster strong { color: #111827; }
+.sc-poster p { color: #4b5563; }
+.sc-poster-steps > div { background: #fff; }
+.sc-poster-steps > div > div:first-of-type { color: #111827; }
 .sc-poster-qr { margin-top: 30px; padding: 18px; border: 2px solid #dbeafe; border-radius: 28px; }
 .sc-poster-qr img { width: 225px; height: 225px; display: block; image-rendering: pixelated; }
 .sc-poster-steps { margin-top: 30px; width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; text-align: left; }
@@ -215,7 +220,7 @@
   .sc-search { width: 100%; }
   .sc-map { height: 480px; }
   .sc-map-hint { display: none; }
-  .sc-poster { padding: 28px; }
+  .sc-poster { padding: 28px; min-height: 0; }
   .sc-poster h1 { font-size: 32px; line-height: 38px; }
 }
 
@@ -225,7 +230,7 @@
   .sc-print { position: absolute; left: 0; top: 0; width: 100%; }
   .sc-cards-sheet { grid-template-columns: repeat(3, 1fr); gap: 8mm; }
   .sc-qr-card { border-color: #9ca3af; }
-  .sc-poster { border: 0; border-radius: 0; width: 100%; aspect-ratio: auto; height: 100vh; }
+  .sc-poster { border: 0; border-radius: 0; width: 100%; min-height: 0; height: 277mm; }
   @page { size: A4; margin: 10mm; }
 }
 
@@ -263,3 +268,31 @@
 @keyframes sc-flash { 0%, 100% { outline-color: transparent; } 30%, 70% { outline-color: var(--primary); } }
 .sc-flash { outline: 3px solid transparent; outline-offset: 4px; animation: sc-flash 1.6s ease; border-radius: 24px; }
 @media (max-width: 760px) { .sc-setup-bar { display: none; } }
+
+/* zone page: the map stays put, the settings column scrolls, Save is always at hand */
+.sc-zone-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 20px; align-items: start; }
+.sc-zone-map { position: sticky; top: calc(var(--navbar-height, 64px) + 16px); height: calc(100vh - var(--navbar-height, 64px) - 112px); min-height: 460px; border-radius: 24px; }
+.sc-zone-panel { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding-bottom: 8px; }
+.sc-savebar {
+  position: sticky; bottom: 16px; z-index: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 10px 10px 18px; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--border-strong);
+  max-width: 560px; margin-left: auto; width: 100%; box-sizing: border-box;
+}
+.sc-savebar.dirty { border-color: var(--primary); }
+.sc-savebar-text { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.sc-savebar-text i { width: 8px; height: 8px; border-radius: 999px; background: var(--status-present); flex: none; }
+.sc-savebar.dirty .sc-savebar-text { color: var(--text-primary); }
+.sc-savebar.dirty .sc-savebar-text i { background: var(--status-late); }
+@media (max-width: 1100px) {
+  .sc-zone-layout { grid-template-columns: minmax(0, 1fr); }
+  .sc-zone-map { position: relative; top: 0; height: 460px; min-height: 0; }
+}
+@media (max-width: 760px) {
+  .sc-zone-map { height: 400px; }
+  .sc-savebar { bottom: 10px; border-radius: 24px; max-width: none; }
+}
+/* Scrolling to a control never leaves it under the top bar or the save bar. */
+html:has(.sc-savebar) { scroll-padding-top: calc(var(--navbar-height, 64px) + 16px); scroll-padding-bottom: 96px; }
+.sc-zone-panel { padding-bottom: 24px; }
+.sc-savebar-text { white-space: nowrap; }
+@media (max-width: 420px) { .sc-savebar { padding-left: 14px; gap: 8px; } .sc-savebar-text { font-size: 13px; } }
