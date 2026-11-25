@@ -191,7 +191,21 @@ router.post('/register', async (req: Request, res: Response) => {
       device: req.body?.device ?? {},
       userAgent,
       ip,
+      dryRun: req.body?.confirm !== true,
     });
+    if (req.body?.confirm !== true) {
+      // The confirm screen: who this is and what will happen, nothing saved yet.
+      return res.json({
+        success: true,
+        data: {
+          preview: true,
+          deviceStatus: result.status,
+          replaces: result.replaced,
+          person: personView(person.name, roleLabelOf(person.user_type, person.roles)),
+          email: google.email,
+        },
+      });
+    }
     return res.json({
       success: true,
       data: {

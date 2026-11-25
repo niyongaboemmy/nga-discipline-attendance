@@ -213,6 +213,8 @@ export interface RegisterInput {
   device: DeviceInfo;
   userAgent?: string | null;
   ip?: string | null;
+  /** Check everything and say what would happen, write nothing (the confirm screen). */
+  dryRun?: boolean;
 }
 
 export interface RegisterResult {
@@ -248,7 +250,7 @@ export async function registerDevice(db: Database, input: RegisterInput): Promis
     input.userId, thumb, installUuid, ngaDid, ngaDid
   );
   if (holder) {
-    await logEvent(db, { kind: 'refused', reason: 'device_taken', userId: input.userId, ip: input.ip, userAgent: input.userAgent });
+    if (!input.dryRun) await logEvent(db, { kind: 'refused', reason: 'device_taken', userId: input.userId, ip: input.ip, userAgent: input.userAgent });
     throw new ClockError(409, 'DEVICE_TAKEN', 'This device is already registered to another staff member. Each person checks in with their own phone or tablet.');
   }
 
@@ -267,6 +269,7 @@ export async function registerDevice(db: Database, input: RegisterInput): Promis
     input.userId, thumb
   );
   if (sameKey) {
+    if (input.dryRun) return { deviceToken: '', status: sameKey.status === 'pending' ? 'pending' : 'active', deviceId: sameKey.id, replaced: false };
     await db.run(`UPDATE attendance_devices SET token_hash = ?, ip_last = ?, last_used_at = ? WHERE id = ?`, tokenHash, input.ip ?? null, nowIso, sameKey.id);
     await logEvent(db, { kind: 'reregister', reason: 'same_key', userId: input.userId, deviceId: sameKey.id, ip: input.ip, userAgent: input.userAgent });
     return { deviceToken: token, status: sameKey.status === 'pending' ? 'pending' : 'active', deviceId: sameKey.id, replaced: false };
@@ -300,6 +303,8 @@ export async function registerDevice(db: Database, input: RegisterInput): Promis
       }
     }
   }
+
+  if (input.dryRun) return { deviceToken: '', status, deviceId: 0, replaced: !!replaces && reason === 'replace' };
 
   // A pending request from this person for another device is superseded.
   await db.run(

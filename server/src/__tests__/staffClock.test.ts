@@ -21,6 +21,8 @@ import { haversine, judge, onSchoolNetwork, plausibilityFlags } from '../modules
  */
 
 const subtle = webcrypto.subtle;
+type CryptoKeyPair = webcrypto.CryptoKeyPair;
+type JsonWebKey = webcrypto.JsonWebKey;
 const CENTER = { lat: -1.95362, lng: 30.10441 };
 /** ~40 m north of the centre. */
 const INSIDE = { lat: -1.95326, lng: 30.10441, accuracy: 18 };
@@ -59,7 +61,7 @@ async function register(slug: string, email: string, device: FakeDevice, extra: 
   const res = await request(app)
     .post(`/api/clock/${slug}/register`)
     .set('User-Agent', 'Mozilla/5.0 (Linux; Android 13) Chrome/131')
-    .send({ credential: `google:${email}`, publicKeyJwk: device.jwk, installUuid: device.installUuid, device: { browser: 'Chrome', os: 'Android', model: 'Tecno Spark 10', formFactor: 'phone' }, ...extra });
+    .send({ credential: `google:${email}`, publicKeyJwk: device.jwk, installUuid: device.installUuid, device: { browser: 'Chrome', os: 'Android', model: 'Tecno Spark 10', formFactor: 'phone' }, confirm: true, ...extra });
   if (res.body?.data?.deviceToken) device.token = res.body.data.deviceToken;
   return res;
 }
@@ -155,6 +157,11 @@ describe('the public page', () => {
     misPerson(101, 'Grace Mukamana', 'grace@gmail.com');
     const phone = await newDevice();
     now = kigali('07:42');
+    // The confirm screen first: who this is, nothing saved.
+    const preview = await register('nga', 'grace@gmail.com', phone, { confirm: false });
+    expect(preview.body.data).toMatchObject({ preview: true, deviceStatus: 'active', person: { name: 'Grace Mukamana' }, email: 'grace@gmail.com' });
+    expect(preview.body.data.deviceToken).toBeUndefined();
+    expect(await db.get(`SELECT 1 FROM attendance_devices WHERE user_id = '101'`)).toBeUndefined();
     const reg = await register('nga', 'grace@gmail.com', phone);
     expect(reg.status).toBe(200);
     expect(reg.body.data).toMatchObject({ deviceStatus: 'active', person: { firstName: 'Grace', initials: 'GM', role: 'Teacher' } });
