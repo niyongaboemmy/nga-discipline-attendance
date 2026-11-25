@@ -1,4 +1,5 @@
 import type { Database } from 'sqlite';
+import { randomBytes } from 'crypto';
 import { addDays, dayOfWeekFor, schoolDateString, schoolMinutesOfDay, timeToMinutes, weekStartFor, schoolClockLabel } from '../../shared/schoolTime.js';
 import { schoolDays, schoolSetting, schoolTimezone, numberSetting, staffLateCutoffMinutes } from '../../tenancy/settings.js';
 import { resolveAcademicPeriodForDate } from '../../utils/academicPeriod.js';
@@ -457,6 +458,7 @@ export interface PunchResult {
 }
 
 const REVIEW_FLAGS = new Set(['suspicious_accuracy', 'no_jitter', 'stale_fix', 'impossible_travel', 'twin_punch']);
+// Card scans are reviewed like phone taps only on their location flags (a card has no device of its own).
 
 export function needsReview(flags: string | null, reviewState: string | null): boolean {
   if (reviewState) return false;
@@ -475,62 +477,25 @@ export async function punch(
   body: PunchInput,
   ctx: { ip: string | null; userAgent: string | null }
 ): Promise<PunchResult> {
-  const rules = clockRules();
   const nowMs = clockNow();
-  const now = new Date(nowMs);
-  const nowIso = now.toISOString();
   const fix = validFix(body.position);
-  const refuse = async (status: number, code: string, message: string, reason: string, extra: Record<string, unknown> = {}, distance: number | null = null) => {
-    await logEvent(db, { kind: 'refused', reason, userId: device.user_id, deviceId: device.id, fix, distance, ip: ctx.ip, userAgent: ctx.userAgent, clientTime: clip(body.clientTime, 40) });
-    throw new ClockError(status, code, message, extra);
+  const refuse = async (status: number, code: string, message: string, reason: string) => {
+    await logEvent(db, { kind: 'refused', reason, userId: device.user_id, deviceId: device.id, fix, ip: ctx.ip, userAgent: ctx.userAgent, clientTime: clip(body.clientTime, 40) });
+    throw new ClockError(status, code, message);
   };
-
-  if (!(await clockReady(db, rules))) await refuse(403, 'CLOCK_OFF', 'Staff attendance is not open for this school yet.', 'clock_off');
+  if (!(await clockReady(db))) await refuse(403, 'CLOCK_OFF', 'Staff attendance is not open for this school yet.', 'clock_off');
   if (!fix) await refuse(400, 'NO_LOCATION', 'Your location is needed to check in.', 'no_location');
 
   const jwk = JSON.parse(device.public_key_jwk) as EcJwk;
   if (!consumeNonce(`t${tid}:d${device.id}`, String(body.nonce || ''), nowMs)) {
     await refuse(401, 'BAD_CHALLENGE', 'That took too long. Tap again.', 'bad_nonce');
   }
-  if (!verifyDeviceSignature(jwk, punchMessage(String(body.nonce), { lat: (body.position as any).lat, lng: (body.position as any).lng, accuracy: (body.position as any).accuracy }), String(body.signature || ''))) {
+  const pos = body.position as any;
+  if (!verifyDeviceSignature(jwk, punchMessage(String(body.nonce), { lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy }), String(body.signature || ''))) {
     await refuse(401, 'BAD_SIGNATURE', 'This device could not prove it is yours. Register it again.', 'bad_signature');
   }
 
-  const today = schoolDateString(now);
-  const minutes = schoolMinutesOfDay(now);
-  const schoolDay = await isSchoolDay(db, today);
-  if (!schoolDay && rules.nonSchoolDays === 'refuse') await refuse(403, 'NOT_SCHOOL_DAY', 'Attendance is closed today.', 'non_school_day');
-
-  const row = await db.get<StaffDayRow & { in_lat: number | null; in_lng: number | null }>(
-    `SELECT * FROM staff_attendance WHERE staff_id = ? AND date = ?`, device.user_id, today
-  );
-  if (row?.clock_out) await refuse(409, 'ALREADY_DONE', 'You have already checked in and out today.', 'already_done');
-  const action: 'check_in' | 'check_out' = row ? 'check_out' : 'check_in';
-
-  if (action === 'check_in' && minutes < timeToMinutes(rules.opens)) {
-    await refuse(403, 'NOT_OPEN', `Check-in opens at ${rules.opens}.`, 'not_open', { opensAt: rules.opens });
-  }
-  if (action === 'check_out') {
-    const opensAt = Date.parse(row!.clock_in!) + rules.minShiftMinutes * 60_000;
-    if (opensAt > nowMs) {
-      await refuse(409, 'TOO_SOON', `Check-out opens at ${schoolClockLabel(new Date(opensAt))}.`, 'too_soon', { checkoutOpensAt: schoolClockLabel(new Date(opensAt)) });
-    }
-  }
-
-  // The zone.
-  const zones = await loadZones(db, true);
-  const network = onSchoolNetwork(ctx.ip, rules.schoolNetworks);
-  const verdict = judge(fix!, zones, { maxAccuracy: rules.maxAccuracy, allowance: rules.allowance });
-  if (rules.requireZone && !network) {
-    if (!verdict.preciseEnough) {
-      await refuse(422, 'LOW_ACCURACY', 'Your location is not precise enough.', 'low_accuracy', { accuracy: Math.round(fix!.accuracy) }, verdict.distance);
-    }
-    if (!verdict.inside) {
-      await refuse(403, 'OUTSIDE_ZONE', 'You are not inside the school zone.', 'outside_zone', { distance: verdict.distance, outsideBy: Math.round(verdict.outsideBy) }, verdict.distance);
-    }
-  }
-
-  // Flags.
+  // Plausibility flags (the tap still counts; an admin reviews).
   const samples = (Array.isArray(body.samples) ? body.samples : []).slice(0, 10).map(validFix).filter((s): s is Fix => !!s);
   const clientMs = Date.parse(String(body.clientTime || ''));
   const skew = Number.isFinite(clientMs) ? clientMs - nowMs : null;
@@ -545,14 +510,88 @@ export async function punch(
     clientSkewMs: skew,
     last: lastFix ? { lat: lastFix.lat, lng: lastFix.lng, at: Date.parse(lastFix.occurred_at) } : null,
   });
+
+  const r = await applyTap(db, {
+    userId: device.user_id, userName: device.user_name, fix: fix!, ip: ctx.ip, userAgent: ctx.userAgent,
+    source: 'device', deviceId: device.id, flags, skew, clientTime: clip(body.clientTime, 40), by: null,
+  });
+  await db.run(`UPDATE attendance_devices SET last_used_at = ?, ip_last = ? WHERE id = ?`, new Date(nowMs).toISOString(), ctx.ip ?? null, device.id);
+  return r;
+}
+
+/**
+ * The check-in / check-out itself, shared by the person's own device and a staff
+ * card scanned by an authorised colleague: one in and one out per school day, on
+ * the school clock, inside the school zone (the tapping device's location).
+ */
+export async function applyTap(
+  db: Database,
+  t: {
+    userId: string;
+    userName: string;
+    fix: Fix | null;
+    ip: string | null;
+    userAgent: string | null;
+    source: 'device' | 'card';
+    deviceId: number | null;
+    flags: ClockFlag[];
+    skew: number | null;
+    clientTime: string | null;
+    /** who scanned the card (null for the person's own device) */
+    by: string | null;
+  }
+): Promise<PunchResult> {
+  const rules = clockRules();
+  const nowMs = clockNow();
+  const now = new Date(nowMs);
+  const nowIso = now.toISOString();
+  const fix = t.fix;
+  const refuse = async (status: number, code: string, message: string, reason: string, extra: Record<string, unknown> = {}, distance: number | null = null) => {
+    await logEvent(db, { kind: 'refused', reason: t.source === 'card' ? `card:${reason}` : reason, userId: t.userId, deviceId: t.deviceId, fix, distance, ip: t.ip, userAgent: t.userAgent, clientTime: t.clientTime });
+    throw new ClockError(status, code, message, extra);
+  };
+  if (!fix) await refuse(400, 'NO_LOCATION', 'A location is needed to check in.', 'no_location');
+
+  const today = schoolDateString(now);
+  const minutes = schoolMinutesOfDay(now);
+  const schoolDay = await isSchoolDay(db, today);
+  if (!schoolDay && rules.nonSchoolDays === 'refuse') await refuse(403, 'NOT_SCHOOL_DAY', 'Attendance is closed today.', 'non_school_day');
+
+  const row = await db.get<StaffDayRow>(`SELECT * FROM staff_attendance WHERE staff_id = ? AND date = ?`, t.userId, today);
+  if (row?.clock_out) await refuse(409, 'ALREADY_DONE', 'Already checked in and out today.', 'already_done');
+  const action: 'check_in' | 'check_out' = row ? 'check_out' : 'check_in';
+
+  if (action === 'check_in' && minutes < timeToMinutes(rules.opens)) {
+    await refuse(403, 'NOT_OPEN', `Check-in opens at ${rules.opens}.`, 'not_open', { opensAt: rules.opens });
+  }
+  if (action === 'check_out') {
+    const opensAt = Date.parse(row!.clock_in!) + rules.minShiftMinutes * 60_000;
+    if (opensAt > nowMs) {
+      await refuse(409, 'TOO_SOON', `Check-out opens at ${schoolClockLabel(new Date(opensAt))}.`, 'too_soon', { checkoutOpensAt: schoolClockLabel(new Date(opensAt)) });
+    }
+  }
+
+  const zones = await loadZones(db, true);
+  const network = onSchoolNetwork(t.ip, rules.schoolNetworks);
+  const verdict = judge(fix!, zones, { maxAccuracy: rules.maxAccuracy, allowance: rules.allowance });
+  if (rules.requireZone && !network) {
+    if (!verdict.preciseEnough) {
+      await refuse(422, 'LOW_ACCURACY', 'The location is not precise enough.', 'low_accuracy', { accuracy: Math.round(fix!.accuracy) }, verdict.distance);
+    }
+    if (!verdict.inside) {
+      await refuse(403, 'OUTSIDE_ZONE', 'Not inside the school zone.', 'outside_zone', { distance: verdict.distance, outsideBy: Math.round(verdict.outsideBy) }, verdict.distance);
+    }
+  }
+
+  const flags = [...t.flags];
   if (!schoolDay) flags.push('non_school_day');
   if (network) flags.push('on_school_network');
-  if (action === 'check_in') {
+  if (action === 'check_in' && t.source === 'device') {
     const twins = await db.all<{ clock_in: string; in_lat: number; in_lng: number }[]>(
-      `SELECT clock_in, in_lat, in_lng FROM staff_attendance WHERE date = ? AND staff_id <> ? AND in_ip = ? AND in_lat IS NOT NULL`,
-      today, device.user_id, ctx.ip ?? ''
+      `SELECT clock_in, in_lat, in_lng FROM staff_attendance WHERE date = ? AND staff_id <> ? AND source = 'device' AND in_ip = ? AND in_lat IS NOT NULL`,
+      today, t.userId, t.ip ?? ''
     );
-    if (twins.some((t) => Math.abs(Date.parse(t.clock_in) - nowMs) <= 60_000 && Math.abs(t.in_lat - fix!.lat) < 0.00001 && Math.abs(t.in_lng - fix!.lng) < 0.00001)) {
+    if (twins.some((x) => Math.abs(Date.parse(x.clock_in) - nowMs) <= 60_000 && Math.abs(x.in_lat - fix!.lat) < 0.00001 && Math.abs(x.in_lng - fix!.lng) < 0.00001)) {
       flags.push('twin_punch');
     }
   }
@@ -560,28 +599,25 @@ export async function punch(
   const distance = verdict.distance;
   const zoneId = verdict.inside ? verdict.zoneId : null;
   let status: string;
-
   if (action === 'check_in') {
     status = minutes > staffLateCutoffMinutes() ? 'late' : 'present';
     const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(db, today);
     const hasSubjects = await db.get(
       `SELECT 1 FROM class_subject_assignments WHERE teacher_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) LIMIT 1`,
-      device.user_id, academicTermId ?? null
+      t.userId, academicTermId ?? null
     );
     try {
       await db.run(
         `INSERT INTO staff_attendance
           (staff_id, staff_name, date, clock_in, status, academic_year_id, academic_term_id, staff_type, source,
-           in_device_id, in_lat, in_lng, in_accuracy_m, in_distance_m, in_zone_id, in_ip, flags, client_skew_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'device', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        device.user_id, device.user_name, today, nowIso, status, academicYearId ?? null, academicTermId ?? null,
-        hasSubjects ? 'teacher' : 'other', device.id, fix!.lat, fix!.lng, fix!.accuracy, distance, zoneId, ctx.ip ?? null,
-        flags.length ? JSON.stringify(flags) : null, skew
+           in_device_id, in_lat, in_lng, in_accuracy_m, in_distance_m, in_zone_id, in_ip, flags, client_skew_ms, in_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        t.userId, t.userName, today, nowIso, status, academicYearId ?? null, academicTermId ?? null,
+        hasSubjects ? 'teacher' : 'other', t.source, t.deviceId, fix!.lat, fix!.lng, fix!.accuracy, distance, zoneId, t.ip ?? null,
+        flags.length ? JSON.stringify(flags) : null, t.skew, t.by
       );
     } catch (err: any) {
-      if (String(err?.message || '').includes('UNIQUE')) {
-        throw new ClockError(409, 'ALREADY_IN', 'You are already checked in today.');
-      }
+      if (String(err?.message || '').includes('UNIQUE')) throw new ClockError(409, 'ALREADY_IN', 'Already checked in today.');
       throw err;
     }
   } else {
@@ -589,17 +625,95 @@ export async function punch(
     const merged = [...JSON.parse(row!.flags || '[]'), ...flags.map((f) => `out:${f}`)];
     const res = await db.run(
       `UPDATE staff_attendance SET clock_out = ?, out_status = ?, out_device_id = ?, out_lat = ?, out_lng = ?, out_accuracy_m = ?,
-              out_distance_m = ?, out_zone_id = ?, out_ip = ?, flags = ?
+              out_distance_m = ?, out_zone_id = ?, out_ip = ?, flags = ?, out_by = ?
         WHERE id = ? AND clock_out IS NULL`,
-      nowIso, status, device.id, fix!.lat, fix!.lng, fix!.accuracy, distance, zoneId, ctx.ip ?? null,
-      merged.length ? JSON.stringify(merged) : null, row!.id
+      nowIso, status, t.deviceId, fix!.lat, fix!.lng, fix!.accuracy, distance, zoneId, t.ip ?? null,
+      merged.length ? JSON.stringify(merged) : null, t.by, row!.id
     );
-    if (!res.changes) throw new ClockError(409, 'ALREADY_DONE', 'You have already checked out today.');
+    if (!res.changes) throw new ClockError(409, 'ALREADY_DONE', 'Already checked out today.');
   }
 
-  await db.run(`UPDATE attendance_devices SET last_used_at = ?, ip_last = ? WHERE id = ?`, nowIso, ctx.ip ?? null, device.id);
-  await logEvent(db, { kind: action, userId: device.user_id, deviceId: device.id, fix, distance, ip: ctx.ip, userAgent: ctx.userAgent, clientTime: clip(body.clientTime, 40), flags });
+  await logEvent(db, {
+    kind: action, reason: t.source === 'card' ? `card_by:${t.by}` : null, userId: t.userId, deviceId: t.deviceId, fix, distance,
+    ip: t.ip, userAgent: t.userAgent, clientTime: t.clientTime, flags,
+  });
   return { action, at: schoolClockLabel(now), status, distance, zone: verdict.inside ? verdict.zoneName : null, flags };
+}
+
+// ---------------------------------------------------------------------------
+// Staff QR cards (people without a smartphone): printed by an admin, scanned by
+// someone holding STAFF_CLOCK_SCAN on their own signed-in device at school.
+// The card carries a random code; only its hash is stored. Printing again
+// replaces the old card.
+// ---------------------------------------------------------------------------
+
+const CARD_PREFIX = 'TC1-';
+const CARD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function newCardCode(): string {
+  const bytes = randomBytes(20);
+  let s = '';
+  for (const b of bytes) s += CARD_ALPHABET[b % CARD_ALPHABET.length];
+  return CARD_PREFIX + s;
+}
+
+export function normaliseCardCode(raw: unknown): string | null {
+  const s = String(raw ?? '').trim().toUpperCase().replace(/\s+/g, '');
+  return /^TC1-[A-Z2-9]{20}$/.test(s) ? s : null;
+}
+
+export async function issueCards(db: Database, people: Array<{ id: string; name: string }>, by: string) {
+  const nowIso = new Date(clockNow()).toISOString();
+  const out: Array<{ userId: string; name: string; code: string; cardId: number }> = [];
+  for (const p of people) {
+    await db.run(`UPDATE staff_clock_cards SET status = 'revoked', revoked_at = ?, revoked_by = ? WHERE user_id = ? AND status = 'active'`, nowIso, by, p.id);
+    const code = newCardCode();
+    const r = await db.run(
+      `INSERT INTO staff_clock_cards (user_id, user_name, code_hash, status, issued_by, issued_at) VALUES (?, ?, ?, 'active', ?, ?)`,
+      p.id, p.name, hashDeviceToken(code), by, nowIso
+    );
+    out.push({ userId: p.id, name: p.name, code, cardId: Number(r.lastID) });
+  }
+  return out;
+}
+
+export async function scanCard(
+  db: Database,
+  input: { code: unknown; position: unknown; samples?: unknown; scannerId: string; scannerName: string },
+  ctx: { ip: string | null; userAgent: string | null }
+) {
+  if (!(await clockReady(db))) throw new ClockError(403, 'CLOCK_OFF', 'Staff attendance is not open for this school yet.');
+  const code = normaliseCardCode(input.code);
+  if (!code) throw new ClockError(400, 'BAD_CARD', 'This is not a staff attendance card.');
+  const card = await db.get<{ id: number; user_id: string; user_name: string; status: string }>(
+    `SELECT id, user_id, user_name, status FROM staff_clock_cards WHERE code_hash = ?`, hashDeviceToken(code)
+  );
+  if (!card) throw new ClockError(404, 'UNKNOWN_CARD', 'This card is not known at this school.');
+  if (card.status !== 'active') throw new ClockError(410, 'CARD_REPLACED', `This card for ${card.user_name} was replaced. Use the newest card.`, { name: card.user_name });
+  const user = await db.get<{ status: string | null }>(`SELECT status FROM users WHERE id = ?`, card.user_id);
+  if (user?.status === 'inactive') throw new ClockError(403, 'INACTIVE', `${card.user_name}'s account is no longer active.`, { name: card.user_name });
+
+  const fix = validFix(input.position);
+  const samples = (Array.isArray(input.samples) ? input.samples : []).slice(0, 10).map(validFix).filter((s): s is Fix => !!s);
+  const flags: ClockFlag[] = fix ? plausibilityFlags({ fix, samples, serverNow: clockNow(), clientSkewMs: null }).filter((f) => f !== 'stale_fix') : [];
+  try {
+    const r = await applyTap(db, {
+      userId: card.user_id, userName: card.user_name, fix, ip: ctx.ip, userAgent: ctx.userAgent,
+      source: 'card', deviceId: null, flags, skew: null, clientTime: null, by: input.scannerId,
+    });
+    await db.run(`UPDATE staff_clock_cards SET last_used_at = ? WHERE id = ?`, new Date(clockNow()).toISOString(), card.id);
+    const day = await db.get<StaffDayRow>(`SELECT * FROM staff_attendance WHERE staff_id = ? AND date = ?`, card.user_id, schoolDateString(new Date(clockNow())));
+    return {
+      ...r,
+      person: personView(card.user_name),
+      userId: card.user_id,
+      checkIn: day?.clock_in ? schoolClockLabel(day.clock_in) : null,
+      checkOut: day?.clock_out ? schoolClockLabel(day.clock_out) : null,
+    };
+  } catch (err) {
+    if (err instanceof ClockError) err.extra = { ...err.extra, name: card.user_name };
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -392,6 +392,52 @@ describe('the school admin side', () => {
   });
 });
 
+describe('staff QR cards (no smartphone)', () => {
+  it('an admin prints a card; a scanner checks the person in and out at school, on the same rules', async () => {
+    now = kigali('07:10', '2026-12-03');
+    const issued = await request(app).post('/api/staff/clock/cards').set(authHeader(adminToken)).send({ people: [{ id: '301', name: 'Mukamana Jeanne' }] });
+    expect(issued.status).toBe(201);
+    const code: string = issued.body.data.cards[0].code;
+    expect(code).toMatch(/^TC1-[A-Z2-9]{20}$/);
+    expect((await db.get(`SELECT code_hash FROM staff_clock_cards WHERE user_id = '301'`)).code_hash).not.toBe(code);
+
+    const position = { lat: INSIDE.lat, lng: INSIDE.lng, accuracy: 12 };
+    const scanIn = await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code: code.toLowerCase(), position });
+    expect(scanIn.status).toBe(200);
+    expect(scanIn.body.data).toMatchObject({ action: 'check_in', at: '07:10', status: 'present', person: { name: 'Mukamana Jeanne' }, checkIn: '07:10' });
+    expect(await db.get(`SELECT source, in_by FROM staff_attendance WHERE staff_id = '301'`)).toMatchObject({ source: 'card', in_by: '900' });
+
+    const tooSoon = await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code, position });
+    expect(tooSoon.body).toMatchObject({ code: 'TOO_SOON', name: 'Mukamana Jeanne' });
+
+    // The scanner must be at school too.
+    now = kigali('16:30', '2026-12-03');
+    const far = await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code, position: { lat: FAR.lat, lng: FAR.lng, accuracy: 10 } });
+    expect(far.body.code).toBe('OUTSIDE_ZONE');
+
+    const out = await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code, position });
+    expect(out.body.data).toMatchObject({ action: 'check_out', at: '16:30', status: 'on_time', checkOut: '16:30' });
+
+    // Reprinting replaces the old card.
+    const again = await request(app).post('/api/staff/clock/cards').set(authHeader(adminToken)).send({ people: [{ id: '301', name: 'Mukamana Jeanne' }] });
+    now = kigali('07:00', '2026-12-04');
+    const old = await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code, position });
+    expect(old.status).toBe(410);
+    expect(old.body.code).toBe('CARD_REPLACED');
+    const fresh = await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code: again.body.data.cards[0].code, position });
+    expect(fresh.body.data.action).toBe('check_in');
+
+    expect((await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code: 'hello', position })).body.code).toBe('BAD_CARD');
+    expect((await request(app).post('/api/staff/clock/scan').set(authHeader(adminToken)).send({ code: 'TC1-' + 'A'.repeat(20), position })).body.code).toBe('UNKNOWN_CARD');
+  });
+
+  it('only holders of STAFF_CLOCK_SCAN may scan, and only card managers may print', async () => {
+    const { token } = await createTestUser(db, { id: '952', name: 'T3', email: 't3@x', roleLevel: 'TEACHER' });
+    expect((await request(app).post('/api/staff/clock/scan').set(authHeader(token)).send({ code: 'TC1-' + 'A'.repeat(20) })).status).toBe(403);
+    expect((await request(app).post('/api/staff/clock/cards').set(authHeader(token)).send({ people: [{ id: '1', name: 'x' }] })).status).toBe(403);
+  });
+});
+
 describe('another school, another timezone', () => {
   it('a UTC-5 school decides today and lateness in its own zone', async () => {
     __setTenants([primaryTenantCtx(), { tid: 7, slug: 'nyc', name: 'NYC School', status: 'ACTIVE', isPrimary: false, timezone: 'America/New_York', pkg: 'max' }]);

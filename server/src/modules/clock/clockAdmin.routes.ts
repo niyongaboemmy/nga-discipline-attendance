@@ -9,7 +9,7 @@ import { schoolClockLabel, schoolDateString, timeToMinutes } from '../../shared/
 import { setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
 import { currentTenant } from '../../tenancy/index.js';
 import { loadStaffRoster } from '../../routes/mis.js';
-import { ClockError, clockNow, clockRules, loadZones, needsReview } from './clock.service.js';
+import { ClockError, clockNow, clockRules, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
 import { validCidrList } from './geofence.js';
 
 /**
@@ -397,6 +397,70 @@ router.post('/attendance/:id/review', authorizePermission('STAFF_DEVICES_MANAGE'
     await recordAudit(db, actor, 'STAFF_CLOCK_RECORD_REVIEWED', 'staff_attendance', row.id, { staff: row.staff_name, date: row.date, decision: b.decision, note: b.note }, { required: true });
     return res.json({ success: true, message: b.decision === 'accepted' ? 'Check-in accepted' : 'Marked invalid' });
   } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Staff QR cards (no smartphone) + scanning them
+// ---------------------------------------------------------------------------
+
+const CardsBody = z.object({
+  people: z.array(z.object({ id: z.string().min(1).max(40), name: z.string().trim().min(1).max(120) })).min(1, 'Choose at least one person.').max(200),
+});
+
+router.get('/cards', authorizePermission('STAFF_DEVICES_MANAGE'), async (_req, res) => {
+  try {
+    const rows = await getDb().all(
+      `SELECT id, user_id, user_name, status, issued_by, issued_at, last_used_at FROM staff_clock_cards WHERE status = 'active' ORDER BY user_name`
+    );
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+/** Issue (or replace) cards; the codes are returned once, for printing. */
+router.post('/cards', authorizePermission('STAFF_DEVICES_MANAGE'), async (req: any, res) => {
+  try {
+    const b = CardsBody.parse(req.body ?? {});
+    const db = getDb();
+    const actor = actorOf(req);
+    const cards = await issueCards(db, b.people, actor.id);
+    await recordAudit(db, actor, 'STAFF_CLOCK_CARDS_ISSUED', 'staff_clock_card', null, { people: b.people.map((p) => p.name) }, { required: true });
+    const tenant = currentTenant('cards');
+    return res.status(201).json({ success: true, message: cards.length === 1 ? 'Card ready to print' : `${cards.length} cards ready to print`, data: { school: tenant.name, cards } });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+router.post('/cards/:id/revoke', authorizePermission('STAFF_DEVICES_MANAGE'), async (req: any, res) => {
+  try {
+    const db = getDb();
+    const card = await db.get(`SELECT * FROM staff_clock_cards WHERE id = ?`, Number(req.params.id));
+    if (!card) throw new ClockError(404, 'NOT_FOUND', 'That card no longer exists.');
+    if (card.status !== 'active') throw new ClockError(409, 'NOT_ACTIVE', 'This card is already cancelled.');
+    await db.run(`UPDATE staff_clock_cards SET status = 'revoked', revoked_at = ?, revoked_by = ? WHERE id = ?`, new Date(clockNow()).toISOString(), actorOf(req).id, card.id);
+    await recordAudit(db, actorOf(req), 'STAFF_CLOCK_CARD_REVOKED', 'staff_clock_card', card.id, { user: card.user_name }, { required: true });
+    return res.json({ success: true, message: 'Card cancelled' });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+/** A colleague holding STAFF_CLOCK_SCAN scans a card on their own device, at school. */
+router.post('/scan', authorizePermission('STAFF_CLOCK_SCAN'), async (req: any, res) => {
+  try {
+    const actor = actorOf(req);
+    const result = await scanCard(
+      getDb(),
+      { code: req.body?.code, position: req.body?.position, samples: req.body?.samples, scannerId: actor.id, scannerName: actor.name },
+      { ip: (req.ip || '').replace(/^::ffff:/, '') || null, userAgent: req.get('User-Agent') || null }
+    );
+    return res.json({ success: true, message: result.action === 'check_in' ? `${result.person.name} checked in` : `${result.person.name} checked out`, data: result });
+  } catch (err) {
+    if (err instanceof ClockError) return res.status(err.status).json({ success: false, code: err.code, message: err.message, ...err.extra });
     return fail(res, err);
   }
 });

@@ -55,7 +55,8 @@ export const DA_MANIFEST = defineManifest({
     STAFF_ATTENDANCE_VIEW_OWN: R('View own staff attendance', 'ATTENDANCE'),
     STAFF_ATTENDANCE_VIEW_ALL: R('View staff attendance', 'ATTENDANCE', ['summary', 'detail']),
     STAFF_ATTENDANCE_ZONES_MANAGE: W('Set the staff clock zone and rules', 'ATTENDANCE', SCHOOL_ONLY),
-    STAFF_DEVICES_MANAGE: W('Approve and remove staff clock devices', 'ATTENDANCE', SCHOOL_ONLY),
+    STAFF_DEVICES_MANAGE: W('Approve and remove staff clock devices; print staff QR cards', 'ATTENDANCE', SCHOOL_ONLY),
+    STAFF_CLOCK_SCAN: W("Scan a colleague's staff QR card (check in / out)", 'ATTENDANCE', SCHOOL_ONLY),
 
     REPORTS_VIEW: R('View attendance & discipline reports', 'REPORTING', ['summary', 'detail']),
 

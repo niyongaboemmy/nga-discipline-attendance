@@ -78,6 +78,21 @@ export async function migrateStaffClock(db: Database): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS ix_clock_events_date ON attendance_events(school_date, kind);
     CREATE INDEX IF NOT EXISTS ix_clock_events_user ON attendance_events(user_id, occurred_at);
+
+    /* Printed QR cards for staff without a smartphone (code hash only). */
+    CREATE TABLE IF NOT EXISTS staff_clock_cards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      user_name TEXT NOT NULL,
+      code_hash TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK(status IN ('active','revoked')),
+      issued_by TEXT,
+      issued_at TEXT NOT NULL,
+      revoked_at TEXT,
+      revoked_by TEXT,
+      last_used_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_clock_card_user_active ON staff_clock_cards(user_id) WHERE status = 'active';
   `);
 
   const cols = new Set((await db.all(`PRAGMA table_info(staff_attendance)`)).map((c: any) => c.name));
@@ -104,6 +119,8 @@ export async function migrateStaffClock(db: Database): Promise<void> {
     ['reviewed_by', 'TEXT'],
     ['reviewed_at', 'TEXT'],
     ['client_skew_ms', 'INTEGER'],
+    ['in_by', 'TEXT'],
+    ['out_by', 'TEXT'],
   ];
   for (const [name, type] of add) {
     if (!cols.has(name)) await db.run(`ALTER TABLE staff_attendance ADD COLUMN ${name} ${type}`);

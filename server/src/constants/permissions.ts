@@ -54,7 +54,8 @@ export const PERMISSIONS: PermissionDefinition[] = [
   { key: 'STAFF_ATTENDANCE_VIEW_OWN', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'View your own staff attendance log.' },
   { key: 'STAFF_ATTENDANCE_VIEW_ALL', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: "View all staff members' attendance logs." },
   { key: 'STAFF_ATTENDANCE_ZONES_MANAGE', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'Set the school zone and the check-in rules of the staff clock.' },
-  { key: 'STAFF_DEVICES_MANAGE', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'Approve, remove and review the phones and tablets staff check in with.' },
+  { key: 'STAFF_DEVICES_MANAGE', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: 'Approve, remove and review the phones and tablets staff check in with; print staff QR cards.' },
+  { key: 'STAFF_CLOCK_SCAN', category: PERMISSION_CATEGORIES.STAFF_ATTENDANCE, description: "Scan a colleague's staff QR card to check them in or out (staff without a smartphone)." },
 
   { key: 'REPORTS_VIEW', category: PERMISSION_CATEGORIES.REPORTS, description: 'View attendance/discipline reports and analytics.' },
 
@@ -123,7 +124,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'Student' | 'Teacher' | 'Admin', s
     'DISCIPLINE_SANCTION_MINOR', 'DISCIPLINE_SANCTION_MAJOR',
     'DISCIPLINE_SUSPEND_RECOMMEND', 'DISCIPLINE_SUSPEND_APPROVE',
     'STAFF_ATTENDANCE_CLOCK', 'STAFF_ATTENDANCE_VIEW_OWN', 'STAFF_ATTENDANCE_VIEW_ALL',
-    'STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_DEVICES_MANAGE',
+    'STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_DEVICES_MANAGE', 'STAFF_CLOCK_SCAN',
     'REPORTS_VIEW',
     'USERS_VIEW', 'USERS_MANAGE', 'AUDIT_VIEW',
     'ROLES_PERMISSIONS_VIEW', 'ROLES_PERMISSIONS_MANAGE',
