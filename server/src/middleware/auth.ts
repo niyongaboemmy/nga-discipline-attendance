@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { ensureTenantDb, getDb } from '../database.js';
 import { sessionRevoked } from '../auth/revocation.js';
-import { gateTenant, runWithTenant, tidOfClaims, tidOfMisToken, type TenantCtx } from '../tenancy/index.js';
+import { gateTenant, legacyDefaultTid, runWithTenant, tidOfClaims, tidOfMisToken, type TenantCtx } from '../tenancy/index.js';
 
 export type Role = 'teacher' | 'admin' | 'student' | 'unassigned';
 export type RoleLevel = 'STUDENT' | 'TEACHER' | 'ADMIN';
@@ -62,6 +62,16 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   }
   // The MIS token inside the session must speak for the same school.
   const misTid = tidOfMisToken(decoded.misToken);
+  // TD-ISO-2: once there is no legacy default (strict mode, or
+  // TENANCY_LEGACY_DEFAULT_TID=none), an MIS token naming no school is refused
+  // too -- the outer session's tid alone is not proof of the MIS school.
+  if (decoded.misToken && misTid == null && legacyDefaultTid() == null) {
+    return res.status(401).json({
+      success: false,
+      code: 'TENANT_REQUIRED',
+      message: 'This session carries no school. Please sign in again.',
+    });
+  }
   if (misTid != null && misTid !== gate.tenant.tid) {
     return res.status(401).json({
       success: false,

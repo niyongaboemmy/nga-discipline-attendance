@@ -4,7 +4,7 @@ import { signSession } from '../auth/sessionToken.js';
 import { config } from '../config.js';
 import { ensureTenantDb, getDb, tenantDbExists } from '../database.js';
 import {
-  gateTenant, legacyTidFallback, normalizeTenant, parseTid, runWithTenant, tenantOfMisPayload, tenantRegistry, tidOfMisToken,
+  gateTenant, normalizeTenant, parseTid, runWithTenant, tenantOfMisPayload, tenantRegistry, tidOfMisToken,
   type TenantCtx,
 } from '../tenancy/index.js';
 import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
@@ -14,6 +14,7 @@ import { noteAiPolicyVersion } from '../services/aiPolicy.js';
 import { noteAiRoutesVersion } from '../services/myAiGateway.js';
 import { recheckMisStatus, recordMisStatus } from '../services/activeStudents.js';
 import { revokeSessions } from '../auth/revocation.js';
+import { noteFallback } from '../tenancy/fallbacks.js';
 
 const router = Router();
 
@@ -284,14 +285,15 @@ router.post('/exchange', async (req: Request, res: Response) => {
     const { token: misToken, user: misUser, permissions } = result.data;
 
     // Tenancy (contract §2, §6): the school comes from the MIS response
-    // (`tenant`) or the MIS SSO token's `tid`; an older MIS sends neither,
-    // which means tenant 1 while TENANCY_LEGACY_DEFAULT_TID allows it.
+    // (`tenant`) or the MIS SSO token's `tid`. A sign-in that names no school
+    // at all is refused (TD-ISO-2): no legacy default at sign-in, so a new
+    // session never lands in school 1 by accident.
     const bodyTenant = tenantOfMisPayload(result.data);
     const tokenTid = tidOfMisToken(misToken);
     if (bodyTenant && tokenTid != null && bodyTenant.tid !== tokenTid) {
       return res.status(401).json({ success: false, code: 'TENANT_MISMATCH', message: 'The MIS answered for two different schools.' });
     }
-    const gate = await gateTenant(bodyTenant?.tid ?? tokenTid ?? legacyTidFallback('legacy_tid', 'SSO exchange'));
+    const gate = await gateTenant(bodyTenant?.tid ?? tokenTid ?? null);
     if (!gate.ok) {
       return res.status(gate.status).json({ success: false, code: gate.code, message: gate.message });
     }
@@ -329,8 +331,12 @@ router.post('/backchannel-logout', express.urlencoded({ extended: false, limit: 
       clientId: config.ssoClientId,
     });
     // Revoke on (tid, sub): the revocation lands in that school's own file.
-    const tid = tokenTid ?? legacyTidFallback('payload_no_tid', 'back-channel logout');
+    // MIS always sends `tid` now; a token without one is refused rather than
+    // guessed as school 1 (TD-ISO-4), and counted so the strict-mode clock
+    // sees it.
+    const tid = tokenTid;
     if (tid == null) {
+      noteFallback('payload_no_tid', 'back-channel logout (refused)');
       return res.status(400).json({ error: 'invalid_request', error_description: 'logout_token has no tid' });
     }
     const tenant = (await tenantRegistry().get(tid)) ?? (tenantDbExists(tid) ? normalizeTenant({ tid }) : null);

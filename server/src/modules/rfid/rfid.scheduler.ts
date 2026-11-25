@@ -8,6 +8,7 @@ import { ensureTenantDb, tenantDbExists } from '../../database.js';
 import {
   PRIMARY_TENANT_ID,
   forEachActiveTenant,
+  parseTid,
   primaryTenantCtx,
   runWithTenant,
   tenantRegistry,
@@ -84,14 +85,36 @@ export function startRfidScheduler(registry: Registry = tenantRegistry()): () =>
   const timer = setInterval(run, TICK_MS);
   timer.unref();
 
-  // The Supabase bridge is NGA's own scanner hardware (ESP32 -> Supabase), so
-  // it feeds the primary tenant only. Its timers keep this context.
+  // The Supabase bridge is one set of scanner hardware (ESP32 -> Supabase),
+  // so it feeds exactly one school: RFID_BRIDGE_TID, default tenant 1 (NGA's
+  // own scanners, TD-ISO-7). Its timers keep this context.
   let stopBridge: () => void = () => {};
   void (async () => {
-    const primary = (await tenantRegistry().get(PRIMARY_TENANT_ID).catch(() => null)) ?? primaryTenantCtx();
-    const db = await ensureTenantDb(PRIMARY_TENANT_ID);
-    stopBridge = runWithTenant(primary, () => startSupabaseBridge(db));
+    const tid = rfidBridgeTid();
+    let owner = await tenantRegistry().get(tid).catch(() => null);
+    if (!owner && tid === PRIMARY_TENANT_ID) owner = primaryTenantCtx();
+    if (!owner) {
+      console.error(`RFID bridge not started: RFID_BRIDGE_TID=${tid} is not a known school.`);
+      return;
+    }
+    const db = await ensureTenantDb(tid);
+    stopBridge = runWithTenant(owner, () => startSupabaseBridge(db));
   })().catch((err) => console.error('RFID bridge failed to start:', err));
 
   return () => { clearInterval(timer); stopBridge(); };
+}
+
+/**
+ * The school the Supabase RFID bridge files scans under: `RFID_BRIDGE_TID`
+ * (default 1). Anything that is not a positive integer means the default.
+ */
+export function rfidBridgeTid(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.RFID_BRIDGE_TID ?? '').trim();
+  if (!raw) return PRIMARY_TENANT_ID;
+  const tid = parseTid(raw);
+  if (tid == null) {
+    console.warn(`[rfid] RFID_BRIDGE_TID=${JSON.stringify(raw)} is not a school id; using tenant ${PRIMARY_TENANT_ID}.`);
+    return PRIMARY_TENANT_ID;
+  }
+  return tid;
 }

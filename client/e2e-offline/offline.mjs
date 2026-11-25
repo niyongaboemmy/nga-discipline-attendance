@@ -8,15 +8,18 @@ const results = [], errors = [];
 const check = (n, ok, d = "") => results.push(`${ok ? "PASS" : "FAIL"} ${n}${d ? " — " + d : ""}`);
 const b = await chromium.launch();
 const ctx = await b.newContext({ viewport: { width: 1280, height: 860 } });
-const user = { id: "42", name: "Grace Teacher", email: "grace@nga.ac.rw", role: "teacher", academicYearId: 1, academicTermId: 1 };
-await ctx.addInitScript((u) => {
+const user = { id: "42", tid: 1, name: "Grace Teacher", email: "grace@nga.ac.rw", role: "teacher", academicYearId: 1, academicTermId: 1 };
+// Offline copies are only served to an unexpired session that owns them (WEB-ISO-2),
+// so the fake session is JWT-shaped with id, tid and exp.
+const testToken = `h.${Buffer.from(JSON.stringify({ id: user.id, tid: 1, exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url")}.s`;
+await ctx.addInitScript(([u, t]) => {
   if (!localStorage.getItem("sso_token")) {
-    localStorage.setItem("sso_token", "test-token");
+    localStorage.setItem("sso_token", t);
     localStorage.setItem("sso_user", JSON.stringify(u));
     localStorage.setItem("sso_permissions", JSON.stringify([]));
     localStorage.setItem("sso_role_permissions", JSON.stringify(["ATTENDANCE_MARK", "ATTENDANCE_VIEW_OWN"]));
   }
-}, user);
+}, [user, testToken]);
 let offline = false;
 const posts = [];
 const seen = [];

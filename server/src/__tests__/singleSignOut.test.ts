@@ -18,7 +18,7 @@ const jwk = { ...(publicKey.export({ format: 'jwk' }) as object), kid: 'k1', alg
 
 const logoutToken = (sub: string, claims: Record<string, unknown> = {}) =>
   jwt.sign(
-    { iss: config.ngaMisBaseUrl.replace(/\/$/, ''), aud: config.ssoClientId, jti: crypto.randomUUID(), sub, events: { [LOGOUT_EVENT]: {} }, ...claims },
+    { iss: config.ngaMisBaseUrl.replace(/\/$/, ''), aud: config.ssoClientId, jti: crypto.randomUUID(), sub, tid: 1, events: { [LOGOUT_EVENT]: {} }, ...claims },
     privateKey,
     { algorithm: 'RS256', keyid: 'k1', expiresIn: 120 },
   );

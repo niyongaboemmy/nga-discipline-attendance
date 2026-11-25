@@ -352,9 +352,10 @@ describe('back-channel logout per tenant (contract §2)', () => {
     expect(res.status).toBe(200);
     expect(await getDbFor(2).get(`SELECT 1 FROM session_revocations WHERE user_id = '8080'`)).toBeTruthy();
     expect(await getDbFor(1).get(`SELECT 1 FROM session_revocations WHERE user_id = '8080'`)).toBeUndefined();
-    // No tid: tenant 1 (legacy default).
-    await request(app).post('/api/sso/backchannel-logout').type('form').send({ logout_token: logoutToken('8081') });
-    expect(await getDbFor(1).get(`SELECT 1 FROM session_revocations WHERE user_id = '8081'`)).toBeTruthy();
+    // No tid: refused (TD-ISO-4), nothing revoked in any school.
+    const noTid = await request(app).post('/api/sso/backchannel-logout').type('form').send({ logout_token: logoutToken('8081') });
+    expect(noTid.status).toBe(400);
+    expect(await getDbFor(1).get(`SELECT 1 FROM session_revocations WHERE user_id = '8081'`)).toBeUndefined();
     expect(await getDbFor(2).get(`SELECT 1 FROM session_revocations WHERE user_id = '8081'`)).toBeUndefined();
   });
 });

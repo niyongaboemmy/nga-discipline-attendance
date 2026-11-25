@@ -1,4 +1,4 @@
-import { clearCache, currentOwner } from '../offline/outbox';
+import { clearCache, currentOwner, pruneOtherIdentities } from '../offline/outbox';
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { startMisSignIn } from '../utils/ssoStart';
 import { SCHOOL_NAME } from '../utils/rfidCards';
@@ -302,6 +302,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('sso_token', newToken);
     localStorage.setItem('sso_user', JSON.stringify(newUser));
     localStorage.setItem('sso_permissions', JSON.stringify(newPermissions));
+    // Sign-in: other identities' registers and cached rosters older than a
+    // week leave this device (TD-ISO-3).
+    pruneOtherIdentities(localStorage, currentOwner(localStorage));
 
     // rolePermissions is optional here because some callers (e.g. switching
     // academic period) re-sign the token without touching the user's role —

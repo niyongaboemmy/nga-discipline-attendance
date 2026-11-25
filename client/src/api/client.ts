@@ -5,7 +5,7 @@
  * instead of calling `fetch` directly.
  */
 import { getDeviceId } from '../activity';
-import { readCache, writeCache } from '../offline/outbox';
+import { readCacheForSession, writeCacheForToken } from '../offline/outbox';
 import { RESIGN_CODES, clearSessionSlot } from '../tenancy/school.ts';
 import { cookieSaysOtherSchool, restartSignIn } from '../tenancy/switch';
 
@@ -69,9 +69,11 @@ async function request<T>(path: string, init: RequestInit = {}, opts: RequestOpt
       },
     });
   } catch {
-    // No connection: rosters and the timetable come from this device's last copy.
+    // No connection: rosters and the timetable come from this device's last
+    // copy -- only while the stored session is unexpired and is the copy's
+    // owner (WEB-ISO-2); a dead session gets no cached data.
     if (isGet) {
-      const cached = readCache<Envelope<T>>(localStorage, path);
+      const cached = readCacheForSession<Envelope<T>>(localStorage, path);
       if (cached) return { ...cached.body, offline: { at: cached.at } };
     }
     throw new OfflineError();
@@ -108,7 +110,8 @@ async function request<T>(path: string, init: RequestInit = {}, opts: RequestOpt
   if (!res.ok || body.success === false) {
     throw new ApiError(body.message || `Request failed (${res.status})`, res.status, body.code);
   }
-  if (isGet) writeCache(localStorage, path, body);
+  // Filed under the session that asked, not whoever is stored now (WEB-ISO-5).
+  if (isGet) writeCacheForToken(localStorage, path, body, sentToken);
   return body;
 }
 
