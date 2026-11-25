@@ -479,3 +479,10 @@ h1, h2, p { margin: 0; }
 .ck-how-num { width: 22px; height: 22px; border-radius: 999px; background: var(--ck-blue); color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; margin-top: -1px; }
 @media (max-height: 700px) and (max-width: 767px) { .ck-how { padding: 8px 12px; } .ck-how li { font-size: 13px; line-height: 18px; } }
 @media (min-width: 768px) { .ck-how { max-width: 640px; } .ck-how ol { flex-direction: row; gap: 18px; } .ck-how li { flex: 1; } }
+a.ck-btn { text-decoration: none; }
+/* the school's own logo: white tile so any logo colour reads in both themes */
+.ck-logo-img { background: #fff; border: 1px solid var(--ck-line, rgba(0,0,0,.08)); padding: 6px; overflow: hidden; }
+.ck-logo-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* the school's own logo: white tile so any logo colour reads in both themes */
+.ck-logo-img { background: #fff; border: 1px solid var(--ck-line, rgba(0,0,0,.08)); padding: 6px; overflow: hidden; }
+.ck-logo-img img { width: 100%; height: 100%; object-fit: contain; display: block; }

@@ -446,6 +446,25 @@ describe('staff QR cards (no smartphone)', () => {
   });
 });
 
+describe('phone GPS for a setup test on a computer', () => {
+  it('an admin pairs a phone; the phone sends its location without signing in; only that admin reads it', async () => {
+    const made = await request(app).post('/api/staff/clock/pair').set(authHeader(adminToken));
+    expect(made.status).toBe(200);
+    const { code, url } = made.body.data;
+    expect(url).toContain(`/c/nga/pair/${code}`);
+    expect((await request(app).get(`/api/clock/nga/pair/${code}`)).status).toBe(200);
+    expect((await request(app).post(`/api/clock/nga/pair/${code}`).send({ position: { lat: INSIDE.lat, lng: INSIDE.lng, accuracy: 9 } })).status).toBe(200);
+    const read = await request(app).get(`/api/staff/clock/pair/${code}`).set(authHeader(adminToken));
+    expect(read.body.data.readings[0]).toMatchObject({ lat: INSIDE.lat, accuracy: 9 });
+    // Wrong school, unknown code, teacher reading it: refused.
+    expect((await request(app).post('/api/clock/nga/pair/nope').send({ position: INSIDE })).status).toBe(404);
+    const { token } = await createTestUser(db, { id: '953', name: 'T4', email: 't4@x', roleLevel: 'TEACHER' });
+    expect((await request(app).get(`/api/staff/clock/pair/${code}`).set(authHeader(token))).status).toBe(403);
+    // No attendance was recorded by any of this.
+    expect(await db.get(`SELECT 1 FROM attendance_events WHERE kind = 'check_in' AND lat = ? AND accuracy_m = 9`, INSIDE.lat)).toBeUndefined();
+  });
+});
+
 describe('another school, another timezone', () => {
   it('a UTC-5 school decides today and lateness in its own zone', async () => {
     __setTenants([primaryTenantCtx(), { tid: 7, slug: 'nyc', name: 'NYC School', status: 'ACTIVE', isPrimary: false, timezone: 'America/New_York', pkg: 'max' }]);

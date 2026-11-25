@@ -46,12 +46,15 @@ export function sampleLocation(opts: { maxMs?: number; goodEnough?: number } = {
     let best: Fix | null = null;
     let done = false;
     let settle: ReturnType<typeof setTimeout> | undefined;
+    // A reading that stops improving (a laptop's Wi-Fi estimate never does) ends the wait.
+    let stall: ReturnType<typeof setTimeout> | undefined;
     const finish = (err?: GeoError) => {
       if (done) return;
       done = true;
       navigator.geolocation.clearWatch(id);
       clearTimeout(timer);
       clearTimeout(settle);
+      clearTimeout(stall);
       if (best) resolve({ best, samples: samples.slice(-5) });
       else reject(err ?? new GeoError('timeout'));
     };
@@ -59,7 +62,11 @@ export function sampleLocation(opts: { maxMs?: number; goodEnough?: number } = {
       (p) => {
         const fix: Fix = { lat: round(p.coords.latitude, 7), lng: round(p.coords.longitude, 7), accuracy: round(p.coords.accuracy, 1), ts: p.timestamp };
         samples.push(fix);
-        if (!best || fix.accuracy < best.accuracy) best = fix;
+        if (!best || fix.accuracy < best.accuracy - 1) {
+          best = !best || fix.accuracy < best.accuracy ? fix : best;
+          clearTimeout(stall);
+          stall = setTimeout(() => finish(), 3000);
+        } else if (fix.accuracy < best.accuracy) best = fix;
         // A good reading: take one more if it comes quickly, else go with this one.
         if (fix.accuracy <= goodEnough) {
           if (samples.length >= 2) finish();

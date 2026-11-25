@@ -13,6 +13,8 @@ import { distanceM, sampleLocation, GeoError } from '../../clock/geo';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { StaffClockSetup } from './StaffClockSetup';
 import { announceClockChange } from './clockEvents';
+import { evaluateTest, isComputer, type TestOutcome } from './locationTest';
+import { PhoneGps } from './PhoneGps';
 
 /**
  * School zone (prototype "Admin: school zone setup"): circles on an OpenStreetMap
@@ -79,7 +81,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [test, setTest] = useState<{ inside: boolean; text: string } | null>(null);
+  const [test, setTest] = useState<TestOutcome | null>(null);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [hits, setHits] = useState<PlaceHit[] | null>(null);
@@ -91,6 +93,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
   const tiles = useRef<L.TileLayer | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
   const meMarker = useRef<L.Marker | null>(null);
+  const meCircle = useRef<L.Circle | null>(null);
   const placingRef = useRef(false);
   // The map's click handler is created once: it reads the current zone through refs.
   const selRef = useRef(0);
@@ -303,34 +306,36 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     }
   };
 
+  /** Where this device thinks it is, with its uncertainty, on the map. */
+  const showMe = (fix: { lat: number; lng: number; accuracy: number }) => {
+    const m = map.current;
+    if (!m) return;
+    meMarker.current?.remove();
+    meCircle.current?.remove();
+    meCircle.current = L.circle([fix.lat, fix.lng], { radius: fix.accuracy, color: '#64748b', weight: 1.5, dashArray: '4 6', fillColor: '#64748b', fillOpacity: 0.08, interactive: false }).addTo(m);
+    meMarker.current = L.marker([fix.lat, fix.lng], { icon: L.divIcon({ className: '', html: '<div class="sc-me"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), interactive: false }).addTo(m);
+  };
+
+  /** Judge a reading (this device's, or the paired phone's) against the zones on screen. */
+  const judge = (fix: { lat: number; lng: number; accuracy: number; ts: number }, fromPhone: boolean) => {
+    showMe(fix);
+    const outcome = evaluateTest(fix, zones.filter((x) => x.active).map((z) => ({ name: z.name, lat: z.lat, lng: z.lng, radius: z.radius })), {
+      maxAccuracy: rules?.maxAccuracy ?? 100, allowance: rules?.allowance ?? 50, computer: !fromPhone && isComputer(),
+    });
+    setTest(fromPhone ? { ...outcome, text: `From your phone: ${outcome.text}` } : outcome);
+    if (outcome.vague) map.current?.fitBounds(L.latLng(fix.lat, fix.lng).toBounds(fix.accuracy * 2.4), { maxZoom: 17 });
+    else if (fromPhone) map.current?.panTo([fix.lat, fix.lng]);
+    if (outcome.ok && canEdit) void staffClockApi.saveRules({ setupDone: ['tested'] }).then(announceClockChange).catch(() => undefined);
+  };
+
   const testHere = async () => {
     setTesting(true);
     setTest(null);
     try {
-      const { best } = await sampleLocation({ maxMs: 8000 });
-      const m = map.current;
-      if (m) {
-        meMarker.current?.remove();
-        meMarker.current = L.marker([best.lat, best.lng], { icon: L.divIcon({ className: '', html: '<div class="sc-me"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(m);
-      }
-      const maxAcc = rules?.maxAccuracy ?? 100;
-      const allowance = rules?.allowance ?? 50;
-      let bestZone: { z: Draft; d: number; inside: boolean } | null = null;
-      for (const z of zones.filter((x) => x.active)) {
-        const d = distanceM(best, z);
-        const inside = d <= z.radius + Math.min(best.accuracy, allowance);
-        if (!bestZone || (inside && !bestZone.inside) || d - z.radius < bestZone.d - bestZone.z.radius) bestZone = { z, d, inside };
-      }
-      if (best.accuracy > maxAcc) setTest({ inside: false, text: `Your location is not precise enough (± ${Math.round(best.accuracy)} m). Step outside and try again.` });
-      else if (!bestZone) setTest({ inside: false, text: 'Add a zone first.' });
-      else if (bestZone.inside) {
-        setTest({ inside: true, text: `You are ${Math.max(0, Math.round(bestZone.z.radius - bestZone.d))} m inside ${bestZone.z.name} (precision ± ${Math.round(best.accuracy)} m)` });
-        if (canEdit && bestZone.z.id != null) void staffClockApi.saveRules({ setupDone: ['tested'] }).then(announceClockChange).catch(() => undefined);
-      }
-      else setTest({ inside: false, text: `You are ${Math.round(bestZone.d - bestZone.z.radius)} m outside ${bestZone.z.name}.` });
-      toast.success('Location found');
+      const { best } = await sampleLocation({ maxMs: 10000 });
+      judge(best, false);
     } catch (e) {
-      toast.error('Location not found', e instanceof GeoError && e.kind === 'denied' ? 'Allow location for this site in the browser.' : 'Try again near a window or outside.');
+      toast.error('Location not found', e instanceof GeoError && e.kind === 'denied' ? 'Allow location for this site in the browser.' : 'Make sure Wi-Fi is on (computers) or try near a window (phones).');
     } finally {
       setTesting(false);
     }
@@ -338,15 +343,21 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
 
   const goToMyLocation = async () => {
     try {
-      const { best } = await sampleLocation({ maxMs: 8000 });
-      map.current?.setView([best.lat, best.lng], 18);
+      const { best } = await sampleLocation({ maxMs: 10000 });
+      showMe(best);
+      map.current?.setView([best.lat, best.lng], best.accuracy > (rules?.maxAccuracy ?? 100) ? 16 : 18);
+      if (best.accuracy > (rules?.maxAccuracy ?? 100)) {
+        toast.info(`Approximate: ± ${Math.round(best.accuracy)} m`, isComputer()
+          ? 'Computers have no GPS. Check the pin: search the school or click the map on its buildings to place it exactly.'
+          : 'Step outside for a precise reading, or click the map on the school to place the pin.');
+      }
       if (current && canEdit) patch({ lat: best.lat, lng: best.lng });
       else if (canEdit) {
         setZones((zs) => [...zs, { id: null, name: 'Main campus', lat: best.lat, lng: best.lng, radius: 150, active: true }]);
         setSel(zones.length);
         setDirty(true);
       }
-      toast.success('Moved to your location');
+      if (best.accuracy <= (rules?.maxAccuracy ?? 100)) toast.success('Moved to your location');
     } catch {
       toast.error('Location not found', 'Allow location for this site and try again.');
     }
@@ -518,7 +529,13 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}><span className="sc-muted">Centre</span><span className="sc-num">{current.lat.toFixed(5)}, {current.lng.toFixed(5)}</span></div>
                   <div className="sc-info"><Info size={18} />Keep it 100 m or more. Phones indoors are often 20 to 60 m off, so a tight circle refuses honest staff.</div>
                   <button className="sc-btn" id="zone-test" onClick={() => void testHere()} disabled={testing}>{testing && <Spinner />}Test from where I stand</button>
-                  {test && <div className={test.inside ? 'sc-ok' : 'sc-bad'} role="status">{test.inside ? <Check size={18} /> : <AlertTriangle size={18} />}<span style={{ overflowWrap: 'anywhere' }}>{test.text}</span></div>}
+                  {canEdit && isComputer() && <PhoneGps compact onFix={(f) => judge(f, true)} />}
+                  {test && <div className={test.ok ? 'sc-ok' : test.vague ? 'sc-vague' : 'sc-bad'} role="status">{test.ok ? <Check size={18} /> : <AlertTriangle size={18} />}<span style={{ overflowWrap: 'anywhere' }}><b>{test.title}.</b> {test.text}</span></div>}
+                  {test?.vague && canEdit && (
+                    <button className="sc-btn sc-btn-soft sc-btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => { void staffClockApi.saveRules({ setupDone: ['tested'] }).then(announceClockChange).catch(() => undefined); toast.success('Zone confirmed', 'The grey dashed circle on the map is how far off this computer may be.'); }}>
+                      <Check size={15} /> The circle covers the school
+                    </button>
+                  )}
                   {canEdit && (
                     <button className="sc-btn sc-btn-danger sc-btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => { setZones((zs) => zs.filter((_, j) => j !== sel)); setSel(0); setDirty(true); }}>
                       <Trash2 size={15} /> Remove this zone

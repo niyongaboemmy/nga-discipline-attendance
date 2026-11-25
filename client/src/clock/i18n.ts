@@ -133,8 +133,9 @@ const en = {
   gotIt: 'Got it',
   unsupported: 'This browser is too old',
   unsupportedLead: 'Update Chrome or Safari, then open the link again.',
-  noAccount: 'No staff account uses {email}',
-  noAccountLead: 'Ask your school admin to add this Google account to your Amashuri profile, or use another account.',
+  noAccount: 'No staff account uses {email}.',
+  noAccountLead: 'If you check in with a Gmail that is not your Amashuri e-mail, add it once in your Amashuri profile (Staff attendance card), then come back. Your school admin can also add it for you.',
+  addInProfile: 'Add this Gmail in my Amashuri profile',
   studentRefused: 'This page is for teachers and staff only.',
   deviceTaken: 'This {device} is already registered to another staff member. Each person checks in with their own device.',
   googleNotSet: 'Google sign-in is not set up for this school yet. Ask your school admin.',
@@ -147,6 +148,7 @@ const en = {
 export type Key = keyof typeof en;
 
 const rw: Partial<Record<Key, string>> = {
+  addInProfile: 'Ongeramo iyi Gmail kuri porofayili yanjye ya Amashuri',
   staffAttendance: 'Kwitaba kw’abakozi',
   welcomeLead: 'Andikisha iyi {device} rimwe gusa. Nyuma yaho, ukanda rimwe ugeze ku ishuri n’ikindi gihe usohotse.',
   step1: 'Komeza ukoresheje konti yawe ya Google',
@@ -235,6 +237,7 @@ const rw: Partial<Record<Key, string>> = {
 };
 
 const fr: Partial<Record<Key, string>> = {
+  addInProfile: 'Ajouter ce Gmail dans mon profil Amashuri',
   staffAttendance: 'Présence du personnel',
   welcomeLead: 'Enregistrez ce {device} une seule fois. Ensuite, un toucher pour arriver et un toucher pour partir.',
   step1: 'Continuez avec votre compte Google',
