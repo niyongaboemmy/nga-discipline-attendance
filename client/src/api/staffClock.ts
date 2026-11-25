@@ -16,6 +16,7 @@ export interface ClockRules {
   schoolNetworks: string;
   nonSchoolDays: 'allow_flag' | 'refuse';
   allowUnassignedStaff: boolean;
+  setupDone?: string[];
 }
 
 export interface ClockZone {

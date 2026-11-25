@@ -71,6 +71,8 @@ const RulesBody = z.object({
   schoolNetworks: z.string().max(400).refine((v) => validCidrList(v), 'List IPv4 addresses or ranges like 41.186.10.0/24').optional(),
   nonSchoolDays: z.enum(['allow_flag', 'refuse']).optional(),
   allowUnassignedStaff: z.boolean().optional(),
+  /** Mark setup checklist steps done (merged with the ones already done). */
+  setupDone: z.array(z.enum(['rules', 'tested', 'shared'])).max(3).optional(),
 });
 
 router.put('/config', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), async (req: any, res) => {
@@ -101,6 +103,10 @@ router.put('/config', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), asyn
     for (const [field, key, toValue] of map) {
       if (body[field] !== undefined) await setSchoolSetting(db, tid, key, toValue(body[field]));
     }
+    // Saving any rule counts as reviewing the rules.
+    const ruleFields = ['opens', 'lateAfter', 'earlyLeaveBefore', 'minShiftMinutes', 'maxAccuracy', 'selfReplaceDays', 'googleDomains', 'schoolNetworks'] as const;
+    const steps = new Set([...before.setupDone, ...(body.setupDone ?? []), ...(ruleFields.some((f) => body[f] !== undefined) ? ['rules'] : [])]);
+    if (steps.size !== before.setupDone.length) await setSchoolSetting(db, tid, 'STAFF_CLOCK_SETUP', [...steps].sort().join(','));
     await recordAudit(db, actorOf(req), 'STAFF_CLOCK_RULES_UPDATED', 'school_settings', 'staff_clock', undefined, { previousValue: before, newValue: clockRules() });
     return res.json({ success: true, message: 'Saved', data: { rules: clockRules() } });
   } catch (err) {

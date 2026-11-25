@@ -89,6 +89,14 @@ async function context(browser, { width, height, theme, mobile = false }) {
     localStorage.setItem('sso_role_permissions', JSON.stringify(perms));
     localStorage.setItem('theme', theme);
   }, [TOKEN, PERMS, theme]);
+  await ctx.route('https://nominatim.openstreetmap.org/**', (r) => {
+    const q = new URL(r.request().url()).searchParams;
+    globalThis.__lastSearch = Object.fromEntries(q.entries());
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+      { lat: '-1.9500', lon: '30.0600', name: 'New Generation Academy', display_name: 'New Generation Academy, KN 5 Rd, Kigali, Rwanda' },
+      { lat: '-2.6000', lon: '29.7400', name: 'New Generation School', display_name: 'New Generation School, Huye, Southern Province, Rwanda' },
+    ]) });
+  });
   await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
   await ctx.route('**/api/**', (route) => {
     const u = new URL(route.request().url());
@@ -133,13 +141,20 @@ async function run(browser, vp) {
   await expectText(page, 'Staff attendance', `${tag} dashboard`);
   await expectText(page, 'Arrivals', `${tag} arrivals`);
   await expectText(page, 'New phone waiting', `${tag} pending phone`);
+  // Guided setup: zone drawn and clock on, so the next step is the times.
+  await expectText(page, 'Set up staff check-in', `${tag} setup card`);
+  await expectText(page, 'Next: check the times', `${tag} setup next step`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
   await shot('01-dashboard');
+  await shot('01b-setup');
   await page.getByRole('tab', { name: /Needs review/ }).click();
   await expectText(page, 'Same spot and time as another check-in', `${tag} review`);
   await shot('02-review');
 
-  await page.goto(`${BASE}/staff/clock/zone`);
+  // The setup step links straight to the rules on the zone page.
+  await page.goto(`${BASE}/staff/clock`);
+  await page.getByRole('button', { name: 'Review times' }).click();
+  await page.waitForURL(/\/staff\/clock\/zone#zone-rules$/);
   await expectText(page, 'Check-in rules', `${tag} zone rules`);
   await page.waitForTimeout(1500);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: zone page scrolls sideways`);
@@ -149,6 +164,33 @@ async function run(browser, vp) {
   await expectText(page, 'inside Main campus', `${tag} zone test`);
   await page.waitForTimeout(1500);
   await shot('04-zone-satellite-test');
+
+  // Search -> pick a result -> the selected zone's pin moves there (Save becomes possible).
+  await expectText(page, 'Staff check-in link for New Generation Academy', `${tag} link banner`);
+  await page.getByPlaceholder('Search a place or paste coordinates').fill('new generation academy');
+  await page.getByRole('button', { name: 'Find' }).click();
+  await expectText(page, 'Choose the right place', `${tag} search results`);
+  if (globalThis.__lastSearch?.countrycodes !== 'rw') fail(`${tag}: search not biased to Rwanda (${JSON.stringify(globalThis.__lastSearch)})`);
+  await shot('04b-zone-search-results');
+  await page.getByRole('option', { name: /New Generation Academy/ }).click();
+  await expectText(page, '-1.95000, 30.06000', `${tag} pin moved by search`);
+  if (await page.getByRole('button', { name: 'Save changes' }).isDisabled()) fail(`${tag}: Save not enabled after moving the pin`);
+  // Coordinates pasted also place the pin; a map click moves it again.
+  await page.getByPlaceholder('Search a place or paste coordinates').fill('-1.95111, 30.06222');
+  await page.getByRole('button', { name: 'Find' }).click();
+  await expectText(page, '-1.95111, 30.06222', `${tag} pin moved by coordinates`);
+  const box = await page.locator('.sc-map-el').boundingBox();
+  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.6);
+  await page.waitForTimeout(300);
+  const moved = await page.getByText('-1.95111, 30.06222').count();
+  if (moved !== 0) fail(`${tag}: a map click did not move the pin`);
+  await shot('04c-zone-after-click');
+
+  // The old clock card is gone; the staff link is shown instead.
+  await page.goto(`${BASE}/staff/attendance`);
+  await expectText(page, 'Check in and out with your phone', `${tag} staff link card`);
+  if (await page.getByText('Shift duty clock').count()) fail(`${tag}: old Shift duty clock still shown`);
+  await shot('04d-staff-attendance');
 
   await page.goto(`${BASE}/staff/clock/devices`);
   await expectText(page, 'Staff QR cards', `${tag} devices`);

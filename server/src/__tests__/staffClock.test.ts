@@ -335,6 +335,14 @@ describe('the school admin side', () => {
     expect(cfg.body.data.zones).toHaveLength(1);
   });
 
+  it('remembers setup checklist steps (rules saved count as reviewed)', async () => {
+    const r1 = await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ setupDone: ['tested'] });
+    expect(r1.body.data.rules.setupDone).toEqual(expect.arrayContaining(['tested', 'rules']));
+    const r2 = await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ setupDone: ['shared'] });
+    expect(r2.body.data.rules.setupDone.sort()).toEqual(['rules', 'shared', 'tested']);
+    expect((await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ setupDone: ['nope'] })).status).toBe(400);
+  });
+
   it('creates, edits and deletes zones; the last zone gone closes the clock', async () => {
     const created = await request(app).post('/api/staff/clock/zones').set(authHeader(adminToken)).send({ name: 'Sports ground', lat: -1.95391, lng: 30.10662, radius: 70 });
     expect(created.status).toBe(201);

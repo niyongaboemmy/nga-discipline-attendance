@@ -70,7 +70,7 @@ function mockServer(opts = {}) {
     next: st.checkOut ? 'done' : st.checkIn ? 'check_out' : 'check_in', checkoutOpensAt: null, opensAt: '05:00',
     today: st.checkIn ? { checkIn: st.checkIn, checkOut: st.checkOut, status: 'present', outStatus: st.checkOut ? 'on_time' : null, minutesAtSchool: st.checkOut ? 508 : 0 } : null,
     week: [
-      { date: '2026-11-23', isToday: false, future: false, checkIn: '07:35', checkOut: '16:05', status: 'present' },
+      { date: '2026-11-23', isToday: false, future: false, checkIn: opts.fresh ? null : '07:35', checkOut: opts.fresh ? null : '16:05', status: opts.fresh ? null : 'present' },
       { date: '2026-11-24', isToday: true, future: false, checkIn: st.checkIn, checkOut: st.checkOut, status: st.checkIn ? 'present' : null },
       { date: '2026-11-25', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
       { date: '2026-11-26', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
@@ -233,7 +233,7 @@ async function edgeStates(browser, vp, theme) {
 }
 
 async function longName(browser, vp) {
-  const server = mockServer({ name: 'Jean-Baptiste-Emmanuel Nshimiyimana Habyarimana', email: 'jb.nshimiyimana.habyarimana.teacher@gmail.com' });
+  const server = mockServer({ fresh: true, name: 'Jean-Baptiste-Emmanuel Nshimiyimana Habyarimana', email: 'jb.nshimiyimana.habyarimana.teacher@gmail.com' });
   const { ctx, page } = await newPage(browser, vp, 'light', { server });
   await page.goto(`${BASE}/c/nga`);
   await page.getByTestId('gis').click();
@@ -243,9 +243,13 @@ async function longName(browser, vp) {
   await shot(page, `${vp.name}-12-long-name-confirm`);
   await page.getByRole('button', { name: /Yes, this is my/ }).click();
   await expectText(page, 'Good morning, Jean-Baptiste-Emmanuel', `${vp.name} long greeting`);
+  // A brand-new staff member gets the first-day guide.
+  await expectText(page, 'How it works', `${vp.name} first-day guide`);
   await page.waitForTimeout(300);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${vp.name}: daily screen scrolls sideways`);
   await shot(page, `${vp.name}-13-long-name-ready`);
+  await page.getByRole('button', { name: 'Got it' }).click();
+  if (await page.getByText('How it works').count()) fail(`${vp.name}: guide did not close`);
   await ctx.close();
 }
 

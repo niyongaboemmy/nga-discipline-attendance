@@ -48,6 +48,8 @@ export interface ClockRules {
   nonSchoolDays: 'allow_flag' | 'refuse';
   allowUnassignedStaff: boolean;
   retentionDays: number;
+  /** Setup checklist steps an admin confirmed (the others are derived from data). */
+  setupDone: string[];
 }
 
 const hhmm = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
@@ -69,6 +71,7 @@ export function clockRules(): ClockRules {
     nonSchoolDays: schoolSetting('STAFF_CLOCK_NON_SCHOOL_DAYS') === 'refuse' ? 'refuse' : 'allow_flag',
     allowUnassignedStaff: schoolSetting('STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF') !== '0',
     retentionDays: numberSetting('STAFF_CLOCK_RETENTION_DAYS'),
+    setupDone: schoolSetting('STAFF_CLOCK_SETUP').split(',').map((x) => x.trim()).filter(Boolean),
   };
 }
 

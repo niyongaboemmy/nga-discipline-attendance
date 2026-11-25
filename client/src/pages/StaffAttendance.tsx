@@ -6,8 +6,9 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useToast } from '../context/ToastContext';
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorState } from '../components/common/ErrorState';
-import { apiGet, apiPost, ApiError } from '../api/client';
-import { Clock, Play, Square, Search } from 'lucide-react';
+import { apiGet, ApiError } from '../api/client';
+import { Copy, ExternalLink, Search, Smartphone } from 'lucide-react';
+import QRCode from 'qrcode';
 
 interface StaffLog {
   id: number;
@@ -33,10 +34,18 @@ export const StaffAttendance: React.FC = () => {
   // role string — a custom role with STAFF_ATTENDANCE_VIEW_ALL couldn't see it.
   const canViewAll = can('STAFF_ATTENDANCE_VIEW_ALL');
   const toast = useToast();
+  // The school's staff check-in link (/c/<school>, the staff attendance clock).
+  const clockLink = user?.tenantSlug ? `${window.location.origin}/c/${user.tenantSlug}` : null;
+  const [clockQr, setClockQr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!clockLink) return;
+    let alive = true;
+    QRCode.toDataURL(clockLink, { margin: 1, width: 320, errorCorrectionLevel: 'M' }).then((u) => alive && setClockQr(u)).catch(() => undefined);
+    return () => { alive = false; };
+  }, [clockLink]);
   const [logs, setLogs] = useState<StaffLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [clockStatus, setClockStatus] = useState<{ clockedIn: boolean; clockInTime?: string; clockedOut: boolean } | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
@@ -48,11 +57,6 @@ export const StaffAttendance: React.FC = () => {
       const res = await apiGet<StaffLog[]>(path);
       const data = res.data || [];
       setLogs(data);
-      const todayStr = new Date().toISOString().split('T')[0];
-      const todayRecord = data.find((r) => r.date === todayStr && r.staff_id === user?.id);
-      setClockStatus(todayRecord
-        ? { clockedIn: true, clockInTime: todayRecord.clock_in, clockedOut: !!todayRecord.clock_out }
-        : { clockedIn: false, clockedOut: false });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load staff attendance logs.');
     } finally {
@@ -61,16 +65,6 @@ export const StaffAttendance: React.FC = () => {
   };
 
   useEffect(() => { fetchLogs(); /* eslint-disable-next-line */ }, [user]);
-
-  const clock = async (path: string) => {
-    try {
-      await apiPost(path);
-      await fetchLogs();
-      toast.success(path.includes('clock-in') ? 'Clocked in' : 'Clocked out');
-    } catch (err) {
-      toast.error('Could not record', err instanceof ApiError ? err.message : 'Network error. Could not reach the server.');
-    }
-  };
 
   // Admin's "all staff logs" view is the only admin list page with no
   // filters today — the backend doesn't support server-side query params
@@ -91,31 +85,28 @@ export const StaffAttendance: React.FC = () => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Staff Attendance</h1>
-          <p className="page-subtitle">{canViewAll ? 'Review all staff clock-ins and clock-outs.' : 'Clock in for your shift and view your logs.'}</p>
+          <p className="page-subtitle">{canViewAll ? 'Review all staff check-ins and check-outs.' : 'Your check-in history. Check in and out with the staff attendance link on your own phone or tablet.'}</p>
         </div>
       </div>
 
-      {/* Clock widget */}
-      {clockStatus && (
-        <div className="card card-pad mb-4 flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-3">
-            <div className="login-role-icon tone-brand"><Clock size={18} /></div>
-            <div>
-              <div className="section-title">Shift duty clock</div>
-              <p className="text-sm text-secondary mt-1">
-                {!clockStatus.clockedIn ? 'Shift not started. Clock in when your duty begins.'
-                  : clockStatus.clockedOut ? 'Workday completed. Your logs are recorded.'
-                  : `Active shift — clocked in at ${fmtTime(clockStatus.clockInTime!)}`}
-              </p>
-            </div>
+      {clockLink && (
+        <div className="card card-pad mb-4" style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'center' }}>
+          <div style={{ width: 132, height: 132, borderRadius: 18, border: '1px solid var(--border)', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
+            {clockQr ? <img src={clockQr} alt="QR code of the staff check-in link" width={116} height={116} style={{ imageRendering: 'pixelated' }} /> : <div style={{ width: 116, height: 116, borderRadius: 12, background: 'var(--bg-subtle)' }} />}
           </div>
-          {!clockStatus.clockedIn ? (
-            <button className="btn btn-primary" onClick={() => clock('/api/staff/clock-in')} data-track="tendo.staff.clock_in"><Play size={16} /> Clock in</button>
-          ) : !clockStatus.clockedOut ? (
-            <button className="btn btn-danger" onClick={() => clock('/api/staff/clock-out')} data-track="tendo.staff.clock_out"><Square size={16} /> Clock out</button>
-          ) : (
-            <span className="badge badge-success">Duty completed today</span>
-          )}
+          <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+            <div className="flex items-center gap-2"><Smartphone size={18} /><span className="section-title">Check in and out with your phone</span></div>
+            <ol style={{ margin: '10px 0 0', paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 14, color: 'var(--text-secondary)' }}>
+              <li><b style={{ color: 'var(--text-primary)' }}>Scan this code</b> with your phone camera, or open <b style={{ color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{clockLink.replace(/^https?:\/\//, '')}</b>.</li>
+              <li><b style={{ color: 'var(--text-primary)' }}>Register once:</b> Continue with Google, confirm it is your phone, allow location.</li>
+              <li><b style={{ color: 'var(--text-primary)' }}>Every school day:</b> tap Check in when you arrive and Check out before you leave.</li>
+            </ol>
+            <p className="text-xs text-secondary mt-2">No smartphone? Ask the school office for a staff QR card.</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button className="btn btn-secondary" style={{ borderRadius: 999 }} onClick={async () => { try { await navigator.clipboard.writeText(clockLink); toast.success('Link copied'); } catch { toast.error('Could not copy', clockLink); } }}><Copy size={16} /> Copy link</button>
+            <a className="btn btn-primary" style={{ borderRadius: 999 }} href={clockLink} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} /> Open</a>
+          </div>
         </div>
       )}
 

@@ -48,6 +48,8 @@ export const SCHOOL_SETTING_DEFAULTS = {
   STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF: '1',
   /** Coordinates of clock taps are blanked after this many days (privacy, plan §10). */
   STAFF_CLOCK_RETENTION_DAYS: '730',
+  /** Setup checklist steps an admin has completed (comma list: rules,tested,shared). */
+  STAFF_CLOCK_SETUP: '',
 } as const;
 
 export type SchoolSettingKey = keyof typeof SCHOOL_SETTING_DEFAULTS;
