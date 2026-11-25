@@ -28,6 +28,20 @@ const TILES = {
 };
 const KIGALI: [number, number] = [-1.9441, 30.0619];
 
+/** Bias place search to the school's country (from its timezone); empty = worldwide. */
+const COUNTRY_BY_TZ: Record<string, string> = {
+  'Africa/Kigali': 'rw', 'Africa/Kampala': 'ug', 'Africa/Nairobi': 'ke', 'Africa/Dar_es_Salaam': 'tz',
+  'Africa/Bujumbura': 'bi', 'Africa/Kinshasa': 'cd', 'Africa/Lubumbashi': 'cd', 'Africa/Juba': 'ss',
+  'Africa/Addis_Ababa': 'et', 'Africa/Lagos': 'ng', 'Africa/Accra': 'gh', 'Africa/Johannesburg': 'za',
+};
+
+interface PlaceHit {
+  name: string;
+  detail: string;
+  lat: number;
+  lng: number;
+}
+
 interface Draft {
   id: number | null;
   name: string;
@@ -40,6 +54,11 @@ interface Draft {
 const toDraft = (z: ClockZone): Draft => ({ id: z.id, name: z.name, lat: z.center_lat ?? KIGALI[0], lng: z.center_lng ?? KIGALI[1], radius: z.radius_m ?? 150, active: !!z.active });
 
 /** The point `m` metres east of (lat, lng): where the edge handle sits. */
+function cfgCountryHint(tz?: string): string {
+  const cc = COUNTRY_BY_TZ[tz ?? ''];
+  return `${cc ? 'Searched in your school’s country. ' : ''}Try a nearby village, road or landmark, or paste coordinates like -1.9536, 30.1044.`;
+}
+
 function eastOf(lat: number, lng: number, m: number): [number, number] {
   return [lat, lng + m / (111_320 * Math.cos((lat * Math.PI) / 180))];
 }
@@ -60,6 +79,7 @@ export const StaffClockZone: React.FC = () => {
   const [test, setTest] = useState<{ inside: boolean; text: string } | null>(null);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
+  const [hits, setHits] = useState<PlaceHit[] | null>(null);
   const [placing, setPlacing] = useState(false);
 
   const mapEl = useRef<HTMLDivElement>(null);
@@ -68,6 +88,10 @@ export const StaffClockZone: React.FC = () => {
   const layer = useRef<L.LayerGroup | null>(null);
   const meMarker = useRef<L.Marker | null>(null);
   const placingRef = useRef(false);
+  // The map's click handler is created once: it reads the current zone through refs.
+  const selRef = useRef(0);
+  const canEditRef = useRef(false);
+  const hasZoneRef = useRef(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -95,7 +119,19 @@ export const StaffClockZone: React.FC = () => {
     tiles.current = L.tileLayer(TILES.map.url, { attribution: TILES.map.attribution, maxZoom: TILES.map.maxZoom }).addTo(m);
     layer.current = L.layerGroup().addTo(m);
     m.on('click', (e: L.LeafletMouseEvent) => {
-      if (!placingRef.current) return;
+      if (!canEditRef.current) return;
+      if (!placingRef.current) {
+        // A plain click moves the selected zone's pin there (or starts the first zone).
+        if (hasZoneRef.current) {
+          const i = selRef.current;
+          setZones((zs) => zs.map((x, j) => (j === i ? { ...x, lat: e.latlng.lat, lng: e.latlng.lng } : x)));
+        } else {
+          setZones([{ id: null, name: 'Main campus', lat: e.latlng.lat, lng: e.latlng.lng, radius: 150, active: true }]);
+          setSel(0);
+        }
+        setDirty(true);
+        return;
+      }
       placingRef.current = false;
       setPlacing(false);
       setZones((zs) => {
@@ -171,6 +207,27 @@ export const StaffClockZone: React.FC = () => {
   }, [zones, sel, style, canEdit]);
 
   const current = zones[sel] ?? null;
+  useEffect(() => {
+    selRef.current = sel;
+    canEditRef.current = canEdit;
+    hasZoneRef.current = zones.length > 0;
+  }, [sel, canEdit, zones.length]);
+
+  /** Put the selected zone's pin (or a new first zone) at a point and show it, ready to adjust. */
+  const placeAt = (lat: number, lng: number, label?: string) => {
+    map.current?.setView([lat, lng], 18);
+    setHits(null);
+    if (!canEdit) return;
+    if (zones.length) {
+      setZones((zs) => zs.map((x, j) => (j === sel ? { ...x, lat, lng } : x)));
+    } else {
+      setZones([{ id: null, name: 'Main campus', lat, lng, radius: 150, active: true }]);
+      setSel(0);
+    }
+    setDirty(true);
+    setTest(null);
+    toast.success(label ? `Pin moved to ${label}` : 'Pin placed', 'Drag it or click the map to adjust, then press Save changes.');
+  };
   const patch = (p: Partial<Draft>) => {
     setZones((zs) => zs.map((z, i) => (i === sel ? { ...z, ...p } : z)));
     setDirty(true);
@@ -261,17 +318,35 @@ export const StaffClockZone: React.FC = () => {
     if (!q) return;
     const coords = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/);
     if (coords) {
-      map.current?.setView([Number(coords[1]), Number(coords[2])], 18);
+      const lat = Number(coords[1]);
+      const lng = Number(coords[2]);
+      if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+        toast.error('Not valid coordinates', 'Use latitude, longitude, like -1.9536, 30.1044.');
+        return;
+      }
+      placeAt(lat, lng);
       return;
     }
     setSearching(true);
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } });
-      const list = await res.json();
-      if (!Array.isArray(list) || !list.length) throw new Error();
-      map.current?.setView([Number(list[0].lat), Number(list[0].lon)], 17);
+      const params = new URLSearchParams({ format: 'jsonv2', limit: '6', q, 'accept-language': 'en' });
+      const cc = COUNTRY_BY_TZ[cfg?.school.timezone ?? ''];
+      if (cc) params.set('countrycodes', cc);
+      // Rank places near the map's current view first (not a hard limit).
+      const b = map.current?.getBounds().pad(2);
+      if (b) params.set('viewbox', [b.getWest(), b.getNorth(), b.getEast(), b.getSouth()].map((n) => n.toFixed(4)).join(','));
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, { headers: { Accept: 'application/json' } });
+      const list: Array<{ lat: string; lon: string; name?: string; display_name: string }> = await res.json();
+      const found = (Array.isArray(list) ? list : []).map((r) => {
+        const parts = r.display_name.split(',').map((x) => x.trim());
+        return { name: r.name || parts[0], detail: parts.slice(r.name ? 1 : 1, 4).join(', '), lat: Number(r.lat), lng: Number(r.lon) };
+      });
+      if (!found.length) throw new Error();
+      if (found.length === 1) placeAt(found[0].lat, found[0].lng, found[0].name);
+      else setHits(found);
     } catch {
-      toast.error('Place not found', 'Try another name, or paste coordinates like -1.9536, 30.1044.');
+      setHits(null);
+      toast.error('Place not found', cfgCountryHint(cfg?.school.timezone));
     } finally {
       setSearching(false);
     }
@@ -315,6 +390,17 @@ export const StaffClockZone: React.FC = () => {
           ) : undefined}
         />
         {error && <ErrorState message={error} onRetry={() => void load()} />}
+        {cfg && (
+          <div className="sc-card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
+            <div style={{ flex: '1 1 280px', minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-tertiary)' }}>Staff check-in link for {cfg.school.name}</div>
+              <a href={cfg.link.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 17, fontWeight: 700, color: 'var(--primary-text)', overflowWrap: 'anywhere' }}>{cfg.link.display}</a>
+              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2 }}>{rules?.enabled ? 'Open: staff can register and check in.' : 'Ready, but closed until you add a zone and turn the clock on.'}</div>
+            </div>
+            <button className="sc-btn sc-btn-soft sc-btn-sm" onClick={() => void copyLink()}><Copy size={14} /> Copy</button>
+            <Link className="sc-btn sc-btn-sm" to="/staff/clock/poster"><Printer size={15} /> Poster</Link>
+          </div>
+        )}
         {cfg && !cfg.googleConfigured && (
           <div className="sc-notice"><b>Google sign-in is not set up on this server.</b><p>Staff cannot register their phones until GOOGLE_CLIENT_ID is set for Tendo and its address is added to the Google sign-in client.</p></div>
         )}
@@ -332,6 +418,17 @@ export const StaffClockZone: React.FC = () => {
                   <input id="sc-place" placeholder="Search a place or paste coordinates" value={query} onChange={(e) => setQuery(e.target.value)} />
                   <button className="sc-btn sc-btn-sm sc-btn-soft" type="submit" disabled={searching}>{searching ? <Spinner /> : 'Find'}</button>
                 </form>
+                {hits && (
+                  <div className="sc-hits" role="listbox" aria-label="Places found">
+                    <div className="sc-hits-head"><span>Choose the right place</span><button type="button" onClick={() => setHits(null)}>Close</button></div>
+                    {hits.map((h, i) => (
+                      <button key={`${h.lat},${h.lng},${i}`} type="button" role="option" aria-selected="false" className="sc-hit" onClick={() => placeAt(h.lat, h.lng, h.name)}>
+                        <b className="sc-clip">{h.name}</b>
+                        <small className="sc-clip">{h.detail}</small>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div style={{ flex: 1 }} />
                 <div className="sc-seg" role="group" aria-label="Map style">
                   <button aria-pressed={style === 'map'} onClick={() => setStyle('map')}>Map</button>
@@ -341,7 +438,7 @@ export const StaffClockZone: React.FC = () => {
               <div className="sc-map-bottom" style={{ bottom: 120 }}>
                 <button className="sc-btn" onClick={() => void goToMyLocation()}><Crosshair size={18} /> Use my location</button>
               </div>
-              <span className="sc-map-hint">{placing ? 'Click the map where the new zone’s centre is' : 'Drag the pin to move · drag the white handle to resize'}</span>
+              <span className="sc-map-hint">{placing ? 'Click the map where the new zone’s centre is' : canEdit ? 'Click the map or drag the pin to move · drag the white handle to resize' : 'School zones'}</span>
             </section>
 
             <aside className="sc-side" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
