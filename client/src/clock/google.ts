@@ -4,9 +4,14 @@
  * server; Google's own account chooser is the "choose an account" step.
  */
 
+interface GisId {
+  initialize: (o: Record<string, unknown>) => void;
+  renderButton: (el: HTMLElement, o: Record<string, unknown>) => void;
+  disableAutoSelect?: () => void;
+}
 declare global {
   interface Window {
-    google?: any;
+    google?: { accounts?: { id?: GisId } };
   }
 }
 
@@ -41,7 +46,7 @@ export interface GoogleButtonOptions {
 
 export async function renderGoogleButton(o: GoogleButtonOptions): Promise<void> {
   await loadGis();
-  const g = window.google!.accounts.id;
+  const g = window.google!.accounts!.id!;
   g.initialize({
     client_id: o.clientId,
     callback: (resp: { credential?: string }) => {

@@ -17,6 +17,10 @@ import {
 type View = 'loading' | 'fatal' | 'welcome' | 'confirm' | 'location' | 'denied' | 'pending' | 'revoked' | 'daily' | 'success';
 type GeoMode = 'idle' | 'locating' | 'ok' | 'outside' | 'vague' | 'failed';
 type Theme = 'auto' | 'light' | 'dark';
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: string }>;
+}
 
 const LOCALES: Record<Lang, string> = { en: 'en-GB', rw: 'rw-RW', fr: 'fr-FR' };
 const SLUG_KEY = 'tendo.clock.lastSlug';
@@ -60,7 +64,8 @@ export function ClockApp() {
   const [lang, setLang] = useState<Lang>(detectLang);
   const t = useMemo(() => makeT(lang), [lang]);
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('tendo.clock.theme') as Theme) || 'auto');
-  const [dark, setDark] = useState(() => document.documentElement.getAttribute('data-theme') === 'dark');
+  const [systemDark, setSystemDark] = useState(() => !!window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  const dark = theme === 'dark' || (theme === 'auto' && systemDark);
   const tablet = useMemo(() => isTabletDevice(), []);
   const deviceWord = tablet ? t('tablet') : t('phone');
 
@@ -84,7 +89,7 @@ export function ClockApp() {
   const [toast, setToast] = useState<{ msg: string; error?: boolean } | null>(null);
   const [success, setSuccess] = useState<PunchResult | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [installEvt, setInstallEvt] = useState<any>(null);
+  const [installEvt, setInstallEvt] = useState<InstallPromptEvent | null>(null);
   const [tipHidden, setTipHidden] = useState(() => localStorage.getItem('tendo.clock.tipHidden') === '1');
   const [justRegistered, setJustRegistered] = useState(false);
   const googleSlot = useRef<HTMLDivElement>(null);
@@ -101,13 +106,15 @@ export function ClockApp() {
   // Theme + language persistence.
   useEffect(() => {
     localStorage.setItem('tendo.clock.theme', theme);
-    setDark(applyTheme(theme));
-    if (theme !== 'auto') return;
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const on = () => setDark(applyTheme('auto'));
+    applyTheme(theme);
+  }, [theme, systemDark]);
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const on = () => setSystemDark(mq.matches);
     mq.addEventListener?.('change', on);
     return () => mq.removeEventListener?.('change', on);
-  }, [theme]);
+  }, []);
   useEffect(() => {
     localStorage.setItem('tendo.clock.lang', lang);
     document.documentElement.lang = lang;
@@ -121,7 +128,7 @@ export function ClockApp() {
   useEffect(() => {
     const on = (e: Event) => {
       e.preventDefault();
-      setInstallEvt(e);
+      setInstallEvt(e as InstallPromptEvent);
     };
     window.addEventListener('beforeinstallprompt', on);
     return () => window.removeEventListener('beforeinstallprompt', on);
@@ -248,7 +255,8 @@ export function ClockApp() {
   }, [slug, t, enterDaily, handleDeviceError, deviceWord]);
 
   useEffect(() => {
-    void start();
+    // After mount (not inside the effect body): start() updates state.
+    void Promise.resolve().then(start);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -663,7 +671,7 @@ function registerErrorText(err: unknown, t: T, deviceWord: string): string {
   if (err instanceof OfflineError) return t('offlineHelp', { device: deviceWord });
   if (err instanceof ClockApiError) {
     switch (err.code) {
-      case 'NO_ACCOUNT': return `${t('noAccount', { email: err.data.email ?? '' })} ${t('noAccountLead')}`;
+      case 'NO_ACCOUNT': return `${t('noAccount', { email: String(err.data.email ?? '') })} ${t('noAccountLead')}`;
       case 'STUDENT': return t('studentRefused');
       case 'DEVICE_TAKEN': return t('deviceTaken', { device: deviceWord });
       case 'GOOGLE_NOT_CONFIGURED': return t('googleNotSet');
@@ -852,7 +860,7 @@ function Daily(p: DailyProps) {
 
       <div className="ck-week">
         <div className="ck-week-head"><b>{t('thisWeek')}</b><span>{t('daysOf', { done, total: me.week.length })}</span></div>
-        <div className="ck-week-days" style={{ ['--ck-days' as any]: me.week.length || 5 }}>
+        <div className="ck-week-days" style={{ '--ck-days': me.week.length || 5 } as React.CSSProperties}>
           {me.week.map((d) => {
             const isDone = !!d.checkIn && !!d.checkOut;
             const isIn = !!d.checkIn && !d.checkOut;

@@ -3,8 +3,8 @@
 export class ClockApiError extends Error {
   status: number;
   code: string;
-  data: Record<string, any>;
-  constructor(status: number, code: string, message: string, data: Record<string, any> = {}) {
+  data: Record<string, unknown>;
+  constructor(status: number, code: string, message: string, data: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
     this.code = code;
@@ -111,14 +111,14 @@ async function call<T>(slug: string, path: string, init: RequestInit & { token?:
   } catch {
     throw new OfflineError();
   }
-  let body: any = null;
+  let body: { success?: boolean; code?: string; message?: string; data?: unknown } | null = null;
   try {
     body = await res.json();
   } catch {
     /* not JSON */
   }
   if (!res.ok || !body?.success) {
-    throw new ClockApiError(res.status, body?.code || 'ERROR', body?.message || 'Something went wrong. Try again.', body || {});
+    throw new ClockApiError(res.status, body?.code || 'ERROR', body?.message || 'Something went wrong. Try again.', (body as Record<string, unknown>) || {});
   }
   return body.data as T;
 }

@@ -56,7 +56,7 @@ export const StaffClockDashboard: React.FC = () => {
   }, [date]);
 
   useEffect(() => {
-    void load(date);
+    void Promise.resolve().then(() => load(date));
   }, [date, load]);
 
   // Live: refresh every minute while looking at today.

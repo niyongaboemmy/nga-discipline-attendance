@@ -128,7 +128,7 @@ export async function deviceInfo(): Promise<DeviceInfo> {
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iOS'
     : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'Unknown';
   let model = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : '';
-  const uad = (navigator as any).userAgentData;
+  const uad = (navigator as Navigator & { userAgentData?: { getHighEntropyValues?: (hints: string[]) => Promise<{ model?: string }> } }).userAgentData;
   if (!model && uad?.getHighEntropyValues) {
     try {
       const v = await uad.getHighEntropyValues(['model']);

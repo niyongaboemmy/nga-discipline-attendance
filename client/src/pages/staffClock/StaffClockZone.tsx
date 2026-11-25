@@ -82,7 +82,9 @@ export const StaffClockZone: React.FC = () => {
       setError(e instanceof ApiError ? e.message : 'Could not load the school zone.');
     }
   }, []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
 
   // The map itself (once).
   useEffect(() => {
@@ -114,7 +116,6 @@ export const StaffClockZone: React.FC = () => {
     if (!map.current) return;
     const t = TILES[style];
     tiles.current?.setUrl(t.url);
-    tiles.current?.options && (tiles.current.options.attribution = t.attribution);
     map.current.attributionControl.remove();
     map.current.attributionControl = L.control.attribution({ prefix: false }).addAttribution(t.attribution).addTo(map.current);
   }, [style, cfg]);
@@ -141,13 +142,13 @@ export const StaffClockZone: React.FC = () => {
         title: 'Zone centre',
       }).addTo(g);
       pin.bindTooltip(`${z.name || 'Untitled zone'} · ${z.radius} m`, { permanent: true, direction: 'top', offset: [0, -30], className: 'sc-pin-label' });
-      pin.on('drag', (e: any) => {
-        const ll = e.target.getLatLng();
+      pin.on('drag', (e: L.LeafletEvent) => {
+        const ll = (e.target as L.Marker).getLatLng();
         circle.setLatLng(ll);
         edge.setLatLng(eastOf(ll.lat, ll.lng, z.radius));
       });
-      pin.on('dragend', (e: any) => {
-        const ll = e.target.getLatLng();
+      pin.on('dragend', (e: L.LeafletEvent) => {
+        const ll = (e.target as L.Marker).getLatLng();
         setZones((zs) => zs.map((x, j) => (j === i ? { ...x, lat: ll.lat, lng: ll.lng } : x)));
         setDirty(true);
       });
@@ -156,12 +157,12 @@ export const StaffClockZone: React.FC = () => {
         icon: L.divIcon({ className: '', html: '<div class="sc-handle"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
         title: 'Drag to resize',
       }).addTo(g);
-      edge.on('drag', (e: any) => {
-        const r = Math.max(50, Math.min(500, Math.round(distanceM({ lat: z.lat, lng: z.lng }, { lat: e.latlng?.lat ?? e.target.getLatLng().lat, lng: e.target.getLatLng().lng }))));
+      edge.on('drag', (e: L.LeafletEvent) => {
+        const r = Math.max(50, Math.min(500, Math.round(distanceM({ lat: z.lat, lng: z.lng }, (e.target as L.Marker).getLatLng()))));
         circle.setRadius(r);
       });
-      edge.on('dragend', (e: any) => {
-        const ll = e.target.getLatLng();
+      edge.on('dragend', (e: L.LeafletEvent) => {
+        const ll = (e.target as L.Marker).getLatLng();
         const r = Math.max(50, Math.min(500, Math.round(distanceM({ lat: z.lat, lng: z.lng }, ll) / 10) * 10));
         setZones((zs) => zs.map((x, j) => (j === i ? { ...x, radius: r } : x)));
         setDirty(true);
@@ -238,7 +239,7 @@ export const StaffClockZone: React.FC = () => {
     }
   };
 
-  const useMyLocation = async () => {
+  const goToMyLocation = async () => {
     try {
       const { best } = await sampleLocation({ maxMs: 8000 });
       map.current?.setView([best.lat, best.lng], 18);
@@ -338,7 +339,7 @@ export const StaffClockZone: React.FC = () => {
                 </div>
               </div>
               <div className="sc-map-bottom" style={{ bottom: 120 }}>
-                <button className="sc-btn" onClick={() => void useMyLocation()}><Crosshair size={18} /> Use my location</button>
+                <button className="sc-btn" onClick={() => void goToMyLocation()}><Crosshair size={18} /> Use my location</button>
               </div>
               <span className="sc-map-hint">{placing ? 'Click the map where the new zone’s centre is' : 'Drag the pin to move · drag the white handle to resize'}</span>
             </section>

@@ -54,7 +54,9 @@ export const StaffClockDevices: React.FC = () => {
       setError(e instanceof ApiError ? e.message : 'Could not load devices.');
     }
   }, []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
