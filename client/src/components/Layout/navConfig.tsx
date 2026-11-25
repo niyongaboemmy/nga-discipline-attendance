@@ -17,6 +17,8 @@ import {
   BookOpen,
   Settings as SettingsIcon,
   CreditCard,
+  MapPin,
+  ScanLine,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -55,6 +57,8 @@ export const navItems: NavItem[] = [
   // Card attendance: the card tap stands in for the teacher marking the register.
   { label: 'Attendance Cards', path: '/attendance/cards', icon: CreditCard, roles: ['admin'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
+  { label: 'Staff Clock', path: '/staff/clock', icon: MapPin, roles: ['admin'], section: 'Attendance' },
+  { label: 'Scan Staff Card', path: '/staff/clock/scan', icon: ScanLine, roles: ['admin'], section: 'Attendance' },
 
   // Attendance (student) — deliberately just the calendar (tick/cross, no
   // record/history browsing) and the report above; no separate "My

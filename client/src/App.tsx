@@ -36,6 +36,11 @@ import { AttendanceReportGate } from './pages/AttendanceReportGate';
 import { SessionDetail } from './pages/SessionDetail';
 import { RfidCards } from './pages/RfidCards';
 import { RfidCardDetail } from './pages/RfidCardDetail';
+import { StaffClockDashboard } from './pages/staffClock/StaffClockDashboard';
+import { StaffClockZone } from './pages/staffClock/StaffClockZone';
+import { StaffClockDevices } from './pages/staffClock/StaffClockDevices';
+import { StaffClockScan } from './pages/staffClock/StaffClockScan';
+import { StaffClockPoster } from './pages/staffClock/StaffClockPoster';
 
 export const App: React.FC = () => {
   return (
@@ -241,6 +246,46 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher']}>
                 <StaffAttendance />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock/zone"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockZone />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock/devices"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockDevices />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock/scan"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockScan />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock/poster"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockPoster />
               </ProtectedRoute>
             }
           />
