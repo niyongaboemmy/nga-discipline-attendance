@@ -28,9 +28,11 @@ export interface Zone {
 }
 
 export interface Bootstrap {
-  school: { name: string; slug: string };
+  school: { name: string; slug: string; logoUrl?: string | null };
   open: boolean;
   googleClientId: string | null;
+  /** Amashuri profile card where staff link the Gmail they check in with */
+  profileUrl?: string;
   serverNow: string;
   schoolDate: string;
   timezone: string;

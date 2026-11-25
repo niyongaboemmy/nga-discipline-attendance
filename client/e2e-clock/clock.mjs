@@ -85,11 +85,12 @@ function mockServer(opts = {}) {
     const p = u.pathname.replace('/api/clock/nga', '');
     const body = req.postData() ? JSON.parse(req.postData()) : {};
     if (p === '/bootstrap') {
-      return route.fulfill(ok({ school: { name: 'New Generation Academy', slug: 'nga' }, open: true, googleClientId: 'test.apps.googleusercontent.com', serverNow: st.now, schoolDate: '2026-11-24', timezone: 'Africa/Kigali',
+      return route.fulfill(ok({ school: { name: 'New Generation Academy', slug: 'nga', logoUrl: 'https://mis.example/logo.svg' }, open: true, googleClientId: 'test.apps.googleusercontent.com', serverNow: st.now, schoolDate: '2026-11-24', timezone: 'Africa/Kigali', profileUrl: 'https://mis.example/profile#staff-attendance',
         rules: { opens: '05:00', lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60, maxAccuracy: 100, requireZone: true },
         zones: [{ id: 1, name: 'Main campus', kind: 'circle', lat: SCHOOL.lat, lng: SCHOOL.lng, radius: 150 }] }));
     }
     if (p === '/register') {
+      if (opts.noAccount) return route.fulfill(err(404, 'NO_ACCOUNT', 'No staff account', { email: 'grace.phone@gmail.com' }));
       if (!body.confirm) return route.fulfill(ok({ preview: true, deviceStatus: st.deviceStatus, replaces: false, person, email: opts.email || 'grace.mukamana@gmail.com' }));
       st.registered = true;
       return route.fulfill(ok({ deviceToken: 'tok_' + 'x'.repeat(40), deviceStatus: st.deviceStatus, replaced: false, person, email: 'grace.mukamana@gmail.com' }));
@@ -124,6 +125,7 @@ async function newPage(browser, vp, theme, { geo = INSIDE, grant = true, server 
     geolocation: geo, permissions: grant ? ['geolocation'] : [],
   });
   await ctx.route('https://accounts.google.com/gsi/client', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: GIS_STUB }));
+  await ctx.route('https://mis.example/logo.svg', (r) => r.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#1d4ed8"/><path d="M12 26 20 12l8 14z" fill="#fff"/></svg>' }));
   await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
   await ctx.route('**/api/clock/nga/**', server ?? mockServer());
   if (!grant) {
@@ -194,6 +196,18 @@ async function fullFlow(browser, vp, theme) {
 
 async function edgeStates(browser, vp, theme) {
   const tag = `${vp.name}-${theme}`;
+  // A Gmail the school does not know: say how to add it, with a shortcut to the Amashuri profile.
+  {
+    const { ctx, page } = await newPage(browser, vp, theme, { grant: false, server: mockServer({ noAccount: true }) });
+    await page.goto(`${BASE}/c/nga`);
+    await page.getByTestId('gis').click();
+    await expectText(page, 'No staff account uses grace.phone@gmail.com.', `${tag} no account`);
+    if (!(await page.locator('.ck-logo-img img').first().evaluate((i) => i.complete && i.naturalWidth > 0))) fail(`${tag} school logo`);
+    const link = page.getByRole('link', { name: 'Add this Gmail in my Amashuri profile' });
+    if ((await link.getAttribute('href')) !== 'https://mis.example/profile#staff-attendance') fail(`${tag} profile link href`);
+    await shot(page, `${tag}-no-account`);
+    await ctx.close();
+  }
   // Registered device, far from school.
   {
     const { ctx, page } = await newPage(browser, vp, theme, { geo: FAR, server: mockServer({ registered: true }) });

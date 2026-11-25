@@ -3,7 +3,7 @@ import { config } from '../../config.js';
 import { ensureTenantDb, getDb, tenantDbExists } from '../../database.js';
 import { gateTenant, runWithTenant, tenantRegistry, type TenantCtx } from '../../tenancy/index.js';
 import { schoolDateString } from '../../shared/schoolTime.js';
-import { resolveAndPersistUser, resolveMisRole } from '../../routes/sso.js';
+import { resolveAndPersistUser, resolveMisRole, schoolBranding } from '../../routes/sso.js';
 import { resolvePermissions } from '../../middleware/auth.js';
 import { domainAllowed, GoogleTokenError, verifyGoogleCredential } from './google.js';
 import { IdentityUnavailable, resolveStaffIdentity } from './identity.js';
@@ -101,12 +101,16 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
       id: z.id, name: z.name, kind: z.kind, lat: z.center_lat, lng: z.center_lng, radius: z.radius_m,
     }));
     const now = new Date(clockNow());
+    // The school's logo from Amashuri (cached); never hold the page up for it.
+    const brand = await Promise.race([schoolBranding(tenant.tid).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
     return res.json({
       success: true,
       data: {
-        school: { name: tenant.name, slug: tenant.slug },
+        school: { name: tenant.name, slug: tenant.slug, logoUrl: brand?.logoUrl ?? null },
         open: await clockReady(db, rules),
         googleClientId: config.googleClientId || null,
+        // Staff whose Gmail is not their Amashuri e-mail link it on their Amashuri profile.
+        profileUrl: `${config.ngaMisFrontendUrl}/profile#staff-attendance`,
         serverNow: now.toISOString(),
         schoolDate: schoolDateString(now),
         timezone: tenant.timezone,

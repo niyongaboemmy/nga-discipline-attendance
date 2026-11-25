@@ -78,6 +78,8 @@ export function ClockApp() {
   const [preview, setPreview] = useState<(RegisterPreview & { credential: string }) | null>(null);
   const [registering, setRegistering] = useState(false);
   const [welcomeError, setWelcomeError] = useState<string | null>(null);
+  /** the Google account is not on the school's list: offer the profile card where staff link it */
+  const [noAccount, setNoAccount] = useState(false);
   const [geoMode, setGeoMode] = useState<GeoMode>('idle');
   const [fix, setFix] = useState<{ best: Fix; samples: Fix[]; at: number } | null>(null);
   const [hint, setHint] = useState<ZoneHint | null>(null);
@@ -299,6 +301,7 @@ export function ClockApp() {
     async (credential: string) => {
       if (!slug) return;
       setWelcomeError(null);
+      setNoAccount(false);
       setRegistering(true);
       try {
         const keys = await ensureKeys(slug);
@@ -310,6 +313,7 @@ export function ClockApp() {
         setView('confirm');
       } catch (err) {
         setWelcomeError(registerErrorText(err, t, deviceWord));
+        setNoAccount(err instanceof ClockApiError && err.code === 'NO_ACCOUNT');
       } finally {
         setRegistering(false);
       }
@@ -451,7 +455,7 @@ export function ClockApp() {
           <div className="ck-welcome-wrap">
             <div className="ck-welcome-hero">
               <div className="ck-welcome-brand">
-                <div className="ck-logo ck-logo-lg" aria-hidden="true">{initials}</div>
+                <SchoolMark large initials={initials} logoUrl={boot.school.logoUrl} />
                 <span>{school}</span>
               </div>
               <h1 className="ck-h1">{t('staffAttendance')}</h1>
@@ -465,6 +469,9 @@ export function ClockApp() {
             <div className="ck-start">
               <div className="ck-start-head"><h2>{t('getStarted')}</h2><p>{t('getStartedLead')}</p></div>
               {welcomeError && <div className="ck-alert ck-alert-red" role="alert"><IconWarn size={20} /><span className="ck-wrap">{welcomeError}</span></div>}
+              {noAccount && boot.profileUrl && (
+                <a className="ck-btn ck-btn-secondary ck-btn-block" href={boot.profileUrl} target="_blank" rel="noopener noreferrer">{t('addInProfile')}</a>
+              )}
               {boot.googleClientId ? (
                 <div className="ck-google-slot" aria-busy={registering}>
                   {registering ? <button className="ck-btn ck-btn-secondary ck-btn-block" disabled><span className="ck-spinner" /> {t('loading')}</button> : <div ref={googleSlot} style={{ width: '100%', display: 'flex', justifyContent: 'center' }} />}
@@ -584,6 +591,7 @@ export function ClockApp() {
           me={me}
           school={school}
           initials={initials}
+          logoUrl={boot?.school.logoUrl ?? null}
           greeting={t(hour < 12 ? 'goodMorning' : hour < 17 ? 'goodAfternoon' : 'goodEvening', { name: me.person.firstName })}
           clockText={clockText}
           dateText={dateText}
@@ -662,6 +670,20 @@ export function ClockApp() {
 }
 
 // ======================================================================== pieces
+
+/** The school's logo from Amashuri; its initials while there is none or it fails to load. */
+function SchoolMark({ initials, logoUrl, large }: { initials: string; logoUrl?: string | null; large?: boolean }) {
+  const [broken, setBroken] = useState(false);
+  const cls = `ck-logo${large ? ' ck-logo-lg' : ''}`;
+  if (logoUrl && !broken) {
+    return (
+      <div className={`${cls} ck-logo-img`} aria-hidden="true">
+        <img src={logoUrl} alt="" onError={() => setBroken(true)} />
+      </div>
+    );
+  }
+  return <div className={cls} aria-hidden="true">{initials}</div>;
+}
 
 function schoolInitials(name: string): string {
   const words = name.replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean);
@@ -779,6 +801,7 @@ interface DailyProps {
   me: Me;
   school: string;
   initials: string;
+  logoUrl?: string | null;
   greeting: string;
   clockText: string;
   dateText: string;
@@ -813,7 +836,7 @@ function Daily(p: DailyProps) {
   return (
     <main className="ck-screen ck-daily">
       <div className="ck-topbar">
-        <div className="ck-logo" aria-hidden="true">{p.initials}</div>
+        <SchoolMark initials={p.initials} logoUrl={p.logoUrl} />
         <div className="ck-topbar-name"><b className="ck-clip">{p.school}</b><span>{t('staffAttendance')}</span></div>
         <button className="ck-icon-btn" onClick={p.onHelp} aria-label={t('help')}><IconHelp size={22} /><span className="ck-help-label">{t('help')}</span></button>
       </div>

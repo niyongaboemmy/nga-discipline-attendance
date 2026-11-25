@@ -485,16 +485,21 @@ export function brandingOf(body: any, tid: number): SchoolBranding | null {
 const brandingCache = new Map<number, { at: number; value: SchoolBranding | null }>();
 const BRANDING_TTL_MS = 10 * 60 * 1000;
 
+/** A school's name and logo from MIS (public data), cached 10 min; a miss for 1 min. */
+export async function schoolBranding(tid: number): Promise<SchoolBranding | null> {
+  const hit = brandingCache.get(tid);
+  if (hit && Date.now() - hit.at < BRANDING_TTL_MS) return hit.value;
+  const value = brandingOf(await misGet(`/tenant/branding?tid=${tid}`, undefined), tid);
+  // A miss is cached for a minute only, so a logo set in MIS shows up soon.
+  brandingCache.set(tid, { at: value ? Date.now() : Date.now() - BRANDING_TTL_MS + 60_000, value });
+  return value;
+}
+
 /** GET /api/sso/branding -- this session's school name and logo (public MIS data, cached 10 min). */
 router.get('/branding', authMiddleware, async (req: Request, res: Response) => {
   const tid = (req as AuthenticatedRequest).user?.tid;
   if (!tid) return res.json({ success: true, data: null });
-  const hit = brandingCache.get(tid);
-  if (hit && Date.now() - hit.at < BRANDING_TTL_MS) return res.json({ success: true, data: hit.value });
-  const value = brandingOf(await misGet(`/tenant/branding?tid=${tid}`, undefined), tid);
-  // A miss is cached for a minute only, so a logo set in MIS shows up soon.
-  brandingCache.set(tid, { at: value ? Date.now() : Date.now() - BRANDING_TTL_MS + 60_000, value });
-  return res.json({ success: true, data: value });
+  return res.json({ success: true, data: await schoolBranding(tid) });
 });
 
 /** Test hook. */
