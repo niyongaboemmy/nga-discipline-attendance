@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { migrateStaffClock } from './modules/clock/clock.migrations.js';
 import path from 'path';
 import sqlite3 from 'sqlite3';
 import { open, Database } from 'sqlite';
@@ -376,6 +377,7 @@ export async function migrateTenantDb(db: Database, { tid, isPrimary }: { tid: n
   await migrateAppState(db);
   await migrateRfidAttendance(db);
   await migrateSchoolSettings(db);
+  await migrateStaffClock(db);
   await loadSchoolSettings(tid, db);
 
   // No demo/seed data. Identities are created from real SSO logins (routes/sso.ts)

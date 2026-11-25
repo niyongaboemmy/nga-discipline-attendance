@@ -5,6 +5,7 @@ import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 import { schoolDateString, schoolMinutesOfDay } from '../shared/schoolTime.js';
 import { staffLateCutoffMinutes } from '../tenancy/settings.js';
+import { clockRules } from '../modules/clock/clock.service.js';
 
 /** Staff are "late" if they clock in after this local time (minutes from midnight). */
 const LATE_CUTOFF_MINUTES = (): number => staffLateCutoffMinutes();
@@ -13,8 +14,22 @@ const router = Router();
 
 router.use(authMiddleware);
 
+/** With the staff clock on and its zone required, check-in happens only on the
+ *  person's registered phone or tablet (/c/<school>), never from this page. */
+function phoneClockOnly(_req: any, res: Response, next: () => void) {
+  const rules = clockRules();
+  if (rules.enabled && rules.requireZone) {
+    return res.status(403).json({
+      success: false,
+      code: 'USE_STAFF_CLOCK',
+      message: 'Check in and out with the staff attendance link on your own phone or tablet.',
+    });
+  }
+  return next();
+}
+
 // Clock In (Teachers & Admins)
-router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (req: any, res: Response) => {
+router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), phoneClockOnly, async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const staffId = authReq.user!.id;
   const staffName = authReq.user!.name;
@@ -81,7 +96,7 @@ router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (r
 });
 
 // Clock Out (Teachers & Admins)
-router.post('/clock-out', authorizePermission('STAFF_ATTENDANCE_CLOCK'), async (req: any, res: Response) => {
+router.post('/clock-out', authorizePermission('STAFF_ATTENDANCE_CLOCK'), phoneClockOnly, async (req: any, res: Response) => {
   const authReq = req as AuthenticatedRequest;
   const staffId = authReq.user!.id;
   const today = schoolDateString();

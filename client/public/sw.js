@@ -13,7 +13,9 @@
  * page, so they switch to the current release at once. Pages where someone
  * could be mid-task (a quiz, an editor, a chat) are never reloaded.
  */
-const VERSION = "app-shell-v4";
+const VERSION = "app-shell-v5";
+// v5: the staff clock page (/c/<school>, clock.html) keeps its own offline copy
+// under "/clock.html"; it never overwrites the app page cached under "/".
 // v4: multi-tenancy -- offline keys now carry the school (tendo.outbox.v2.<tid>.<uid>).
 // v3: offline registers (src/offline). The built files under /assets/ have a
 // content hash in their names, so they're cached the first time they load and
@@ -102,15 +104,16 @@ self.addEventListener("fetch", (event) => {
   // Pages: always ask the server (revalidate); the cached app page only when
   // offline. Every page is the same single-page app, so any successful page
   // load refreshes the offline copy.
+  const shellKey = /^\/c(\/|$)/.test(url.pathname) ? "/clock.html" : "/";
   event.respondWith(
     fetch(req, { cache: "no-cache" })
       .then((res) => {
         if (res.ok && url.origin === self.location.origin && (res.headers.get("content-type") || "").includes("text/html")) {
           const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put("/", copy));
+          caches.open(VERSION).then((c) => c.put(shellKey, copy));
         }
         return res;
       })
-      .catch(() => caches.match("/").then((hit) => hit || Response.error())),
+      .catch(() => caches.match(shellKey).then((hit) => hit || Response.error())),
   );
 });

@@ -55,6 +55,9 @@ jobs:
             DATABASE_PATH=/opt/apps/tendo-data/attendance.db
             CORS_ORIGINS=https://tendo.amashuri.com
             ADMIN_EMAILS=emmanuelniyongabo44@gmail.com
+            # Staff attendance clock (/c/<school>): Google sign-in with the SAME OAuth
+            # client as the MIS (public client id, as in nga_central_mis deploy.yml).
+            GOOGLE_CLIENT_ID=913204130540-5hrfp5ridotig5ebd7ar424vhecq8bab.apps.googleusercontent.com
 
             OPENAI_API_KEY="${OPENAI_API_KEY}"
             OPENAI_MODEL=gpt-4o

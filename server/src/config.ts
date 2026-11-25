@@ -13,6 +13,10 @@ export const config = {
   ngaMisFrontendUrl: (process.env.NGA_MIS_FRONTEND_URL || 'https://mis.amashuri.com').replace(/\/+$/, ''),
   ssoClientId: process.env.SSO_CLIENT_ID || 'placeholder_client_id',
   ssoClientSecret: process.env.SSO_CLIENT_SECRET || 'placeholder_client_secret',
+  // Google sign-in for the staff attendance clock (/c/<school>): the same OAuth
+  // client as the MIS (GOOGLE_CLIENT_ID); its authorised JavaScript origins must
+  // include this app's origin.
+  googleClientId: (process.env.GOOGLE_CLIENT_ID || '').trim(),
   jwtSecret: process.env.JWT_SECRET || DEFAULT_JWT_SECRET,
   databasePath: process.env.DATABASE_PATH || './data/attendance.db',
   // Comma-separated list of allowed browser origins (e.g. the deployed client URL).
