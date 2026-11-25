@@ -92,6 +92,7 @@ export function ClockApp() {
   const [installEvt, setInstallEvt] = useState<InstallPromptEvent | null>(null);
   const [tipHidden, setTipHidden] = useState(() => localStorage.getItem('tendo.clock.tipHidden') === '1');
   const [justRegistered, setJustRegistered] = useState(false);
+  const [howSeen, setHowSeen] = useState(() => localStorage.getItem('tendo.clock.howSeen') === '1');
   const googleSlot = useRef<HTMLDivElement>(null);
   /** The latest bootstrap for callbacks created before it arrived (first load). */
   const bootRef = useRef<Bootstrap | null>(null);
@@ -596,6 +597,8 @@ export function ClockApp() {
           locale={locale}
           tz={tz}
           showTip={justRegistered && !tipHidden && !window.matchMedia('(display-mode: standalone)').matches && me.today != null}
+          showHow={!howSeen && !me.week.some((d) => d.checkIn)}
+          onHowSeen={() => { setHowSeen(true); localStorage.setItem('tendo.clock.howSeen', '1'); }}
           onInstall={() => void installApp()}
           onHelp={() => setHelp(true)}
           onTap={() => {
@@ -789,6 +792,8 @@ interface DailyProps {
   locale: string;
   tz: string;
   showTip: boolean;
+  showHow: boolean;
+  onHowSeen: () => void;
   onInstall: () => void;
   onHelp: () => void;
   onTap: () => void;
@@ -849,6 +854,17 @@ function Daily(p: DailyProps) {
       </div>
 
       <div className="ck-grow" />
+
+      {p.showHow && (
+        <div className="ck-how" role="note">
+          <div className="ck-how-head"><b>{t('howTitle')}</b><button onClick={p.onHowSeen}>{t('gotIt')}</button></div>
+          <ol>
+            <li><span className="ck-how-num">1</span>{t('how1')}</li>
+            <li><span className="ck-how-num">2</span>{t('how2')}</li>
+            <li><span className="ck-how-num">3</span>{t('how3')}</li>
+          </ol>
+        </div>
+      )}
 
       {p.showTip && (
         <div className="ck-tip">

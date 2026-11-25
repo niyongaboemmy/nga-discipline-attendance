@@ -237,3 +237,29 @@
 .sc-hit:hover, .sc-hit:focus-visible { background: var(--primary-light); }
 .sc-hit b { font-size: 14px; font-weight: 600; max-width: 100%; }
 .sc-hit small { font-size: 12px; color: var(--text-tertiary); max-width: 100%; }
+
+/* setup checklist */
+.sc-setup { padding: 0; overflow: hidden; }
+.sc-setup-head { width: 100%; display: flex; align-items: center; gap: 14px; padding: 16px 20px; border: 0; background: transparent; cursor: pointer; color: var(--text-primary); font-family: inherit; border-radius: 24px; }
+.sc-setup-head b { display: block; font-size: 16px; font-weight: 700; }
+.sc-setup-head small { display: block; font-size: 13px; color: var(--text-tertiary); margin-top: 2px; }
+.sc-setup-badge { width: 44px; height: 44px; border-radius: 999px; background: var(--primary-light); color: var(--primary-text); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
+.sc-setup-badge.done { background: var(--status-present-bg); color: var(--status-present); }
+.sc-setup-bar { width: 140px; height: 6px; border-radius: 999px; background: var(--primary-light); overflow: hidden; flex: none; }
+.sc-setup-bar span { display: block; height: 100%; background: var(--primary); border-radius: 999px; }
+.sc-steps { list-style: none; margin: 0; padding: 0 20px 18px; display: flex; flex-direction: column; }
+.sc-step { display: flex; gap: 14px; padding: 12px 0; border-top: 1px solid var(--border); }
+.sc-step-dot { width: 30px; height: 30px; border-radius: 999px; border: 2px solid var(--border-strong); color: var(--text-tertiary); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; box-sizing: border-box; }
+.sc-step.done .sc-step-dot { background: var(--primary); border-color: var(--primary); color: #fff; }
+.sc-step.current .sc-step-dot { border-color: var(--primary); color: var(--primary-text); }
+.sc-step-body { flex: 1; min-width: 0; }
+.sc-step-body b { font-size: 15px; color: var(--text-primary); }
+.sc-step.done .sc-step-body b { color: var(--text-secondary); font-weight: 500; }
+.sc-step-body p { margin: 3px 0 0; font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.sc-step-actions { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+.sc-step-blocked { display: flex; align-items: center; gap: 6px; color: var(--status-late) !important; }
+.sc-step-progress { margin-top: 8px; display: flex; align-items: center; gap: 10px; max-width: 360px; }
+.sc-step-progress small { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
+@keyframes sc-flash { 0%, 100% { outline-color: transparent; } 30%, 70% { outline-color: var(--primary); } }
+.sc-flash { outline: 3px solid transparent; outline-offset: 4px; animation: sc-flash 1.6s ease; border-radius: 24px; }
+@media (max-width: 760px) { .sc-setup-bar { display: none; } }

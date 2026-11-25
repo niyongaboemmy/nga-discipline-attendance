@@ -8,6 +8,7 @@ import { LoadingSpinner } from '../components/common/LoadingSpinner';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
 import { Copy, ExternalLink, Search, Smartphone } from 'lucide-react';
+import QRCode from 'qrcode';
 
 interface StaffLog {
   id: number;
@@ -35,6 +36,13 @@ export const StaffAttendance: React.FC = () => {
   const toast = useToast();
   // The school's staff check-in link (/c/<school>, the staff attendance clock).
   const clockLink = user?.tenantSlug ? `${window.location.origin}/c/${user.tenantSlug}` : null;
+  const [clockQr, setClockQr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!clockLink) return;
+    let alive = true;
+    QRCode.toDataURL(clockLink, { margin: 1, width: 320, errorCorrectionLevel: 'M' }).then((u) => alive && setClockQr(u)).catch(() => undefined);
+    return () => { alive = false; };
+  }, [clockLink]);
   const [logs, setLogs] = useState<StaffLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,13 +90,18 @@ export const StaffAttendance: React.FC = () => {
       </div>
 
       {clockLink && (
-        <div className="card card-pad mb-4 flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
-            <div className="login-role-icon tone-brand"><Smartphone size={18} /></div>
-            <div style={{ minWidth: 0 }}>
-              <div className="section-title">Check in with your phone</div>
-              <p className="text-sm text-secondary mt-1" style={{ overflowWrap: 'anywhere' }}>Open <b>{clockLink.replace(/^https?:\/\//, '')}</b> on your own phone or tablet.</p>
-            </div>
+        <div className="card card-pad mb-4" style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'center' }}>
+          <div style={{ width: 132, height: 132, borderRadius: 18, border: '1px solid var(--border)', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
+            {clockQr ? <img src={clockQr} alt="QR code of the staff check-in link" width={116} height={116} style={{ imageRendering: 'pixelated' }} /> : <div style={{ width: 116, height: 116, borderRadius: 12, background: 'var(--bg-subtle)' }} />}
+          </div>
+          <div style={{ flex: '1 1 320px', minWidth: 0 }}>
+            <div className="flex items-center gap-2"><Smartphone size={18} /><span className="section-title">Check in and out with your phone</span></div>
+            <ol style={{ margin: '10px 0 0', paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 14, color: 'var(--text-secondary)' }}>
+              <li><b style={{ color: 'var(--text-primary)' }}>Scan this code</b> with your phone camera, or open <b style={{ color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{clockLink.replace(/^https?:\/\//, '')}</b>.</li>
+              <li><b style={{ color: 'var(--text-primary)' }}>Register once:</b> Continue with Google, confirm it is your phone, allow location.</li>
+              <li><b style={{ color: 'var(--text-primary)' }}>Every school day:</b> tap Check in when you arrive and Check out before you leave.</li>
+            </ol>
+            <p className="text-xs text-secondary mt-2">No smartphone? Ask the school office for a staff QR card.</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <button className="btn btn-secondary" style={{ borderRadius: 999 }} onClick={async () => { try { await navigator.clipboard.writeText(clockLink); toast.success('Link copied'); } catch { toast.error('Could not copy', clockLink); } }}><Copy size={16} /> Copy link</button>

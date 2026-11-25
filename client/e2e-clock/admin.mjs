@@ -141,13 +141,20 @@ async function run(browser, vp) {
   await expectText(page, 'Staff attendance', `${tag} dashboard`);
   await expectText(page, 'Arrivals', `${tag} arrivals`);
   await expectText(page, 'New phone waiting', `${tag} pending phone`);
+  // Guided setup: zone drawn and clock on, so the next step is the times.
+  await expectText(page, 'Set up staff check-in', `${tag} setup card`);
+  await expectText(page, 'Next: check the times', `${tag} setup next step`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
   await shot('01-dashboard');
+  await shot('01b-setup');
   await page.getByRole('tab', { name: /Needs review/ }).click();
   await expectText(page, 'Same spot and time as another check-in', `${tag} review`);
   await shot('02-review');
 
-  await page.goto(`${BASE}/staff/clock/zone`);
+  // The setup step links straight to the rules on the zone page.
+  await page.goto(`${BASE}/staff/clock`);
+  await page.getByRole('button', { name: 'Review times' }).click();
+  await page.waitForURL(/\/staff\/clock\/zone#zone-rules$/);
   await expectText(page, 'Check-in rules', `${tag} zone rules`);
   await page.waitForTimeout(1500);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: zone page scrolls sideways`);
@@ -181,7 +188,7 @@ async function run(browser, vp) {
 
   // The old clock card is gone; the staff link is shown instead.
   await page.goto(`${BASE}/staff/attendance`);
-  await expectText(page, 'Check in with your phone', `${tag} staff link card`);
+  await expectText(page, 'Check in and out with your phone', `${tag} staff link card`);
   if (await page.getByText('Shift duty clock').count()) fail(`${tag}: old Shift duty clock still shown`);
   await shot('04d-staff-attendance');
 

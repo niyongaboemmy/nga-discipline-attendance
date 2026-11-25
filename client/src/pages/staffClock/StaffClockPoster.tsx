@@ -30,7 +30,7 @@ export const StaffClockPoster: React.FC = () => {
   return (
     <DashboardLayout>
       <div className="sc-page">
-        <StaffClockHeader title="Staffroom poster" lead="Print it on A4 and put it where staff arrive." actions={<button className="sc-btn sc-btn-primary" onClick={() => window.print()} disabled={!qr}><Printer size={16} /> Print</button>} />
+        <StaffClockHeader title="Staffroom poster" lead="Print it on A4 and put it where staff arrive." actions={<button className="sc-btn sc-btn-primary" onClick={() => { void staffClockApi.saveRules({ setupDone: ['shared'] }).catch(() => undefined); window.print(); }} disabled={!qr}><Printer size={16} /> Print</button>} />
         {error && <ErrorState message={error} />}
         {!cfg && !error && <div className="sc-skel" style={{ width: 595, maxWidth: '100%', aspectRatio: '595 / 842', margin: '0 auto' }} />}
         {cfg && (

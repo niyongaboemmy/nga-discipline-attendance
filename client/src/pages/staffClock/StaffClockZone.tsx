@@ -11,6 +11,8 @@ import { ApiError } from '../../api/client';
 import { staffClockApi, type ClockConfig, type ClockRules, type ClockZone } from '../../api/staffClock';
 import { distanceM, sampleLocation, GeoError } from '../../clock/geo';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
+import { StaffClockSetup } from './StaffClockSetup';
+import { announceClockChange } from './clockEvents';
 
 /**
  * School zone (prototype "Admin: school zone setup"): circles on an OpenStreetMap
@@ -206,6 +208,19 @@ export const StaffClockZone: React.FC = () => {
     });
   }, [zones, sel, style, canEdit]);
 
+  // Arriving from the setup checklist (/staff/clock/zone#zone-map etc.): show that part.
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (!cfg || !id) return;
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(id);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el?.classList.add('sc-flash');
+      window.setTimeout(() => el?.classList.remove('sc-flash'), 1600);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [cfg]);
+
   const current = zones[sel] ?? null;
   useEffect(() => {
     selRef.current = sel;
@@ -257,6 +272,7 @@ export const StaffClockZone: React.FC = () => {
       const { allowance: _a, autoCloseAt: _b, ...editable } = rules;
       void _a; void _b;
       await staffClockApi.saveRules({ ...editable, enabled: enable ?? rules.enabled });
+      announceClockChange();
       toast.success(enable === true ? 'Staff clock is on' : enable === false ? 'Staff clock is off' : 'Saved', enable === true ? 'Staff can check in from the link now.' : 'Staff phones use it from the next tap.');
       await load();
     } catch (e) {
@@ -286,7 +302,10 @@ export const StaffClockZone: React.FC = () => {
       }
       if (best.accuracy > maxAcc) setTest({ inside: false, text: `Your location is not precise enough (± ${Math.round(best.accuracy)} m). Step outside and try again.` });
       else if (!bestZone) setTest({ inside: false, text: 'Add a zone first.' });
-      else if (bestZone.inside) setTest({ inside: true, text: `You are ${Math.max(0, Math.round(bestZone.z.radius - bestZone.d))} m inside ${bestZone.z.name} (precision ± ${Math.round(best.accuracy)} m)` });
+      else if (bestZone.inside) {
+        setTest({ inside: true, text: `You are ${Math.max(0, Math.round(bestZone.z.radius - bestZone.d))} m inside ${bestZone.z.name} (precision ± ${Math.round(best.accuracy)} m)` });
+        if (canEdit && bestZone.z.id != null) void staffClockApi.saveRules({ setupDone: ['tested'] }).then(announceClockChange).catch(() => undefined);
+      }
       else setTest({ inside: false, text: `You are ${Math.round(bestZone.d - bestZone.z.radius)} m outside ${bestZone.z.name}.` });
       toast.success('Location found');
     } catch (e) {
@@ -356,7 +375,8 @@ export const StaffClockZone: React.FC = () => {
     if (!cfg) return;
     try {
       await navigator.clipboard.writeText(cfg.link.url);
-      toast.success('Link copied');
+      toast.success('Link copied', 'Send it to staff by WhatsApp, Tupo or e-mail.');
+      void staffClockApi.saveRules({ setupDone: ['shared'] }).then(announceClockChange).catch(() => undefined);
     } catch {
       toast.error('Could not copy', cfg.link.url);
     }
@@ -390,6 +410,7 @@ export const StaffClockZone: React.FC = () => {
           ) : undefined}
         />
         {error && <ErrorState message={error} onRetry={() => void load()} />}
+        <StaffClockSetup place="zone" />
         {cfg && (
           <div className="sc-card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
             <div style={{ flex: '1 1 280px', minWidth: 0 }}>
@@ -409,7 +430,7 @@ export const StaffClockZone: React.FC = () => {
           <div className="sc-row"><div className="sc-skel sc-grow" style={{ height: 680, borderRadius: 24 }} /><div className="sc-skel sc-side" style={{ height: 680, borderRadius: 24 }} /></div>
         ) : cfg && rules && (
           <div className="sc-row" style={{ alignItems: 'flex-start' }}>
-            <section className="sc-map sc-grow" aria-label="Map">
+            <section className="sc-map sc-grow" aria-label="Map" id="zone-map">
               <div ref={mapEl} className="sc-map-el" />
               <div className="sc-map-top">
                 <form className="sc-map-search" onSubmit={(e) => void search(e)} role="search">
@@ -476,7 +497,7 @@ export const StaffClockZone: React.FC = () => {
                   </label>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}><span className="sc-muted">Centre</span><span className="sc-num">{current.lat.toFixed(5)}, {current.lng.toFixed(5)}</span></div>
                   <div className="sc-info"><Info size={18} />Keep it 100 m or more. Phones indoors are often 20 to 60 m off, so a tight circle refuses honest staff.</div>
-                  <button className="sc-btn" onClick={() => void testHere()} disabled={testing}>{testing && <Spinner />}Test from where I stand</button>
+                  <button className="sc-btn" id="zone-test" onClick={() => void testHere()} disabled={testing}>{testing && <Spinner />}Test from where I stand</button>
                   {test && <div className={test.inside ? 'sc-ok' : 'sc-bad'} role="status">{test.inside ? <Check size={18} /> : <AlertTriangle size={18} />}<span style={{ overflowWrap: 'anywhere' }}>{test.text}</span></div>}
                   {canEdit && (
                     <button className="sc-btn sc-btn-danger sc-btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => { setZones((zs) => zs.filter((_, j) => j !== sel)); setSel(0); setDirty(true); }}>
@@ -486,7 +507,7 @@ export const StaffClockZone: React.FC = () => {
                 </section>
               )}
 
-              <section className="sc-card">
+              <section className="sc-card" id="zone-rules">
                 <h2>Check-in rules</h2>
                 <div style={{ marginTop: 10 }}>
                   {ruleRows.map(([key, label, hint, type]) => (

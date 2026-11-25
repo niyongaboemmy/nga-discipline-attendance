@@ -8,6 +8,7 @@ import { usePermissions } from '../../hooks/usePermissions';
 import { ApiError } from '../../api/client';
 import { staffClockApi, initialsOf, type Overview, type OverviewRow } from '../../api/staffClock';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
+import { StaffClockSetup } from './StaffClockSetup';
 
 /** Staff attendance dashboard (prototype "Admin: staff attendance dashboard"). */
 
@@ -140,12 +141,7 @@ export const StaffClockDashboard: React.FC = () => {
         />
 
         {error && <ErrorState message={error} onRetry={() => void load()} />}
-        {data && !data.rules.enabled && (
-          <div className="sc-notice">
-            <b>The staff clock is off.</b>
-            <p>Set the school zone and switch the clock on in <Link to="/staff/clock/zone">School zone</Link>. Staff then check in from the link on their own phone or tablet.</p>
-          </div>
-        )}
+        {can(['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_DEVICES_MANAGE']) && <StaffClockSetup place="dashboard" />}
 
         {loading && !data ? (
           <div className="sc-kpis">{[0, 1, 2, 3, 4].map((i) => <div key={i} className="sc-skel" style={{ height: 118, borderRadius: 20 }} />)}</div>
