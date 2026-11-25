@@ -32,7 +32,10 @@ export interface ClassSectionReport {
   subjectName: string | null;
   teacherName: string | null;
   academicTermId: number | null;
+  /** One key per register: the date, or "<date> <period>" when that day had
+   *  more than one register. `marks` is keyed by it. */
   dateColumns: string[];
+  sessionColumns?: Array<{ key: string; date: string; period: string | null }>;
   students: StudentAttendanceRow[];
   classAverageRate: number;
   atRiskThreshold: number;

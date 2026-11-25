@@ -4,6 +4,7 @@ import { authMiddleware, AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission, selfOrPermission } from '../../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../../utils/academicPeriod.js';
 import { clampPagination } from '../../shared/pagination.js';
+import { attendanceTermSql } from '../../shared/attendanceScope.js';
 
 /**
  * Subject/course attendance (A.1.2) and teacher subject-calendar delivery
@@ -23,7 +24,8 @@ router.get('/subject/:subjectId', authorizePermission('ATTENDANCE_VIEW_ALL'), as
   let where = " WHERE session_type = 'subject' AND subject_id = ?";
   const params: any[] = [subjectId];
   if (classId) { where += ' AND class_id = ?'; params.push(classId); }
-  if (academicTermId != null) { where += ' AND (academic_term_id = ? OR academic_term_id IS NULL)'; params.push(academicTermId); }
+  const term = attendanceTermSql(academicTermId);
+  where += term.sql; params.push(...term.params);
 
   try {
     const totalRow = await db.get(`SELECT COUNT(*) as count FROM attendance_records${where}`, ...params);

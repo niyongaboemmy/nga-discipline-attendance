@@ -1,6 +1,7 @@
 import { Database } from 'sqlite';
 import { attendanceRate, attendanceWarnThreshold } from '../../shared/attendancePolicy.js';
 import { misGetList } from '../../services/misClient.js';
+import { attendanceTermSql, reportableAttendanceSql } from '../../shared/attendanceScope.js';
 
 /**
  * Class → subject attendance register. Where reporting.service.ts answers
@@ -16,9 +17,17 @@ import { misGetList } from '../../services/misClient.js';
  * of the data.
  */
 
+/** Term filter for the class_subject_assignments roster cache (it has no
+ *  session date). attendance_records rows use attendanceTermSql instead. */
 function periodFilter(academicTermId?: number): { clause: string; params: any[] } {
   if (academicTermId == null) return { clause: '', params: [] };
   return { clause: ' AND (academic_term_id = ? OR academic_term_id IS NULL)', params: [academicTermId] };
+}
+
+/** attendance_records term filter, in periodFilter's shape. */
+function recordTermFilter(academicTermId?: number, alias = ''): { clause: string; params: any[] } {
+  const t = attendanceTermSql(academicTermId, alias);
+  return { clause: t.sql, params: t.params };
 }
 
 /** The term immediately before `termId` (by start_date), for a trend
@@ -46,13 +55,14 @@ export interface ReportableClass {
 
 export async function listReportableClasses(db: Database, academicTermId?: number): Promise<ReportableClass[]> {
   const { clause, params } = periodFilter(academicTermId);
+  const ar = recordTermFilter(academicTermId);
   const rows = await db.all(
     `SELECT class_id as classId, class_name as className FROM class_subject_assignments
       WHERE 1=1${clause}
      UNION
      SELECT class_id as classId, class_name as className FROM attendance_records
-      WHERE 1=1${clause}`,
-    ...params, ...params
+      WHERE 1=1${ar.clause}`,
+    ...params, ...ar.params
   );
   const byId = new Map<string, ReportableClass>();
   for (const r of rows) {
@@ -110,14 +120,15 @@ export async function listOwnSections(db: Database, studentId: string, academicT
   if (!classId) return [{ kind: 'homeroom' }];
 
   const { clause, params } = periodFilter(academicTermId);
+  const ar = recordTermFilter(academicTermId, 'ar');
   const rows = await db.all(
     `SELECT subject_id as subjectId, subject_name as subjectName, teacher_name as teacherName
        FROM class_subject_assignments WHERE class_id = ?${clause}
      UNION
      SELECT ar.subject_id as subjectId, s.name as subjectName, NULL as teacherName
        FROM attendance_records ar LEFT JOIN subjects s ON s.id = ar.subject_id
-      WHERE ar.class_id = ? AND ar.student_id = ? AND ar.session_type = 'subject' AND ar.subject_id IS NOT NULL${clause}`,
-    classId, ...params, classId, studentId, ...params
+      WHERE ar.class_id = ? AND ar.student_id = ? AND ar.session_type = 'subject' AND ar.subject_id IS NOT NULL${ar.clause}`,
+    classId, ...params, classId, studentId, ...ar.params
   );
   const seen = new Set<number>();
   const subjects: ClassSection[] = [];
@@ -246,15 +257,16 @@ async function classesForSubject(
     csaScope += ' AND teacher_id = ?'; csaScopeParams.push(opts.userId);
     arScope += ' AND marked_by = ?'; arScopeParams.push(opts.userId);
   }
+  const arTerm = recordTermFilter(opts.academicTermId);
   csaScope += csaClause;
-  arScope += csaClause;
+  arScope += arTerm.clause;
   const rows = await db.all(
     `SELECT class_id as classId, class_name as className, teacher_name as teacherName
        FROM class_subject_assignments${csaScope}
      UNION
      SELECT class_id as classId, class_name as className, NULL as teacherName
        FROM attendance_records${arScope}`,
-    ...csaScopeParams, ...csaParams, ...arScopeParams, ...csaParams
+    ...csaScopeParams, ...csaParams, ...arScopeParams, ...arTerm.params
   );
 
   const byId = new Map<string, SubjectClassScope>();
@@ -314,14 +326,15 @@ export async function listAvailableSubjects(db: Database, opts: SubjectScopePara
       csaScope += ' AND teacher_id = ?'; csaScopeParams.push(opts.userId);
       arScope += ' AND ar.marked_by = ?'; arScopeParams.push(opts.userId);
     }
+    const arTerm = recordTermFilter(opts.academicTermId, 'ar');
     csaScope += csaClause;
-    arScope += csaClause;
+    arScope += arTerm.clause;
     const subjectRows = await db.all(
       `SELECT subject_id as subjectId, subject_name as subjectName FROM class_subject_assignments${csaScope}
        UNION
        SELECT ar.subject_id as subjectId, s.name as subjectName
          FROM attendance_records ar LEFT JOIN subjects s ON s.id = ar.subject_id${arScope}`,
-      ...csaScopeParams, ...csaParams, ...arScopeParams, ...csaParams
+      ...csaScopeParams, ...csaParams, ...arScopeParams, ...arTerm.params
     );
     subjectIds = new Map();
     for (const r of subjectRows) {
@@ -340,20 +353,21 @@ export async function listAvailableSubjects(db: Database, opts: SubjectScopePara
     if (classes.length === 0) continue;
     const placeholders = classes.map(() => '?').join(',');
     const classIdParams = classes.map((c) => c.classId);
-    const { clause: tClause, params: tParams } = periodFilter(opts.academicTermId);
+    const scope = reportableAttendanceSql(opts.academicTermId);
     const rows = await db.all(
       `SELECT student_id, status FROM attendance_records
-        WHERE subject_id = ? AND class_id IN (${placeholders})${tClause}`,
-      subjectId, ...classIdParams, ...tParams
+        WHERE session_type = 'subject' AND subject_id = ? AND class_id IN (${placeholders})${scope.sql}`,
+      subjectId, ...classIdParams, ...scope.params
     );
     const agg = aggregateStudentRates(rows);
 
     let previousAverageRate: number | null = null;
     if (previousTermId != null) {
+      const prev = reportableAttendanceSql(previousTermId);
       const prevRows = await db.all(
         `SELECT student_id, status FROM attendance_records
-          WHERE subject_id = ? AND class_id IN (${placeholders}) AND academic_term_id = ?`,
-        subjectId, ...classIdParams, previousTermId
+          WHERE session_type = 'subject' AND subject_id = ? AND class_id IN (${placeholders})${prev.sql}`,
+        subjectId, ...classIdParams, ...prev.params
       );
       if (prevRows.length > 0) previousAverageRate = aggregateStudentRates(prevRows).averageRate;
     }
@@ -380,21 +394,24 @@ export interface SubjectClassOverview extends SubjectClassScope {
  *  list when a subject spans several classes/teachers. */
 export async function listSubjectClasses(db: Database, subjectId: number, opts: SubjectScopeParams): Promise<SubjectClassOverview[]> {
   const classes = await classesForSubject(db, subjectId, opts);
-  const { clause, params } = periodFilter(opts.academicTermId);
+  const scope = reportableAttendanceSql(opts.academicTermId);
   const previousTermId = await getPreviousTermId(db, opts.academicTermId);
+  const prev = reportableAttendanceSql(previousTermId);
   const results: SubjectClassOverview[] = [];
   for (const c of classes) {
     const rows = await db.all(
-      `SELECT student_id, status FROM attendance_records WHERE subject_id = ? AND class_id = ?${clause}`,
-      subjectId, c.classId, ...params
+      `SELECT student_id, status FROM attendance_records
+        WHERE session_type = 'subject' AND subject_id = ? AND class_id = ?${scope.sql}`,
+      subjectId, c.classId, ...scope.params
     );
     const agg = aggregateStudentRates(rows);
 
     let previousAverageRate: number | null = null;
     if (previousTermId != null) {
       const prevRows = await db.all(
-        `SELECT student_id, status FROM attendance_records WHERE subject_id = ? AND class_id = ? AND academic_term_id = ?`,
-        subjectId, c.classId, previousTermId
+        `SELECT student_id, status FROM attendance_records
+          WHERE session_type = 'subject' AND subject_id = ? AND class_id = ?${prev.sql}`,
+        subjectId, c.classId, ...prev.params
       );
       if (prevRows.length > 0) previousAverageRate = aggregateStudentRates(prevRows).averageRate;
     }
@@ -434,7 +451,14 @@ export interface ClassSectionReport {
   subjectName: string | null;
   teacherName: string | null;
   academicTermId: number | null;
+  /** One key per register (session), oldest first; `marks` is keyed by it.
+   *  The key is the plain date when the section has one register that day,
+   *  else `<date> <period>` (e.g. two lessons of a subject on one day). It used
+   *  to be the date alone, so a second register that day overwrote the first
+   *  cell while both still counted in the totals. */
   dateColumns: string[];
+  /** The same columns with their parts, for labels. */
+  sessionColumns: Array<{ key: string; date: string; period: string | null }>;
   students: StudentAttendanceRow[];
   classAverageRate: number;
   /** Below this rate, a student is flagged "at risk" -- the same
@@ -450,6 +474,9 @@ export interface ClassSectionReportParams {
   subjectId?: number;
   fromDate?: string;
   toDate?: string;
+  /** Keep students who are inactive or no longer in the class. Only the
+   *  student's own report sets it: their own page shows all their history. */
+  includeInactive?: boolean;
 }
 
 /** Class/subject/teacher display names for the letterhead. Tries the
@@ -491,8 +518,16 @@ async function resolveSectionMeta(
   };
 }
 
+const PERIOD_ORDER = ['Morning', 'Afternoon', 'Evening'];
+function periodRank(period: string): number {
+  const i = PERIOD_ORDER.indexOf(period);
+  return i === -1 ? PERIOD_ORDER.length : i;
+}
+
 export async function getClassSectionReport(db: Database, p: ClassSectionReportParams): Promise<ClassSectionReport> {
-  const { clause: termClause, params: termParams } = periodFilter(p.academicTermId);
+  const filter = p.includeInactive
+    ? recordTermFilter(p.academicTermId)
+    : (() => { const r = reportableAttendanceSql(p.academicTermId); return { clause: r.sql, params: r.params }; })();
 
   let scope = ' WHERE class_id = ? AND session_type = ?';
   const scopeParams: any[] = [p.classId, p.sessionType];
@@ -502,20 +537,36 @@ export async function getClassSectionReport(db: Database, p: ClassSectionReportP
   }
   if (p.fromDate) { scope += ' AND session_date >= ?'; scopeParams.push(p.fromDate); }
   if (p.toDate) { scope += ' AND session_date <= ?'; scopeParams.push(p.toDate); }
-  scope += termClause;
-  scopeParams.push(...termParams);
+  scope += filter.clause;
+  scopeParams.push(...filter.params);
 
-  const [classMeta, dateRows, recordRows] = await Promise.all([
+  const [classMeta, recordRows] = await Promise.all([
     resolveSectionMeta(db, p.classId, p.sessionType, p.subjectId),
-    db.all(`SELECT DISTINCT session_date FROM attendance_records${scope} ORDER BY session_date`, ...scopeParams),
     db.all(
-      `SELECT student_id, student_name, session_date, status FROM attendance_records${scope}
-       ORDER BY student_name, session_date`,
+      `SELECT student_id, student_name, session_date, period, status FROM attendance_records${scope}
+       ORDER BY session_date, period, student_name`,
       ...scopeParams
     ),
   ]);
 
-  const dateColumns: string[] = dateRows.map((r: any) => r.session_date);
+  // Columns come from the rows that are counted, so a register holding only
+  // removed students adds no empty column. One column per (date, period).
+  const periodsByDate = new Map<string, Set<string>>();
+  for (const r of recordRows) {
+    const set = periodsByDate.get(r.session_date) ?? new Set<string>();
+    set.add(r.period ?? '');
+    periodsByDate.set(r.session_date, set);
+  }
+  const keyOf = (date: string, period: string | null) =>
+    (periodsByDate.get(date)?.size ?? 0) > 1 ? `${date} ${period ?? ''}`.trimEnd() : date;
+  const sessionColumns: ClassSectionReport['sessionColumns'] = [];
+  for (const [date, periods] of periodsByDate) {
+    const ordered = [...periods].sort((a, b) => periodRank(a) - periodRank(b) || a.localeCompare(b));
+    for (const period of ordered) {
+      sessionColumns.push({ key: keyOf(date, period || null), date, period: period || null });
+    }
+  }
+  const dateColumns = sessionColumns.map((c) => c.key);
 
   const byStudent = new Map<string, StudentAttendanceRow>();
   for (const r of recordRows) {
@@ -527,9 +578,11 @@ export async function getClassSectionReport(db: Database, p: ClassSectionReportP
       };
       byStudent.set(r.student_id, s);
     }
-    s.marks[r.session_date] = r.status;
+    s.marks[keyOf(r.session_date, r.period)] = r.status;
     s.total += 1;
-    if (r.status in s) (s as any)[r.status] += 1;
+    if (r.status === 'present' || r.status === 'absent' || r.status === 'late' || r.status === 'excused') {
+      s[r.status as 'present' | 'absent' | 'late' | 'excused'] += 1;
+    }
   }
 
   const students = [...byStudent.values()]
@@ -553,6 +606,7 @@ export async function getClassSectionReport(db: Database, p: ClassSectionReportP
     teacherName: p.sessionType === 'subject' ? (classMeta?.teacherName ?? null) : null,
     academicTermId: p.academicTermId ?? null,
     dateColumns,
+    sessionColumns,
     students,
     classAverageRate,
     atRiskThreshold: attendanceWarnThreshold(),
@@ -575,11 +629,11 @@ export async function getOwnSectionReport(
       classId: '', className: 'Your class', sessionType: p.sessionType,
       subjectId: p.sessionType === 'subject' ? p.subjectId ?? null : null,
       subjectName: null, teacherName: null, academicTermId: p.academicTermId ?? null,
-      dateColumns: [], students: [], classAverageRate: 100,
+      dateColumns: [], sessionColumns: [], students: [], classAverageRate: 100,
       atRiskThreshold: attendanceWarnThreshold(),
     };
   }
-  const full = await getClassSectionReport(db, { ...p, classId });
+  const full = await getClassSectionReport(db, { ...p, classId, includeInactive: true });
   const own = full.students.find((s) => s.studentId === studentId) ?? null;
   return { ...full, students: own ? [own] : [], classAverageRate: own ? own.rate : 100 };
 }

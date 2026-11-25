@@ -5,7 +5,9 @@ import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 import { fetchClassTeacherClasses } from '../services/misClient.js';
 import { attendanceComment } from '../modules/reporting/attendanceReport.service.js';
-import { attendanceWarnThreshold } from '../shared/attendancePolicy.js';
+import { ATTENDED_SQL_CASE, attendanceRate, attendanceWarnThreshold } from '../shared/attendancePolicy.js';
+import { reportableAttendanceSql } from '../shared/attendanceScope.js';
+import { schoolDateString } from '../shared/schoolTime.js';
 import { accessScope, allowedStudents, shadowListLeak } from '../access/policy.js';
 
 const router = Router();
@@ -52,7 +54,9 @@ router.use(authMiddleware);
 // Get overview analytics stats (Teacher & Admin only)
 router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, res: Response) => {
   const db = getDb();
-  const today = new Date().toISOString().split('T')[0];
+  // The school's date, not UTC: just after midnight in Kigali the UTC date is
+  // still yesterday, so "today" showed the previous day's register.
+  const today = schoolDateString();
   const authReq = req as AuthenticatedRequest;
   const { academicTermId, academicYearId } = resolveAcademicPeriod(authReq);
 
@@ -78,22 +82,28 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
   // homeroom and a subject session on the same day. "Overall attendance"
   // (A.1.1) is the homeroom signal; the separate `subjects` summary below
   // covers A.1.2.
-  const periodFilter = (academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '') + " AND session_type = 'homeroom'" + classScopeClause;
-  const periodParams = [...(academicTermId != null ? [academicTermId] : []), ...classScopeParams];
+  // Every number below counts the same rows: this term's registers (untermed
+  // rows by date, not in every term), students still active and still in the
+  // class (shared/attendanceScope.ts).
+  const reportable = reportableAttendanceSql(academicTermId);
+  const periodFilter = reportable.sql + " AND session_type = 'homeroom'" + classScopeClause;
+  const periodParams = [...reportable.params, ...classScopeParams];
 
   try {
     // 1. Total records logged overall (within the selected academic period)
     const overallCount = await db.get(
       `SELECT
          COUNT(*) as total,
-         SUM(CASE WHEN status = 'present' OR status = 'late' THEN 1 ELSE 0 END) as present
+         SUM(${ATTENDED_SQL_CASE}) as attended
        FROM attendance_records WHERE 1=1${periodFilter}`,
       ...periodParams
     );
 
-    const overallRate = overallCount.total > 0
-      ? Math.round((overallCount.present / overallCount.total) * 100)
-      : 100;
+    // Attended = present + late + excused (shared/attendancePolicy.ts), the
+    // same rule as the student's own page and the low-attendance warning. This
+    // used to count present + late only, so every excused absence lowered the
+    // dashboard rate but not the student's.
+    const overallRate = attendanceRate(overallCount.attended, overallCount.total);
 
     // 2. Statistics for today
     const todayCount = await db.get(
@@ -115,7 +125,8 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
          class_id,
          class_name,
          COUNT(*) as total,
-         SUM(CASE WHEN status = 'present' OR status = 'late' THEN 1 ELSE 0 END) as present
+         COUNT(DISTINCT student_id) as students,
+         SUM(${ATTENDED_SQL_CASE}) as attended
        FROM attendance_records
        WHERE 1=1${periodFilter}
        GROUP BY class_id`,
@@ -125,8 +136,9 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
     const classStats = classRates.map((c) => ({
       classId: c.class_id,
       className: c.class_name,
-      rate: c.total > 0 ? Math.round((c.present / c.total) * 100) : 100,
-      totalCount: c.total
+      rate: attendanceRate(c.attended, c.total),
+      totalCount: c.total,
+      studentCount: c.students,
     }));
 
     // 3b. A distinct headcount, not a sum of attendance records (a student
@@ -145,7 +157,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
              COUNT(*) as total
            FROM attendance_records WHERE 1=1${periodFilter} GROUP BY student_id`,
           ...periodParams
-        )).filter((s) => s.total > 0 && Math.round((s.attended / s.total) * 100) < attendanceWarnThreshold()).length
+        )).filter((s) => s.total > 0 && attendanceRate(s.attended, s.total) < attendanceWarnThreshold()).length
       : null;
 
     // 4. Daily attendance rate over the last 14 sessions (for the trend
@@ -155,7 +167,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
       `SELECT
          session_date as date,
          COUNT(*) as total,
-         SUM(CASE WHEN status = 'present' OR status = 'late' THEN 1 ELSE 0 END) as present
+         SUM(${ATTENDED_SQL_CASE}) as attended
        FROM attendance_records
        WHERE 1=1${periodFilter}
        GROUP BY session_date
@@ -166,7 +178,7 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
 
     const trendStats = trends.reverse().map((t) => ({
       date: t.date,
-      rate: t.total > 0 ? Math.round((t.present / t.total) * 100) : 100,
+      rate: attendanceRate(t.attended, t.total),
     }));
 
     const termEndRow = academicTermId != null
@@ -189,19 +201,19 @@ router.get('/overview', authorizePermission('REPORTS_VIEW'), async (req: any, re
     // above, rolled up across every subject session recorded for this
     // scope this term. Whole-school (unscoped) for anyone who isn't a
     // class teacher, same as everything else on this endpoint.
-    const subjectPeriodFilter = (academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '') + " AND session_type = 'subject'" + classScopeClause;
-    const subjectPeriodParams = [...(academicTermId != null ? [academicTermId] : []), ...classScopeParams];
+    const subjectPeriodFilter = reportable.sql + " AND session_type = 'subject'" + classScopeClause;
+    const subjectPeriodParams = [...reportable.params, ...classScopeParams];
     const subjectCount = await db.get(
       `SELECT
          COUNT(*) as total,
-         SUM(CASE WHEN status = 'present' OR status = 'late' THEN 1 ELSE 0 END) as present,
+         SUM(${ATTENDED_SQL_CASE}) as attended,
          COUNT(DISTINCT subject_id) as subjectCount,
          COUNT(DISTINCT student_id) as studentsTracked
        FROM attendance_records WHERE 1=1${subjectPeriodFilter}`,
       ...subjectPeriodParams
     );
     const subjectsSummary = {
-      rate: subjectCount.total > 0 ? Math.round((subjectCount.present / subjectCount.total) * 100) : null,
+      rate: subjectCount.total > 0 ? attendanceRate(subjectCount.attended, subjectCount.total) : null,
       total: subjectCount.total || 0,
       subjectCount: subjectCount.subjectCount || 0,
       studentsTracked: subjectCount.studentsTracked || 0,
@@ -247,13 +259,14 @@ router.get('/class/:id', authorizePermission('REPORTS_VIEW'), async (req: any, r
   const db = getDb();
   const { academicTermId } = resolveAcademicPeriod(req as AuthenticatedRequest);
   // Same homeroom-only scoping as /overview — see comment there.
-  const periodFilter = (academicTermId != null ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '') + " AND session_type = 'homeroom'";
-  const periodParams = academicTermId != null ? [academicTermId] : [];
+  const reportable = reportableAttendanceSql(academicTermId);
+  const periodFilter = reportable.sql + " AND session_type = 'homeroom'";
+  const periodParams = reportable.params;
 
   try {
     let stats = await db.all(
       `SELECT
-         student_id, student_name,
+         student_id, MAX(student_name) as student_name,
          COUNT(*) as total,
          SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present,
          SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent,

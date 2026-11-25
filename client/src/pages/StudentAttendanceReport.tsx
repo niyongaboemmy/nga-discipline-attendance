@@ -31,8 +31,19 @@ import {
  */
 
 const addDays = (d: string, n: number) => { const x = new Date(`${d}T00:00:00`); x.setDate(x.getDate() + n); return isoDate(x); };
-const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-const fmtDateLong = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+// A register column key is a date, or "<date> <period>" when that day had more
+// than one register (e.g. two lessons of a subject); plain dates pass through.
+const keyParts = (k: string) => ({ date: k.slice(0, 10), period: k.slice(11) });
+const fmtDate = (k: string) => {
+  const { date, period } = keyParts(k);
+  const day = new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return period ? `${day} · ${period}` : day;
+};
+const fmtDateLong = (k: string) => {
+  const { date, period } = keyParts(k);
+  const day = new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return period ? `${day} (${period})` : day;
+};
 const sectionName = (row: Pick<OwnSubjectSummary, 'kind' | 'subjectName'>) => (row.kind === 'homeroom' ? 'Morning check' : row.subjectName || 'Unknown subject');
 const tierOf = (rate: number) => (rate >= 95 ? 'Excellent' : rate >= 85 ? 'Good' : rate >= 75 ? 'Fair' : 'Poor') as keyof typeof COMMENT_META;
 const isStatus = (s: string): s is StatusKey => s === 'present' || s === 'late' || s === 'excused' || s === 'absent';

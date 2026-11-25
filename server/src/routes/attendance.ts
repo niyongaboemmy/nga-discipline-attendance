@@ -13,6 +13,7 @@ import { isFutureSchoolDate } from '../shared/schoolTime.js';
 import { ensureSubjectCached } from '../modules/academics/academicsSync.service.js';
 import { trackKeyEvent } from '../activity/relay.js';
 import { skipInactiveStudents } from '../services/activeStudents.js';
+import { attendanceTermSql, reportableAttendanceSql } from '../shared/attendanceScope.js';
 import {
   accessCheck, accessMode, accessScope, allowedStudents, classGroupOfStudent, requireAccess,
   scopeToSql, shadowListLeak, studentTarget,
@@ -619,6 +620,8 @@ router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN', 'ATTENDANCE_DASHBOA
     // day-by-day merge and a summary. The headline rate stays the homeroom
     // signal (A.1.1) — matching every report and the warning check (A6) — but
     // the student can finally see their per-subject attendance too.
+    // Untermed rows count in the term their date falls in, not in every term.
+    const recordTerm = attendanceTermSql(academicTermId);
     const termClause = academicTermId != null
       ? ' AND (academic_term_id = ? OR academic_term_id IS NULL)' : '';
     const termParams = academicTermId != null ? [academicTermId] : [];
@@ -626,9 +629,9 @@ router.get('/me', authorizePermission('ATTENDANCE_VIEW_OWN', 'ATTENDANCE_DASHBOA
     const all = await db.all(
       `SELECT id, class_id, class_name, session_date, period, session_type, subject_id, status, notes, updated_at
          FROM attendance_records
-        WHERE student_id = ?${termClause}
+        WHERE student_id = ?${recordTerm.sql}
         ORDER BY session_date DESC, period ASC`,
-      studentId, ...termParams
+      studentId, ...recordTerm.params
     );
     const subjectNames = new Map<number, string>(
       (await db.all('SELECT id, name FROM subjects')).map((s: any) => [s.id, s.name])
@@ -707,15 +710,11 @@ router.get('/student/:id', selfOrPermission('id', 'ATTENDANCE_VIEW_ALL'), async 
     // Homeroom-only, matching /me and the reports overview — otherwise a
     // student's own attendance rate and their instructor-facing StudentReport
     // rate would disagree once subject/course sessions are also recorded.
-    const records = academicTermId != null
-      ? await db.all(
-          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' AND (academic_term_id = ? OR academic_term_id IS NULL) ORDER BY session_date DESC",
-          studentId, academicTermId
-        )
-      : await db.all(
-          "SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom' ORDER BY session_date DESC",
-          studentId
-        );
+    const term = attendanceTermSql(academicTermId);
+    const records = await db.all(
+      `SELECT * FROM attendance_records WHERE student_id = ? AND session_type = 'homeroom'${term.sql} ORDER BY session_date DESC`,
+      studentId, ...term.params
+    );
     return res.json({
       success: true,
       data: records,
@@ -1287,15 +1286,17 @@ export async function triggerLowAttendanceCheck(
     // and every report — remediation A6. Averaging over every term ever
     // recorded, or counting only bare `present`, made the warning fire against
     // a figure shown nowhere in the UI.
+    // Same rows as the reports: no warning for a student who is inactive or
+    // no longer in this class.
+    const scope = reportableAttendanceSql(academicTermId);
     const stats = await db.all(
-      `SELECT student_id, student_name,
+      `SELECT student_id, MAX(student_name) as student_name,
               SUM(${ATTENDED_SQL_CASE}) as attended,
               COUNT(*) as total
        FROM attendance_records
-       WHERE class_id = ? AND session_type = ?
-         AND (? IS NULL OR academic_term_id = ? OR academic_term_id IS NULL)
+       WHERE class_id = ? AND session_type = ?${scope.sql}
        GROUP BY student_id`,
-      classId, sessionType, academicTermId ?? null, academicTermId ?? null
+      classId, sessionType, ...scope.params
     );
 
     const today = new Date().toISOString().split('T')[0];
