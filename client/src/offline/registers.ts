@@ -1,5 +1,6 @@
 import { ApiError, OfflineError, apiPost } from '../api/client';
 import { enqueue, flush, list, type RegisterPayload, type SendOutcome } from './outbox';
+import { outboxPaused } from './pause';
 
 /** Tells the banner (useOutbox) that the queue changed. */
 export const OUTBOX_EVENT = 'tendo:outbox';
@@ -38,9 +39,12 @@ export async function saveRegister(
 }
 
 let replaySkipped = 0;
-const sendOne = async (p: RegisterPayload): Promise<SendOutcome> => {
+// `token` is the one flush checked against this item's school and person:
+// the request carries exactly that token, never whatever is stored by then.
+const sendOne = async (p: RegisterPayload, token: string): Promise<SendOutcome> => {
+  if (outboxPaused()) return { ok: false, refused: false };
   try {
-    const res = await apiPost<MarkResult>('/api/attendance/mark', p);
+    const res = await apiPost<MarkResult>('/api/attendance/mark', p, { token });
     replaySkipped += res.data?.skipped_inactive?.length ?? 0;
     return { ok: true };
   } catch (err) {
@@ -53,7 +57,7 @@ const sendOne = async (p: RegisterPayload): Promise<SendOutcome> => {
 let flushing = false;
 /** Sends what's waiting (one run at a time). */
 export async function sendWaiting() {
-  if (flushing || !list(localStorage).length) return null;
+  if (flushing || outboxPaused() || !list(localStorage).length) return null;
   flushing = true;
   replaySkipped = 0;
   try {

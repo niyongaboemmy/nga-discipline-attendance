@@ -4,7 +4,7 @@ import { signSession } from '../auth/sessionToken.js';
 import { config } from '../config.js';
 import { ensureTenantDb, getDb, tenantDbExists } from '../database.js';
 import {
-  gateTenant, legacyDefaultTid, normalizeTenant, runWithTenant, tenantOfMisPayload, tenantRegistry, tidOfMisToken,
+  gateTenant, legacyTidFallback, normalizeTenant, parseTid, runWithTenant, tenantOfMisPayload, tenantRegistry, tidOfMisToken,
   type TenantCtx,
 } from '../tenancy/index.js';
 import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
@@ -13,6 +13,7 @@ import { misUserIdOf, noteAccessVersion } from '../access/snapshot.js';
 import { noteAiPolicyVersion } from '../services/aiPolicy.js';
 import { noteAiRoutesVersion } from '../services/myAiGateway.js';
 import { recheckMisStatus, recordMisStatus } from '../services/activeStudents.js';
+import { revokeSessions } from '../auth/revocation.js';
 
 const router = Router();
 
@@ -290,7 +291,7 @@ router.post('/exchange', async (req: Request, res: Response) => {
     if (bodyTenant && tokenTid != null && bodyTenant.tid !== tokenTid) {
       return res.status(401).json({ success: false, code: 'TENANT_MISMATCH', message: 'The MIS answered for two different schools.' });
     }
-    const gate = await gateTenant(bodyTenant?.tid ?? tokenTid ?? legacyDefaultTid());
+    const gate = await gateTenant(bodyTenant?.tid ?? tokenTid ?? legacyTidFallback('legacy_tid', 'SSO exchange'));
     if (!gate.ok) {
       return res.status(gate.status).json({ success: false, code: gate.code, message: gate.message });
     }
@@ -323,12 +324,12 @@ router.post('/exchange', async (req: Request, res: Response) => {
 router.post('/backchannel-logout', express.urlencoded({ extended: false, limit: '20kb' }), async (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
   try {
-    const { sub: misUserId, tid: tokenTid } = await verifyLogoutTokenSubject((req.body || {}).logout_token, {
+    const { sub: misUserId, tid: tokenTid, sid } = await verifyLogoutTokenSubject((req.body || {}).logout_token, {
       misBaseUrl: config.ngaMisBaseUrl,
       clientId: config.ssoClientId,
     });
     // Revoke on (tid, sub): the revocation lands in that school's own file.
-    const tid = tokenTid ?? legacyDefaultTid();
+    const tid = tokenTid ?? legacyTidFallback('payload_no_tid', 'back-channel logout');
     if (tid == null) {
       return res.status(400).json({ error: 'invalid_request', error_description: 'logout_token has no tid' });
     }
@@ -337,11 +338,10 @@ router.post('/backchannel-logout', express.urlencoded({ extended: false, limit: 
     if (!tenant) return res.status(200).json({ success: true });
     await ensureTenantDb(tid);
     await runWithTenant(tenant, async () => {
-      await getDb().run(
-        'INSERT INTO session_revocations (user_id, revoked_at) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET revoked_at = excluded.revoked_at',
-        misUserId,
-        Date.now(),
-      );
+      // With a sid (a school switch in one browser, Appendix A.3) only that
+      // browser's sessions end; without one, all of the person's sessions here.
+      await revokeSessions(getDb(), String(misUserId), sid);
+      if (sid) return; // a switch is not a deactivation: no status re-check
       // A sign-out from MIS may be a deactivation: re-check this person's
       // status now instead of waiting for the next roster sync. Not awaited.
       void recheckMisStatus(getDb(), String(misUserId));
@@ -371,8 +371,12 @@ router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) =>
     // Access control v2: MIS reports the user's access_version here; a change
     // drops their cached snapshot so the next access check re-fetches it.
     let avatar: MisAvatar | null | undefined;
+    let currentTid: number | null = null;
     try {
       const body = (await response.json()) as any;
+      // The school the MIS browser session is in now (TENANT_SWITCHING_PLAN.md
+      // §4.2 backstop): another school than this session's means a switch.
+      currentTid = parseTid(body?.data?.currentTid);
       noteAccessVersion(misUserIdOf((req as AuthenticatedRequest).user), body?.data?.access_version);
       // Same for the school's AI policy: a new ai_policy_v drops the cached copy.
       noteAiPolicyVersion(body?.data?.ai_policy_v);
@@ -381,6 +385,15 @@ router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) =>
       avatar = body?.data?.avatar === undefined ? undefined : misAvatarOf(body.data);
     } catch {
       // Not JSON / no version (older MIS): nothing to note.
+    }
+    const sessionTid = (req as AuthenticatedRequest).user?.tid;
+    if (currentTid != null && sessionTid != null && currentTid !== sessionTid) {
+      return res.status(409).json({
+        success: false,
+        code: 'SCHOOL_CHANGED',
+        currentTid,
+        message: 'You switched school in NGA MIS. Signing you in to that school.',
+      });
     }
     // The current profile picture rides along, so one changed in MIS (or another
     // NGA app) reaches this app's navbar within a minute. Omitted when MIS is silent.
@@ -392,6 +405,96 @@ router.get('/verify-mis', authMiddleware, async (req: Request, res: Response) =>
     return res.json({ success: true });
   }
 });
+
+/** GET with the session's MIS token; null on any failure (MIS old, down, or refusing). */
+async function misGet(path: string, misToken: string | undefined, timeoutMs = 4000): Promise<any | null> {
+  try {
+    const response = await fetch(`${config.ngaMisBaseUrl.replace(/\/+$/, '')}${path}`, {
+      headers: { ...(misToken ? { Authorization: `Bearer ${misToken}` } : {}), Accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export interface MySchool {
+  tid: number;
+  slug: string;
+  name: string;
+  logoUrl: string | null;
+  current: boolean;
+}
+
+/** The well-formed entries of MIS `/auth/my-schools` (Appendix A.4). */
+export function mySchoolsOf(body: any, sessionTid?: number): MySchool[] {
+  const raw = body?.data?.schools ?? body?.schools;
+  if (!Array.isArray(raw)) return [];
+  const out: MySchool[] = [];
+  for (const r of raw) {
+    const tid = parseTid(r?.tid);
+    if (!tid || out.some((s) => s.tid === tid)) continue;
+    out.push({
+      tid,
+      slug: typeof r.slug === 'string' ? r.slug : '',
+      name: typeof r.name === 'string' && r.name ? r.name : (typeof r.slug === 'string' ? r.slug : `School ${tid}`),
+      logoUrl: typeof r.logoUrl === 'string' && /^https?:\/\//.test(r.logoUrl) ? r.logoUrl : null,
+      current: typeof r.current === 'boolean' ? r.current : tid === sessionTid,
+    });
+  }
+  return out;
+}
+
+/**
+ * GET /api/sso/my-schools -- the signed-in person's schools, from MIS
+ * `/auth/my-schools` with this session's MIS token (it never reaches the
+ * browser). The client shows "Switch school" only for 2 or more. An MIS that
+ * does not have the endpoint yet answers an empty list.
+ */
+router.get('/my-schools', authMiddleware, async (req: Request, res: Response) => {
+  const u = (req as AuthenticatedRequest).user;
+  res.set('Cache-Control', 'no-store');
+  const body = u?.misToken ? await misGet('/auth/my-schools', u.misToken) : null;
+  return res.json({ success: true, data: { schools: mySchoolsOf(body, u?.tid) } });
+});
+
+export interface SchoolBranding {
+  tid: number;
+  name: string | null;
+  logoUrl: string | null;
+}
+
+/** MIS `/tenant/branding` (Appendix A.5): `data.school_name`, `data.logoUrl`. */
+export function brandingOf(body: any, tid: number): SchoolBranding | null {
+  const d = body?.data ?? body;
+  if (!d || typeof d !== 'object') return null;
+  const name = [d.school_name, d.name].find((v) => typeof v === 'string' && v.trim());
+  const logo = [d.logoUrl, d.logo_url].find((v) => typeof v === 'string' && /^https?:\/\//.test(v));
+  if (!name && !logo) return null;
+  return { tid, name: name ? String(name).trim() : null, logoUrl: logo ?? null };
+}
+
+const brandingCache = new Map<number, { at: number; value: SchoolBranding | null }>();
+const BRANDING_TTL_MS = 10 * 60 * 1000;
+
+/** GET /api/sso/branding -- this session's school name and logo (public MIS data, cached 10 min). */
+router.get('/branding', authMiddleware, async (req: Request, res: Response) => {
+  const tid = (req as AuthenticatedRequest).user?.tid;
+  if (!tid) return res.json({ success: true, data: null });
+  const hit = brandingCache.get(tid);
+  if (hit && Date.now() - hit.at < BRANDING_TTL_MS) return res.json({ success: true, data: hit.value });
+  const value = brandingOf(await misGet(`/tenant/branding?tid=${tid}`, undefined), tid);
+  // A miss is cached for a minute only, so a logo set in MIS shows up soon.
+  brandingCache.set(tid, { at: value ? Date.now() : Date.now() - BRANDING_TTL_MS + 60_000, value });
+  return res.json({ success: true, data: value });
+});
+
+/** Test hook. */
+export function __clearBrandingCache() {
+  brandingCache.clear();
+}
 
 /**
  * The cross-app "waffle" switcher's live app list — proxies the MIS's own

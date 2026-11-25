@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { ensureTenantDb, getDb } from '../database.js';
-import { issuedBeforeRevocation } from '../utils/ssoLogout.js';
+import { sessionRevoked } from '../auth/revocation.js';
 import { gateTenant, runWithTenant, tidOfClaims, tidOfMisToken, type TenantCtx } from '../tenancy/index.js';
 
 export type Role = 'teacher' | 'admin' | 'student' | 'unassigned';
@@ -55,7 +55,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   // Tenancy (nga_central_mis/packages/tenancy/CONTRACT.md §6): the session
   // names its school; a token minted before tenancy belongs to tenant 1
   // while TENANCY_LEGACY_DEFAULT_TID allows it.
-  const tid = tidOfClaims(decoded);
+  const tid = tidOfClaims(decoded, undefined, 'session token');
   const gate = await gateTenant(tid);
   if (!gate.ok) {
     return res.status(gate.status).json({ success: false, code: gate.code, message: gate.message });
@@ -82,8 +82,7 @@ async function continueAuth(req: Request, res: Response, next: NextFunction, dec
   // Single sign-out: this person signed out of NGA MIS after this token was
   // issued (back-channel logout) -- the session is over everywhere.
   try {
-    const revoked = await getDb().get('SELECT revoked_at FROM session_revocations WHERE user_id = ?', String(decoded.id));
-    if (issuedBeforeRevocation(decoded.iat, revoked?.revoked_at)) {
+    if (await sessionRevoked(getDb(), decoded)) {
       return res.status(401).json({
         success: false,
         code: 'SESSION_ENDED',

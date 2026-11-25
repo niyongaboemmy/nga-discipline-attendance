@@ -1,5 +1,6 @@
 import { initActivity, getDeviceId, endActivity, type CatalogEntry } from '../vendor/nga-activity';
 import catalog from './catalog.json';
+import { activityUserKey } from '../tenancy/school.ts';
 
 /**
  * Platform usage analytics for Tendo (nga_central_mis
@@ -22,13 +23,10 @@ const storedToken = (): string | null => {
   }
 };
 
-/** Tendo's `users.id` IS the MIS user id (set from the MIS SSO exchange). */
-const misUserId = (): number | null => {
+/** `<tid>:<MIS user id>`: the same id in two schools is two people, so a school switch starts a new identity. */
+const userKey = (): string | null => {
   try {
-    if (!storedToken()) return null;
-    const u = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
-    const id = Number(u?.id);
-    return Number.isSafeInteger(id) && id > 0 ? id : null;
+    return activityUserKey(localStorage);
   } catch {
     return null;
   }
@@ -43,7 +41,7 @@ export const startActivity = () =>
       const t = storedToken();
       return t ? `Bearer ${t}` : null;
     },
-    userKey: misUserId,
+    userKey,
     // Tendo only knows its own role (admin/teacher/...), not the MIS user type;
     // the MIS fills that in from the user id.
     userType: () => null,

@@ -12,6 +12,7 @@ import {
   tidFromClaims,
   type TenantCtx,
 } from '../vendor/nga-tenancy/index.js';
+import { noteFallback } from './fallbacks.js';
 
 /**
  * Tendo's side of the NGA tenancy contract (nga_central_mis/packages/tenancy/
@@ -34,7 +35,53 @@ export * from '../vendor/nga-tenancy/index.js';
 export type TenancyMode = 'shadow' | 'enforce';
 
 export function tenancyMode(): TenancyMode {
-  return (process.env.TENANCY_MODE || '').trim().toLowerCase() === 'enforce' ? 'enforce' : 'shadow';
+  if ((process.env.TENANCY_MODE || '').trim().toLowerCase() === 'enforce') return 'enforce';
+  return strictActive() ? 'enforce' : 'shadow';
+}
+
+// ---------------------------------------------------------------------------
+// Automatic strict mode (TENANT_SWITCHING_PLAN.md Appendix A.6)
+// ---------------------------------------------------------------------------
+
+/** `tenancy.strict.tendo` from the last registry answer that carried it. */
+let registryStrict = false;
+
+/** TENANCY_STRICT=off is the kill switch: MIS's strict flag is then ignored. */
+export function strictKillSwitch(): boolean {
+  const raw = (process.env.TENANCY_STRICT ?? '').trim().toLowerCase();
+  return raw === 'off' || raw === 'false' || raw === '0';
+}
+
+/**
+ * Strict mode is on when MIS says so for Tendo (after 7 clean days of
+ * fallback reports) and the kill switch is not set. It behaves as
+ * TENANCY_LEGACY_DEFAULT_TID=none plus TENANCY_MODE=enforce.
+ */
+export function strictActive(): boolean {
+  return registryStrict && !strictKillSwitch();
+}
+
+/** Read `tenancy.strict.tendo` out of a registry body; undefined when MIS does not send it. */
+export function strictFlagOf(body: any): boolean | undefined {
+  const t = body?.tenancy ?? body?.data?.tenancy;
+  const v = t?.strict?.tendo;
+  return typeof v === 'boolean' ? v : undefined;
+}
+
+function applyStrictFlag(flag: boolean | undefined) {
+  // An MIS that does not send the field yet means "not strict".
+  const next = flag === true;
+  if (next !== registryStrict) {
+    registryStrict = next;
+    if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+      console.info(`[tenancy] MIS strict mode for tendo is ${next ? 'on' : 'off'}${next && strictKillSwitch() ? ' (ignored: TENANCY_STRICT=off)' : ''}`);
+    }
+  }
+}
+
+/** Test hook. */
+export function __setRegistryStrict(on: boolean): void {
+  registryStrict = on;
 }
 
 /**
@@ -42,6 +89,7 @@ export function tenancyMode(): TenancyMode {
  * belongs to. `none` rejects such tokens (401 TENANT_REQUIRED).
  */
 export function legacyDefaultTid(): number | null {
+  if (strictActive()) return null;
   const raw = (process.env.TENANCY_LEGACY_DEFAULT_TID ?? '').trim().toLowerCase();
   if (raw === 'none' || raw === 'null' || raw === 'off') return null;
   return parseTid(raw) ?? PRIMARY_TENANT_ID;
@@ -57,6 +105,7 @@ export function effectiveTenant(what = 'operation'): TenantCtx {
   const t = currentTenantOrNull();
   if (t) return t;
   if (tenancyMode() === 'enforce') throw new TenantContextMissing(what);
+  noteFallback('no_context', what);
   if (!warned.has(what)) {
     warned.add(what);
     if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
@@ -85,8 +134,20 @@ export function scopedKey(...parts: Array<string | number>): string {
 // ---------------------------------------------------------------------------
 
 /** The tid a decoded token (session JWT, MIS token, logout token) speaks for. */
-export function tidOfClaims(claims: unknown, legacy: number | null = legacyDefaultTid()): number | null {
-  return tidFromClaims((claims && typeof claims === 'object' ? claims : null) as any, legacy);
+export function tidOfClaims(claims: unknown, legacy: number | null = legacyDefaultTid(), site = 'token claims'): number | null {
+  const c = (claims && typeof claims === 'object' ? claims : null) as any;
+  const own = tidFromClaims(c, null);
+  if (own != null) return own;
+  // No tid of its own: the legacy default (school 1) stands in -- a fallback.
+  if (legacy != null) noteFallback('legacy_tid', site);
+  return legacy;
+}
+
+/** The legacy default for a token or payload without `tid`, counted as a fallback when it applies. */
+export function legacyTidFallback(kind: 'legacy_tid' | 'payload_no_tid', site: string): number | null {
+  const legacy = legacyDefaultTid();
+  if (legacy != null) noteFallback(kind, site);
+  return legacy;
 }
 
 /** The tid inside a raw MIS JWT, without verifying it (MIS verifies its own tokens). */
@@ -113,7 +174,8 @@ export function tenantOfMisPayload(data: any): TenantCtx | null {
 
 const PLACEHOLDER_SECRETS = new Set(['', 'placeholder_client_secret']);
 
-function serviceAuthHeader(): string | null {
+/** `Authorization` for MIS service calls (registry, fallback reports), or null when not configured. */
+export function serviceAuthHeader(): string | null {
   const token = process.env.MIS_INTEGRATION_TOKEN?.trim();
   if (token) return `Bearer ${token}`;
   if (!PLACEHOLDER_SECRETS.has(config.ssoClientSecret) && config.ssoClientId) {
@@ -153,6 +215,7 @@ export async function loadTenantsFromMis(fetchImpl: typeof fetch = fetch): Promi
     }
     if (!resp.ok) throw new Error(`MIS /platform/tenants/active returned ${resp.status}`);
     const body: any = await resp.json();
+    applyStrictFlag(strictFlagOf(body));
     const raw = body?.tenants ?? body?.data?.tenants ?? (Array.isArray(body?.data) ? body.data : null);
     if (!Array.isArray(raw)) throw new Error('MIS /platform/tenants/active returned no tenant list');
     const list = withPrimary(raw.map((r: any) => normalizeTenant(r ?? {})).filter((t): t is TenantCtx => !!t));
@@ -187,6 +250,7 @@ export function __setTenants(list: TenantCtx[] | null): void {
   if (!list) {
     registry = buildRegistry();
     lastGood = null;
+    registryStrict = false;
     return;
   }
   registry = new TenantRegistry({ load: async () => list, ttlMs: 0 });

@@ -17,7 +17,16 @@
  * below is that `<tid>.<uid>` owner (see currentOwner). Keys written before
  * tenancy (v1, no tid) belong to tenant 1 and are moved once
  * (migrateV1Keys).
+ *
+ * School switching (TENANT_SWITCHING_PLAN.md §4.5, §4.7 rule 4): every item
+ * is stamped with the school (`tid`) and person (`uid`) it was taken for,
+ * and flush checks the CURRENT token before each send: an item is only ever
+ * posted under a token of its own school and person. Items for a school the
+ * person switched away from stay under their key until they switch back
+ * (waitingElsewhere lists them for the banner).
  */
+
+import { tidOfToken } from '../tenancy/school.ts';
 
 export interface KV {
   getItem(key: string): string | null;
@@ -44,6 +53,37 @@ export interface Waiting {
   /** Set when the server refused it (it stays until someone looks). */
   error?: string;
   attempts: number;
+  /** The school and person it was taken for (absent on items queued before school switching). */
+  tid?: number;
+  uid?: string;
+  /** For the "waiting for <school>" chip: the e-mail links one person's accounts across schools. */
+  email?: string;
+  slug?: string;
+}
+
+/** `<tid>.<uid>` → its parts. */
+export function splitOwner(owner: string): { tid: number; uid: string } {
+  const i = owner.indexOf('.');
+  return { tid: Number(owner.slice(0, i)) || 1, uid: owner.slice(i + 1) };
+}
+
+function storedUser(kv: KV): { email?: string; tenantSlug?: string } {
+  try {
+    return JSON.parse(kv.getItem('sso_user') || 'null') || {};
+  } catch {
+    return {};
+  }
+}
+
+/** The `id` inside a session JWT (unverified), or null. */
+function uidOfToken(token: string): string | null {
+  try {
+    const part = token.split('.')[1] || '';
+    const json = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=')));
+    return json?.id == null ? null : String(json.id);
+  } catch {
+    return null;
+  }
 }
 
 /** The signed-in person (sso_user), so one teacher never sends another's queue. */
@@ -148,7 +188,13 @@ export function enqueue(kv: KV, payload: RegisterPayload, now = Date.now(), uid:
   if (!uid) return null;
   const key = registerKey(payload);
   const items = list(kv, uid).filter((w) => w.key !== key);
-  const item: Waiting = { key, payload, savedAt: now, attempts: 0 };
+  const { tid, uid: who } = splitOwner(uid);
+  const u = storedUser(kv);
+  const item: Waiting = {
+    key, payload, savedAt: now, attempts: 0, tid, uid: who,
+    ...(u.email ? { email: String(u.email).toLowerCase() } : {}),
+    ...(u.tenantSlug ? { slug: String(u.tenantSlug) } : {}),
+  };
   items.push(item);
   save(kv, uid, items);
   return item;
@@ -163,11 +209,31 @@ export function remove(kv: KV, key: string, uid: string | null = currentOwner(kv
 export type SendOutcome = { ok: true } | { ok: false; refused: true; message: string } | { ok: false; refused: false };
 
 /**
- * Sends everything waiting, oldest first. Stops at the first "no connection"
- * (no point hammering a dead network). Returns what happened.
+ * May this item go out under this token? Only when the token speaks for the
+ * item's own school and person. Checked right before every send, because the
+ * session can change (a school switch in another tab) in the middle of a flush.
  */
-export async function flush(kv: KV, send: (p: RegisterPayload) => Promise<SendOutcome>, uid: string | null = currentOwner(kv)) {
-  const result = { sent: 0, refused: 0, waiting: 0 };
+export function tokenFitsItem(token: string | null, w: Waiting, owner: string): boolean {
+  if (!token) return false;
+  const { tid, uid } = splitOwner(owner);
+  if (tidOfToken(token) !== (w.tid ?? tid)) return false;
+  const tokenUid = uidOfToken(token);
+  return tokenUid === null || tokenUid === (w.uid ?? uid);
+}
+
+/**
+ * Sends everything waiting, oldest first. Stops at the first "no connection"
+ * (no point hammering a dead network), and as soon as the current token is
+ * not this queue's school and person (`blocked`). `send` gets the token it
+ * must use, so the check and the request can't see two different sessions.
+ */
+export async function flush(
+  kv: KV,
+  send: (p: RegisterPayload, token: string) => Promise<SendOutcome>,
+  uid: string | null = currentOwner(kv),
+  readToken: () => string | null = () => kv.getItem('sso_token'),
+) {
+  const result: { sent: number; refused: number; waiting: number; blocked?: true } = { sent: 0, refused: 0, waiting: 0 };
   if (!uid) return result;
   const items = list(kv, uid).sort((a, b) => a.savedAt - b.savedAt);
   for (const w of items) {
@@ -175,7 +241,12 @@ export async function flush(kv: KV, send: (p: RegisterPayload) => Promise<SendOu
       result.refused++;
       continue;
     }
-    const r = await send(w.payload);
+    const token = readToken();
+    if (!token || !tokenFitsItem(token, w, uid)) {
+      result.blocked = true;
+      break;
+    }
+    const r = await send(w.payload, token);
     if (r.ok) {
       remove(kv, w.key, uid);
       result.sent++;
@@ -222,13 +293,72 @@ export function readCache<T>(kv: KV, path: string, uid: string | null = currentO
   }
 }
 
-/** Sign-out on a shared computer: drop the cached rosters (the outbox stays for its owner). */
-export function clearCache(kv: KV & { length?: number; key?(i: number): string | null }) {
+/** Cached reads older than this go at any sign-out, whoever they belong to. */
+export const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Sign-out: drop cached rosters. The outbox always stays for its owner.
+ *
+ * With `owner` (what sign-out passes): the signed-out person's cached reads
+ * in the school they were signed in to, every pre-tenancy (v1) copy, and any
+ * copy older than CACHE_MAX_AGE_MS. Other schools' copies of a recent session
+ * are kept, so signing out of one school does not wipe the offline rosters of
+ * another; each goes when its own session signs out or when it grows old.
+ * A school switch does not call this at all (keys are per school).
+ *
+ * Without `owner`: every cached read on the device.
+ */
+export function clearCache(kv: KV & { length?: number; key?(i: number): string | null }, owner?: string | null, now = Date.now()) {
   if (typeof kv.length !== 'number' || !kv.key) return;
+  const mine = owner ? `tendo.cache.v2.${owner}.` : 'tendo.cache.v2.';
   const doomed: string[] = [];
   for (let i = 0; i < kv.length; i++) {
     const k = kv.key(i);
-    if (k && (k.startsWith('tendo.cache.v2.') || k.startsWith(V1_CACHE))) doomed.push(k);
+    if (!k) continue;
+    if (k.startsWith(V1_CACHE) || k.startsWith(mine)) {
+      doomed.push(k);
+      continue;
+    }
+    if (k.startsWith('tendo.cache.v2.')) {
+      try {
+        const at = Number(JSON.parse(kv.getItem(k) || 'null')?.at);
+        if (!Number.isFinite(at) || now - at > CACHE_MAX_AGE_MS) doomed.push(k);
+      } catch {
+        doomed.push(k);
+      }
+    }
   }
   doomed.forEach((k) => kv.removeItem(k));
+}
+
+/**
+ * Registers this person queued in OTHER schools on this device, by school.
+ * "This person" = the same e-mail (one account per school, same e-mail); an
+ * item without an e-mail stamp is only matched by an identical user id.
+ */
+export function waitingElsewhere(kv: KV & { length?: number; key?(i: number): string | null }): Array<{ tid: number; slug: string | null; count: number }> {
+  const owner = currentOwner(kv);
+  if (!owner || typeof kv.length !== 'number' || !kv.key) return [];
+  const { tid: here, uid: me } = splitOwner(owner);
+  const email = String(storedUser(kv).email || '').toLowerCase();
+  const byTid = new Map<number, { tid: number; slug: string | null; count: number }>();
+  const keys: string[] = [];
+  for (let i = 0; i < kv.length; i++) {
+    const k = kv.key(i);
+    if (k && k.startsWith('tendo.outbox.v2.')) keys.push(k);
+  }
+  for (const k of keys) {
+    const o = splitOwner(k.slice('tendo.outbox.v2.'.length));
+    if (o.tid === here) continue;
+    for (const w of list(kv, `${o.tid}.${o.uid}`)) {
+      if (w.error) continue;
+      const same = w.email ? !!email && w.email === email : o.uid === me;
+      if (!same) continue;
+      const tid = w.tid ?? o.tid;
+      const e = byTid.get(tid) ?? { tid, slug: w.slug ?? null, count: 0 };
+      e.count++;
+      byTid.set(tid, e);
+    }
+  }
+  return [...byTid.values()].sort((a, b) => a.tid - b.tid);
 }

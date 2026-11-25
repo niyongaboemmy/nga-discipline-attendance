@@ -3,7 +3,8 @@ import type { CardStatus } from '../api/rfid';
 
 /** Card helpers shared by the Attendance Cards pages. */
 
-/** Name printed on the student cards; the MIS's reports use the same one. */
+/** Fallback name printed on the student cards when MIS branding is unknown
+ *  (the card shows the current school's name from useSchoolName()). */
 export const SCHOOL_NAME = 'NGA Coding Academy';
 
 export type AssignTarget = { id: number; uid: string; label: string | null };

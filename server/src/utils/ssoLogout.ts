@@ -82,7 +82,13 @@ export interface LogoutSubject {
   sub: string;
   /** The `tid` claim (contract §2), or null for a token minted before tenancy. */
   tid: number | null;
+  /** The MIS browser session id (`sid`, TENANT_SWITCHING_PLAN.md A.3), or null: end every session. */
+  sid: string | null;
 }
+
+/** A well-formed MIS session id (A.1/A.2), or null. */
+export const parseSid = (v: unknown): string | null =>
+  typeof v === "string" && /^[A-Za-z0-9_-]{8,32}$/.test(v) ? v : null;
 
 /**
  * Validate a logout token per spec section 2.6. Returns the MIS user id
@@ -128,7 +134,7 @@ export const verifyLogoutTokenSubject = async (token: unknown, cfg: LogoutVerifi
   }
   const tidNum = Number(claims.tid);
   const tid = Number.isSafeInteger(tidNum) && tidNum > 0 ? tidNum : null;
-  return { sub: String(claims.sub), tid };
+  return { sub: String(claims.sub), tid, sid: parseSid(claims.sid) };
 };
 
 /**
