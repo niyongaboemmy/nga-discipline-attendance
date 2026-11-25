@@ -65,7 +65,8 @@ function eastOf(lat: number, lng: number, m: number): [number, number] {
   return [lat, lng + m / (111_320 * Math.cos((lat * Math.PI) / 180))];
 }
 
-export const StaffClockZone: React.FC = () => {
+/** `embedded`: only the map + zones, for a step of the setup guide (no page chrome, rules or link). */
+export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> = ({ embedded }) => {
   const toast = useToast();
   const { can } = usePermissions();
   const canEdit = can('STAFF_ATTENDANCE_ZONES_MANAGE');
@@ -277,6 +278,7 @@ export const StaffClockZone: React.FC = () => {
       void _a; void _b;
       await staffClockApi.saveRules({ ...editable, enabled: enable ?? rules.enabled });
       announceClockChange();
+      embedded?.onSaved?.();
       toast.success(enable === true ? 'Staff clock is on' : enable === false ? 'Staff clock is off' : 'Saved', enable === true ? 'Staff can check in from the link now.' : 'Staff phones use it from the next tap.');
       await load();
     } catch (e) {
@@ -395,10 +397,9 @@ export const StaffClockZone: React.FC = () => {
     ['selfReplaceDays', 'New phone within', 'Days that need your approval', 'number'],
   ];
 
-  return (
-    <DashboardLayout>
-      <div className="sc-page">
-        <StaffClockHeader
+  const content = (
+      <div className={embedded ? 'sc-page sc-page-embedded' : 'sc-page'}>
+        {!embedded && <StaffClockHeader
           title="Zone & settings"
           lead="Staff can check in and out only inside these areas. Draw them while standing at school for the best result."
           actions={cfg && rules && canEdit ? (
@@ -411,10 +412,10 @@ export const StaffClockZone: React.FC = () => {
               )}
             </>
           ) : undefined}
-        />
+        />}
         {error && <ErrorState message={error} onRetry={() => void load()} />}
-        <StaffClockSetup place="zone" />
-        {cfg && (
+        {!embedded && <StaffClockSetup place="zone" />}
+        {!embedded && cfg && (
           <div className="sc-card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
             <div style={{ flex: '1 1 280px', minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-tertiary)' }}>Staff check-in link for {cfg.school.name}</div>
@@ -425,7 +426,7 @@ export const StaffClockZone: React.FC = () => {
             <Link className="sc-btn sc-btn-sm" to="/staff/clock/poster"><Printer size={15} /> Poster</Link>
           </div>
         )}
-        {cfg && !cfg.googleConfigured && (
+        {!embedded && cfg && !cfg.googleConfigured && (
           <div className="sc-notice"><b>Google sign-in is not set up on this server.</b><p>Staff cannot register their phones until GOOGLE_CLIENT_ID is set for Tendo and its address is added to the Google sign-in client.</p></div>
         )}
 
@@ -510,7 +511,7 @@ export const StaffClockZone: React.FC = () => {
                 </section>
               )}
 
-              <section className="sc-card" id="zone-rules">
+              {!embedded && <section className="sc-card" id="zone-rules">
                 <h2>Check-in rules</h2>
                 <div style={{ marginTop: 10 }}>
                   {ruleRows.map(([key, label, hint, type]) => (
@@ -530,9 +531,9 @@ export const StaffClockZone: React.FC = () => {
                     <input className="sc-input" style={{ width: 180 }} aria-label="School network" placeholder="41.186.10.0/24" disabled={!canEdit} value={rules.schoolNetworks} onChange={(e) => patchRules({ schoolNetworks: e.target.value })} />
                   </div>
                 </div>
-              </section>
+              </section>}
 
-              <section className="sc-card">
+              {!embedded && <section className="sc-card">
                 <h2>Staff link</h2>
                 <p className="sc-card-sub">Share it once. Staff register their phone or tablet from it.</p>
                 <div className="sc-link"><span className="sc-clip">{cfg.link.display}</span><button className="sc-btn sc-btn-soft sc-btn-sm" onClick={() => void copyLink()}><Copy size={14} /> Copy</button></div>
@@ -540,21 +541,21 @@ export const StaffClockZone: React.FC = () => {
                   <Link className="sc-btn sc-btn-sm" to="/staff/clock/poster"><Printer size={15} /> Print poster</Link>
                   {can('STAFF_DEVICES_MANAGE') && <Link className="sc-btn sc-btn-sm" to="/staff/clock/devices">Staff QR cards</Link>}
                 </div>
-              </section>
+              </section>}
             </aside>
           </div>
         )}
         {cfg && rules && canEdit && (
-          <div className={`sc-savebar${dirty ? ' dirty' : ''}`} role="region" aria-label="Save">
+          <div className={`sc-savebar${dirty ? ' dirty' : ''}${embedded ? ' sc-savebar-inline' : ''}`} role="region" aria-label="Save">
             <span className="sc-savebar-text">
               <i aria-hidden="true" />
               {dirty ? 'Unsaved changes' : 'All changes saved'}
             </span>
             <button className="sc-btn sc-btn-sm" disabled={!dirty || saving} onClick={() => void load()}>Discard</button>
-            <button className="sc-btn sc-btn-primary" disabled={!dirty || saving} onClick={() => void save()}>{saving && <Spinner />}Save changes</button>
+            <button className="sc-btn sc-btn-primary" disabled={!dirty || saving} onClick={() => void save()}>{saving && <Spinner />}{embedded ? 'Save zone' : 'Save changes'}</button>
           </div>
         )}
       </div>
-    </DashboardLayout>
   );
+  return embedded ? content : <DashboardLayout>{content}</DashboardLayout>;
 };

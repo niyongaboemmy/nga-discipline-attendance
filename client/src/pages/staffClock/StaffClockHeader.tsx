@@ -8,6 +8,7 @@ export const StaffClockHeader: React.FC<{ title: string; lead: string; actions?:
   const { can } = usePermissions();
   const tabs = [
     { to: '/staff/clock', label: 'Dashboard', show: can('STAFF_ATTENDANCE_VIEW_ALL'), end: true },
+    { to: '/staff/clock/setup', label: 'Setup guide', show: can('STAFF_ATTENDANCE_ZONES_MANAGE') },
     { to: '/staff/clock/zone', label: 'Zone & settings', show: can(['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL']) },
     { to: '/staff/clock/devices', label: 'Phones & cards', show: can('STAFF_DEVICES_MANAGE'), count: pending },
     { to: '/staff/clock/scan', label: 'Scan a card', show: can('STAFF_CLOCK_SCAN') },
