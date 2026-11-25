@@ -21,7 +21,7 @@ import { announceClockChange } from './clockEvents';
  */
 
 const TILES = {
-  map: { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap contributors', maxZoom: 19 },
+  map: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap contributors', maxZoom: 19 },
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
@@ -84,6 +84,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
   const [searching, setSearching] = useState(false);
   const [hits, setHits] = useState<PlaceHit[] | null>(null);
   const [placing, setPlacing] = useState(false);
+  const [tilesLoading, setTilesLoading] = useState(false);
 
   const mapEl = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -119,7 +120,18 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     const first = cfg.zones.find((z) => z.center_lat != null);
     const m = L.map(mapEl.current, { zoomControl: false, attributionControl: true }).setView(first ? [first.center_lat!, first.center_lng!] : KIGALI, first ? 17 : 13);
     L.control.zoom({ position: 'bottomright' }).addTo(m);
-    tiles.current = L.tileLayer(TILES.map.url, { attribution: TILES.map.attribution, maxZoom: TILES.map.maxZoom }).addTo(m);
+    tiles.current = L.tileLayer(TILES.map.url, { attribution: TILES.map.attribution, maxZoom: TILES.map.maxZoom, keepBuffer: 4 }).addTo(m);
+    // Slow or flaky connections: say the map is still loading, and retry a failed tile (3 tries).
+    tiles.current.on('loading', () => setTilesLoading(true));
+    tiles.current.on('load', () => setTilesLoading(false));
+    tiles.current.on('tileerror', (e: L.TileErrorEvent) => {
+      const img = e.tile as HTMLImageElement;
+      const tries = Number(img.dataset.tries || 0);
+      if (tries >= 3) return;
+      img.dataset.tries = String(tries + 1);
+      const src = img.src.replace(/[?&]retry=\d+$/, '');
+      window.setTimeout(() => { img.src = `${src}${src.includes('?') ? '&' : '?'}retry=${tries + 1}`; }, 700 * (tries + 1));
+    });
     layer.current = L.layerGroup().addTo(m);
     m.on('click', (e: L.LeafletMouseEvent) => {
       if (!canEditRef.current) return;
@@ -148,8 +160,11 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     // The map's box changes (sticky column, window resize): redraw tiles, never blank.
     const ro = new ResizeObserver(() => m.invalidateSize());
     if (mapEl.current) ro.observe(mapEl.current);
+    // Once the page (or a setup-guide step) has settled into place, redraw.
+    const settle = [120, 600].map((ms) => window.setTimeout(() => m.invalidateSize(), ms));
     return () => {
       ro.disconnect();
+      settle.forEach((t) => window.clearTimeout(t));
       m.remove();
       map.current = null;
     };
@@ -436,6 +451,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
           <div className="sc-zone-layout">
             <section className="sc-map sc-zone-map" aria-label="Map" id="zone-map">
               <div ref={mapEl} className="sc-map-el" />
+              {tilesLoading && <span className="sc-map-loading" role="status"><Spinner /> Loading map…</span>}
               <div className="sc-map-top">
                 <form className="sc-map-search" onSubmit={(e) => void search(e)} role="search">
                   <Search size={18} />

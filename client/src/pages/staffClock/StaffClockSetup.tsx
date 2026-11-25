@@ -34,6 +34,7 @@ export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ pla
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canEdit = can('STAFF_ATTENDANCE_ZONES_MANAGE');
+  const canViewAll = can('STAFF_ATTENDANCE_VIEW_ALL');
   const [cfg, setCfg] = useState<ClockConfig | null>(null);
   const [phones, setPhones] = useState<{ registered: number; staff: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -44,14 +45,14 @@ export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ pla
     try {
       const c = await staffClockApi.config();
       setCfg(c);
-      if (can('STAFF_ATTENDANCE_VIEW_ALL')) {
+      if (canViewAll) {
         const o = await staffClockApi.overview().catch(() => null);
         if (o) setPhones({ registered: o.phones.registered, staff: o.phones.staff });
       }
     } catch {
       /* the page shows its own error */
     }
-  }, [can]);
+  }, [canViewAll]);
 
   useEffect(() => {
     void Promise.resolve().then(load);

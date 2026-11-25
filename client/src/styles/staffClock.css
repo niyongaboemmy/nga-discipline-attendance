@@ -373,3 +373,8 @@ html:has(.sc-savebar) { scroll-padding-top: calc(var(--navbar-height, 64px) + 16
   .sc-guide-qr { width: 200px; height: 200px; } .sc-guide-qr img { width: 180px; height: 180px; }
 }
 @media (max-width: 760px) { .sc-page-embedded .sc-zone-map { height: 360px; } .sc-guide-big { width: 100%; justify-content: center; } }
+
+/* map tiles still arriving (slow connections) */
+.sc-map-loading { position: absolute; left: 50%; top: 72px; transform: translateX(-50%); z-index: 600; display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--border); font-size: 13px; font-weight: 600; color: var(--text-secondary); pointer-events: none; }
+/* room under the last settings card so the fixed save bar never covers it */
+.sc-page:not(.sc-page-embedded) .sc-zone-panel { padding-bottom: 96px; }

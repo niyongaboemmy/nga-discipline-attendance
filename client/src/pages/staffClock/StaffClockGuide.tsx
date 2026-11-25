@@ -47,6 +47,7 @@ export const StaffClockGuide: React.FC = () => {
   const navigate = useNavigate();
   const { can } = usePermissions();
   const canEdit = can('STAFF_ATTENDANCE_ZONES_MANAGE');
+  const canViewAll = can('STAFF_ATTENDANCE_VIEW_ALL');
   const [params, setParams] = useSearchParams();
   const [cfg, setCfg] = useState<ClockConfig | null>(null);
   const [ov, setOv] = useState<Overview | null>(null);
@@ -62,11 +63,11 @@ export const StaffClockGuide: React.FC = () => {
       setCfg(c);
       setTimes({ opens: c.rules.opens, lateAfter: c.rules.lateAfter, earlyLeaveBefore: c.rules.earlyLeaveBefore, minShiftMinutes: c.rules.minShiftMinutes, maxAccuracy: c.rules.maxAccuracy });
       setError(null);
-      if (can('STAFF_ATTENDANCE_VIEW_ALL')) setOv(await staffClockApi.overview().catch(() => null));
+      if (canViewAll) setOv(await staffClockApi.overview().catch(() => null));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not load the setup.');
     }
-  }, [can]);
+  }, [canViewAll]);
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);

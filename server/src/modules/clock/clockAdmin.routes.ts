@@ -278,6 +278,11 @@ function timeToMinutesOf(value: unknown): number | null {
   return label ? timeToMinutes(label) : null;
 }
 
+/** The MIS staff list, per school, kept 60 s: the dashboard refreshes often and the
+ *  MIS call (every active user) is the slow part of the overview. */
+const rosterCache = new Map<number, { at: number; roster: Array<{ id: string; name: string; role?: string }> }>();
+const ROSTER_TTL_MS = 60_000;
+
 router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
   try {
     const db = getDb();
@@ -295,10 +300,16 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     let roster: Array<{ id: string; name: string; role?: string }> = [];
     let rosterSource: 'mis' | 'local' = 'local';
     const misToken = (req as AuthenticatedRequest).user?.misToken;
-    if (misToken) {
+    const tid = currentTenant('overview').tid;
+    const cached = rosterCache.get(tid);
+    if (cached && Date.now() - cached.at < ROSTER_TTL_MS) {
+      roster = cached.roster;
+      rosterSource = 'mis';
+    } else if (misToken) {
       try {
         roster = (await loadStaffRoster(misToken)).map((s: any) => ({ id: String(s.id), name: s.name, role: s.role || s.user_type || undefined }));
         rosterSource = 'mis';
+        if (roster.length) rosterCache.set(tid, { at: Date.now(), roster });
       } catch {
         roster = [];
       }
