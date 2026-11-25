@@ -15,6 +15,7 @@ import {
   LogOut,
   LayoutGrid,
   Settings as SettingsIcon,
+  School,
 } from "lucide-react";
 
 interface NavbarProps {
@@ -25,7 +26,7 @@ interface NavbarProps {
  *  user menu, and (on narrow viewports) the trigger for the Sidebar's mobile
  *  drawer. Primary navigation itself lives in Sidebar, not here. */
 export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu }) => {
-  const { user, theme, toggleTheme, logout } = useAuth();
+  const { user, theme, toggleTheme, logout, school, schools, switchSchool } = useAuth();
   const [systems, setSystems] = useState<System[]>([]);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const barRef = useRef<HTMLElement>(null);
@@ -81,6 +82,21 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu }) => {
           <img src="/icon.png" alt="Tendo logo" />
           <span className="wordmark">Tendo</span>
         </NavLink>
+
+        {/* The school this session belongs to (MIS /tenant/branding). */}
+        {school?.name && (
+          <span
+            className="topnav-school"
+            title={school.name}
+            data-testid="navbar-school"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, marginLeft: 8 }}
+          >
+            {school.logoUrl && (
+              <img src={school.logoUrl} alt="" width={22} height={22} style={{ borderRadius: 4, objectFit: "contain", flexShrink: 0 }} />
+            )}
+            <span className="text-sm text-secondary truncate" style={{ maxWidth: 180 }}>{school.name}</span>
+          </span>
+        )}
       </div>
 
       <div className="navbar-actions">
@@ -137,6 +153,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileMenu }) => {
                 <SettingsIcon size={16} />
                 <span>Settings</span>
               </NavLink>
+              {schools.length >= 2 && (
+                <button className="menu-item" onClick={switchSchool}>
+                  <School size={16} />
+                  <span>Switch school</span>
+                </button>
+              )}
               <button className="menu-item menu-item--danger" onClick={logout}>
                 <LogOut size={16} />
                 <span>Sign out</span>

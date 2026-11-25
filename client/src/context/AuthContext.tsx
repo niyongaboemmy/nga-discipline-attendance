@@ -1,6 +1,11 @@
-import { clearCache } from '../offline/outbox';
+import { clearCache, currentOwner } from '../offline/outbox';
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { beginSsoState } from '../utils/ssoState';
+import { startMisSignIn } from '../utils/ssoStart';
+import { SCHOOL_NAME } from '../utils/rfidCards';
+import {
+  RESIGN_CODES, misHomeOf, rememberBranding, storageChange, switchSchoolUrl, type SchoolBranding,
+} from '../tenancy/school.ts';
+import { SCHOOL_SWITCH_EVENT, checkSchool, restartSignIn } from '../tenancy/switch';
 import { endActivity } from '../activity';
 import { withPolledAvatar, type MisAvatar } from '../utils/avatar';
 
@@ -29,6 +34,18 @@ export interface User {
 export const homeRouteForRole = (role: Role): string =>
   role === 'unassigned' ? '/pending' : '/dashboard';
 
+/** One of the signed-in person's schools (MIS /auth/my-schools through /api/sso/my-schools). */
+export interface MySchool {
+  tid: number;
+  slug: string;
+  name: string;
+  logoUrl: string | null;
+  current: boolean;
+}
+
+/** Shown wherever the school name is needed before (or without) MIS branding. */
+export const FALLBACK_SCHOOL_NAME = SCHOOL_NAME;
+
 interface AuthContextType {
   isAuthenticated: boolean;
   user: User | null;
@@ -45,6 +62,12 @@ interface AuthContextType {
   logout: () => void;
   toggleTheme: () => void;
   theme: 'light' | 'dark';
+  /** This session's school name and logo (MIS /tenant/branding), null until known. */
+  school: SchoolBranding | null;
+  /** The person's schools; "Switch school" shows only for 2 or more. */
+  schools: MySchool[];
+  /** Go to the MIS switch page; it comes back through Tendo's SSO entry. */
+  switchSchool: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -56,6 +79,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [rolePermissions, setRolePermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [switching, setSwitching] = useState(false);
+  const [school, setSchool] = useState<SchoolBranding | null>(null);
+  const [schools, setSchools] = useState<MySchool[]>([]);
 
   // Restore session on mount
   useEffect(() => {
@@ -118,8 +144,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const res = await fetch('/api/sso/verify-mis', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (res.status === 401) {
-          logout();
+        if (res.status === 401 || res.status === 409) {
+          const b = await res.json().catch(() => null);
+          // Another school (MIS switched, or this session's school is wrong):
+          // sign in again into MIS's school, never a sign-out (§4.5).
+          if (b?.code && RESIGN_CODES.has(b.code)) {
+            restartSignIn(b.code);
+            return;
+          }
+          if (res.status === 401) logout();
           return;
         }
         // The poll carries the current NGA profile picture, so one changed in MIS
@@ -167,6 +200,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const checkSoon = () => {
       if (Date.now() - lastCheck < 5000) return; // focus + visibility fire together
       lastCheck = Date.now();
+      // School guard: the nga_school cookie names another school -> re-sign in.
+      if (checkSchool()) return;
       void verifyMisSession();
       void syncRolePermissions();
     };
@@ -185,20 +220,77 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const login = () => {
-    const clientId = import.meta.env.VITE_SSO_CLIENT_ID;
-    const loginUrl = import.meta.env.VITE_MIS_LOGIN_URL;
-    const redirectUri = `${window.location.origin}/sso/callback`;
+  // The school guard also runs on its own when the tab is shown or focused
+  // (the poll above throttles to once per 5 s), and the overlay follows any
+  // re-sign-in started elsewhere in the app (e.g. a TENANT_MISMATCH answer).
+  useEffect(() => {
+    const onSwitch = () => setSwitching(true);
+    window.addEventListener(SCHOOL_SWITCH_EVENT, onSwitch);
+    return () => window.removeEventListener(SCHOOL_SWITCH_EVENT, onSwitch);
+  }, []);
 
-    // Construct MIS redirect URL
-    // `state` is the OAuth CSRF token: the MIS echoes it back to /sso/callback,
-    // which checks it against the copy kept in this tab's sessionStorage.
-    const state = beginSsoState();
-    const target = `${loginUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}`;
-    
-    // Redirect user to the MIS SSO page
-    window.location.href = target;
+  // Other tabs: a session for another school or person written by another tab
+  // reloads this one (never two schools in one browser); a cleared slot shows
+  // the overlay until the other tab finishes (a new token arrives) or 15 s.
+  useEffect(() => {
+    let waitTimer: number | undefined;
+    const onStorage = (e: StorageEvent) => {
+      if (e.storageArea && e.storageArea !== localStorage) return;
+      const own = {
+        token,
+        tid: token ? (user?.tid && user.tid > 0 ? user.tid : 1) : null,
+        uid: user?.id == null ? null : String(user.id),
+      };
+      const what = storageChange(e.key, e.newValue, own);
+      if (what === 'reload') {
+        window.location.assign('/');
+      } else if (what === 'wait') {
+        setSwitching(true);
+        window.clearTimeout(waitTimer);
+        waitTimer = window.setTimeout(() => window.location.assign('/'), 15_000);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.clearTimeout(waitTimer);
+    };
+  }, [token, user?.tid, user?.id]);
+
+  // The school's name and logo, and the person's schools (for "Switch school").
+  // Both through this app's server, which holds the MIS token; failures leave
+  // the fallback name and no switch item (never a sign-out).
+  useEffect(() => {
+    // Signed out: the header is not shown, so stale values never render.
+    if (!token) return;
+    let live = true;
+    const get = (path: string) =>
+      fetch(path, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+    void get('/api/sso/branding').then((b) => {
+      const d = b?.data;
+      if (!live || !d || typeof d.tid !== 'number') return;
+      const next: SchoolBranding = { tid: d.tid, name: d.name ?? null, logoUrl: d.logoUrl ?? null, slug: user?.tenantSlug ?? null };
+      setSchool(next);
+      rememberBranding(localStorage, next);
+    });
+    void get('/api/sso/my-schools').then((b) => {
+      const list = b?.data?.schools;
+      if (live && Array.isArray(list)) setSchools(list);
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const switchSchool = () => {
+    const misHome = misHomeOf(import.meta.env.VITE_MIS_HOME_URL, import.meta.env.VITE_MIS_LOGIN_URL);
+    window.location.assign(switchSchoolUrl(misHome, window.location.origin));
   };
+
+  const login = () => startMisSignIn();
 
   const setSession = (
     newToken: string, newUser: User, newPermissions: string[], newRolePermissions?: string[]
@@ -227,8 +319,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     // Close this tab's analytics session while the token can still sign it.
     void endActivity();
-    // Shared computers: the cached rosters go (waiting registers stay for their owner).
-    clearCache(localStorage);
+    // Shared computers: this person's cached rosters for this school go, and
+    // any old copy (waiting registers stay for their owner; other schools'
+    // recent copies are kept, see clearCache).
+    clearCache(localStorage, currentOwner(localStorage));
 
     setToken(null);
     setUser(null);
@@ -276,9 +370,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         toggleTheme,
         theme,
+        school,
+        schools,
+        switchSchool,
       }}
     >
       {children}
+      {switching && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          data-testid="school-switch-overlay"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--bg-page-solid, #0b1220)', color: 'var(--text-primary, #fff)', fontSize: 16, fontWeight: 600,
+          }}
+        >
+          Switching to your other school…
+        </div>
+      )}
     </AuthContext.Provider>
   );
 };

@@ -183,6 +183,17 @@ export async function migrateTenantDb(db: Database, { tid, isPrimary }: { tid: n
       revoked_at INTEGER NOT NULL
     );
 
+    /* School switch (TENANT_SWITCHING_PLAN.md Appendix A.3): a logout token
+       with a sid ends only the sessions built from that MIS browser session
+       (misToken.sid = sid). sid '' stands for sessions whose misToken has no
+       sid: they can't be told apart, so a sid logout ends them too. */
+    CREATE TABLE IF NOT EXISTS session_sid_revocations (
+      user_id TEXT NOT NULL,
+      sid TEXT NOT NULL,
+      revoked_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, sid)
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,

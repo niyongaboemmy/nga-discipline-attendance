@@ -3,22 +3,36 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth, homeRouteForRole } from '../context/AuthContext';
 import { ArrowRight, Sun, Moon, Info, ExternalLink } from 'lucide-react';
 import './Login.css';
+import { startMisSignIn } from '../utils/ssoStart';
+import { clearSessionSlot } from '../tenancy/school.ts';
 
 export const Login: React.FC = () => {
   const { theme, toggleTheme, login, isAuthenticated, user, loading } = useAuth();
   const navigate = useNavigate();
+  const params = new URLSearchParams(window.location.search);
+  // `/?sso=1` is Tendo's SSO entry (the MIS switch page returns here): start
+  // MIS SSO straight away, into whatever school the MIS session is in now.
+  const ssoEntry = params.get('sso') === '1';
+  // The automatic re-sign-in gave up (3 tries in 2 minutes): sign in by hand.
+  const manual = params.get('signin') === 'manual';
+
+  useEffect(() => {
+    if (!ssoEntry) return;
+    clearSessionSlot(localStorage);
+    startMisSignIn();
+  }, [ssoEntry]);
 
   // A valid session landing on "/" (stale bookmark, browser back, a stray
   // internal link) used to render this public card regardless — silently
   // "logged in but on the login screen" was the actual bug behind reports
   // that the app "isn't auto-logging in".
   useEffect(() => {
-    if (!loading && isAuthenticated && user) {
+    if (!ssoEntry && !loading && isAuthenticated && user) {
       navigate(homeRouteForRole(user.role), { replace: true });
     }
-  }, [loading, isAuthenticated, user, navigate]);
+  }, [ssoEntry, loading, isAuthenticated, user, navigate]);
 
-  if (loading || (isAuthenticated && user)) return null;
+  if (ssoEntry || loading || (isAuthenticated && user)) return null;
 
   return (
     <div className="login-page">
@@ -50,7 +64,11 @@ export const Login: React.FC = () => {
 
           <div className="login-info">
             <Info size={16} />
-            <span>Sign in with your <strong>Discipline MIS</strong> account to continue.</span>
+            {manual ? (
+              <span>We couldn't switch your school automatically. Please sign in again.</span>
+            ) : (
+              <span>Sign in with your <strong>Discipline MIS</strong> account to continue.</span>
+            )}
           </div>
 
           <button className="btn btn-primary btn-lg btn-block" onClick={login} data-track="tendo.login.start">

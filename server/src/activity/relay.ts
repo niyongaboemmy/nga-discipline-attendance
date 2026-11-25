@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { ensureTenantDb } from '../database.js';
 import { PRIMARY_TENANT_ID, effectiveTid, tenantHeader, tidOfClaims } from '../tenancy/index.js';
-import { issuedBeforeRevocation } from '../utils/ssoLogout.js';
+import { sessionRevoked } from '../auth/revocation.js';
 import { createActivityRelay, type ActivityRelay, type RelayOptions } from '../vendor/nga-activity-relay/relay.js';
 
 /**
@@ -48,8 +48,7 @@ export async function misUserIdOf(req: Request): Promise<number | null> {
     if (tid == null) return null;
     const db = await ensureTenantDb(tid, { create: false });
     try {
-      const revoked = await db.get('SELECT revoked_at FROM session_revocations WHERE user_id = ?', String(decoded.id));
-      if (issuedBeforeRevocation(decoded.iat, revoked?.revoked_at)) return null;
+      if (await sessionRevoked(db, decoded)) return null;
     } catch {
       /* same as authMiddleware: a lookup failure does not end the session */
     }

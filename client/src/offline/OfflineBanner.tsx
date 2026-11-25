@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CloudOff, RefreshCw, AlertTriangle } from 'lucide-react';
-import { list, remove } from './outbox';
+import { list, remove, waitingElsewhere } from './outbox';
+import { schoolLabel } from '../tenancy/school.ts';
 import { OUTBOX_EVENT, sendWaiting, skippedInactiveNotice } from './registers';
 
 /**
@@ -11,6 +12,8 @@ import { OUTBOX_EVENT, sendWaiting, skippedInactiveNotice } from './registers';
 export default function OfflineBanner() {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   const [items, setItems] = useState(() => list(localStorage));
+  // Registers this person queued in another school; they go once they switch back.
+  const [elsewhere, setElsewhere] = useState(() => waitingElsewhere(localStorage));
   const [sending, setSending] = useState(false);
   // Sent registers that left out students disabled on the MIS meanwhile.
   const [notice, setNotice] = useState<string | null>(null);
@@ -21,7 +24,10 @@ export default function OfflineBanner() {
   };
 
   useEffect(() => {
-    const refresh = () => setItems(list(localStorage));
+    const refresh = () => {
+      setItems(list(localStorage));
+      setElsewhere(waitingElsewhere(localStorage));
+    };
     const tryNow = async () => {
       setSending(true);
       try {
@@ -53,7 +59,7 @@ export default function OfflineBanner() {
 
   const waiting = items.filter((w) => !w.error);
   const refused = items.filter((w) => w.error);
-  if (online && !waiting.length && !refused.length && !notice) return null;
+  if (online && !waiting.length && !refused.length && !notice && !elsewhere.length) return null;
 
   return (
     <div role="status" aria-live="polite" data-testid="offline-banner" className="offline-banner">
@@ -73,6 +79,12 @@ export default function OfflineBanner() {
           )}
         </p>
       )}
+      {elsewhere.map((e) => (
+        <p key={`school-${e.tid}`} className="offline-banner__row" data-testid="outbox-other-school">
+          <RefreshCw size={16} aria-hidden />
+          {e.count} register{e.count === 1 ? '' : 's'} waiting for {schoolLabel(localStorage, e.tid, e.slug)}. Switch back to that school to send {e.count === 1 ? 'it' : 'them'}.
+        </p>
+      ))}
       {notice && (
         <p className="offline-banner__row">
           <AlertTriangle size={16} aria-hidden /> {notice}

@@ -11,9 +11,13 @@ class Mem {
   setItem(k: string, v: string) { this.m.set(k, v); }
   removeItem(k: string) { this.m.delete(k); }
 }
+/** A Tendo session token as the server signs it (only its claims are read here). */
+const fakeToken = (claims: object) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
 const signedIn = (id: string) => {
   const kv = new Mem();
   kv.setItem('sso_user', JSON.stringify({ id, name: 'T' }));
+  // Registers only ever go out under a token of their own school and person.
+  kv.setItem('sso_token', fakeToken({ id, tid: 1 }));
   return kv;
 };
 const reg = (over: Partial<RegisterPayload> = {}): RegisterPayload => ({

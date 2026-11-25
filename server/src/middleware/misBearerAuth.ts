@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { config } from '../config.js';
 import { ensureTenantDb, getDb } from '../database.js';
 import {
-  TENANT_HEADER, gateTenant, legacyDefaultTid, parseTid, runWithTenant, tenantOfMisPayload, tidOfMisToken,
+  TENANT_HEADER, gateTenant, legacyTidFallback, parseTid, runWithTenant, tenantOfMisPayload, tidOfMisToken,
 } from '../tenancy/index.js';
 import { AuthenticatedRequest, Role, resolvePermissions } from './auth.js';
 import { fetchWithTimeout, noteAccessVersion } from '../access/snapshot.js';
@@ -108,7 +108,7 @@ async function verifyWithMis(token: string): Promise<VerifyResult> {
   // My AI: a new ai_routes_v (or ai_policy_v) drops this person's cached route map.
   noteAiRoutesVersion(misUserId, data?.ai_routes_v, data?.ai_policy_v);
 
-  const tid = tenantOfMisPayload(data)?.tid ?? tidOfMisToken(token) ?? legacyDefaultTid();
+  const tid = tenantOfMisPayload(data)?.tid ?? tidOfMisToken(token) ?? legacyTidFallback('legacy_tid', 'MIS bearer token');
   const entry: Verified = { misUserId, tid, at: Date.now() };
   remember(key, entry);
   return { ok: true, entry };
