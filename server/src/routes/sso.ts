@@ -1,6 +1,6 @@
 import express, { Router, Request, Response } from 'express';
 import { LogoutTokenError, verifyLogoutTokenSubject } from '../utils/ssoLogout.js';
-import jwt from 'jsonwebtoken';
+import { signSession } from '../auth/sessionToken.js';
 import { config } from '../config.js';
 import { ensureTenantDb, getDb, tenantDbExists } from '../database.js';
 import {
@@ -233,15 +233,14 @@ async function completeExchange(res: Response, result: any, tenant: TenantCtx) {
 
   const { academicYearId, academicTermId } = await resolveCurrentAcademicPeriod(misToken);
 
-  const localUser = {
-    id, name, email, role, preferred_theme: preferredTheme,
-    academicYearId, academicTermId,
-    // The school: in the session JWT (every later request enters this
-    // tenant's context from it) and in the client's user payload (offline
-    // storage keys, the install cookie).
-    tid: tenant.tid, tenantSlug: tenant.slug,
-  };
-  const token = jwt.sign({ ...localUser, tslug: tenant.slug, misToken }, config.jwtSecret, { expiresIn: '24h' });
+  // The school: in the session JWT (every later request enters this tenant's
+  // context from it) and in the client's user payload (offline storage keys,
+  // the install cookie) -- signSession is the only signer.
+  const { token, user: localUser } = signSession(
+    { id, name, email, role, preferred_theme: preferredTheme, academicYearId, academicTermId },
+    { tid: tenant.tid, slug: tenant.slug },
+    misToken,
+  );
 
   // The central NGA MIS profile picture (signed URLs, three sizes). Not put in the
   // session JWT: it can change mid-session, and /verify-mis below keeps it current.

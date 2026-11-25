@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
@@ -188,6 +188,25 @@ describe('request gates (contract §6)', () => {
     const misToken = jwt.sign({ userId: 700, tid: 1 }, 'mis-secret');
     const res = await request(app).get('/api/discipline').set(bearer(tokFor(2, { misToken })));
     expect([res.status, res.body.code]).toEqual([401, 'TENANT_MISMATCH']);
+  });
+});
+
+describe('academic period switch keeps the school (TENANT_SWITCHING_PLAN G1)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('re-signs the session with tid / tenantSlug / tslug, and the new token still works in school 2', async () => {
+    const misToken = jwt.sign({ userId: 701, tid: 2 }, 'mis-secret');
+    const admin = await adminIn(await getDbFor(2), 'switcher-2', 2, { misToken, tenantSlug: 's2', tslug: 's2' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ data: [{ academic_term_id: 9, academic_year_id: 4 }] }), { status: 200 })));
+    const res = await request(app).post('/api/academics/switch').set(bearer(admin)).send({ academic_year_id: 4, academic_term_id: 9 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.user).toMatchObject({ tid: 2, tenantSlug: 's2', academicYearId: 4, academicTermId: 9 });
+    const claims = jwt.decode(res.body.data.token) as any;
+    expect(claims).toMatchObject({ tid: 2, tenantSlug: 's2', tslug: 's2', misToken });
+    expect(claims.permissions).toBeUndefined();
+    // Before the fix the next request fell back to tenant 1 -> 401 TENANT_MISMATCH.
+    const next = await request(app).get('/api/discipline').set(bearer(res.body.data.token));
+    expect(next.status, JSON.stringify(next.body)).toBe(200);
   });
 });
 
