@@ -66,7 +66,7 @@ async function fetchRolePermissions(userId: string): Promise<string[]> {
  * role at the same level, a login must not silently reset it back to the
  * plain system role.
  */
-async function resolveAndPersistUser(
+export async function resolveAndPersistUser(
   id: string,
   name: string,
   email: string,
@@ -174,7 +174,7 @@ function detectRoleFromMis(misUser: any): Role {
 
 /** Resolve a role for a freshly authenticated MIS user: permissions first, then
  *  any explicit role field as a fallback. */
-function resolveMisRole(misUser: any, permissions: unknown): Role {
+export function resolveMisRole(misUser: any, permissions: unknown): Role {
   const fromPerms = roleFromPermissions(permissions);
   if (fromPerms !== 'unassigned') return fromPerms;
   return detectRoleFromMis(misUser);

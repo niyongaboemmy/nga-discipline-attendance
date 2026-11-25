@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { initDatabase } from './database.js';
 import { startRfidScheduler } from './modules/rfid/rfid.scheduler.js';
+import { startClockScheduler } from './modules/clock/clock.scheduler.js';
 import { app } from './app.js';
 import { activityRelay } from './activity/relay.js';
 import activityCatalog from './activity/catalog.json';
@@ -14,6 +15,7 @@ async function startServer() {
     // (sign-in, a scheduler pass over the registry, or provisioning).
     await initDatabase();
     startRfidScheduler();
+    startClockScheduler();
     app.listen(config.port, () => {
       console.log(`🚀 NGA Attendance Express server running on http://localhost:${config.port}`);
     });

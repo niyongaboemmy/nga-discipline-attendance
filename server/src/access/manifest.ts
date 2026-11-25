@@ -25,7 +25,7 @@ const SCHOOL_ONLY = { scopeable: false };
 export const DA_MANIFEST = defineManifest({
   app: 'da',
   name: 'Discipline & Attendance',
-  version: '2026.09.27',
+  version: '2026.11.25',
   capabilities: {
     ATTENDANCE_MARK: W('Mark registers', 'ATTENDANCE'),
     ATTENDANCE_VIEW_ALL: R('View attendance', 'ATTENDANCE', ['summary', 'detail']),
@@ -54,6 +54,8 @@ export const DA_MANIFEST = defineManifest({
     STAFF_ATTENDANCE_CLOCK: W('Clock in/out (staff)', 'ATTENDANCE'),
     STAFF_ATTENDANCE_VIEW_OWN: R('View own staff attendance', 'ATTENDANCE'),
     STAFF_ATTENDANCE_VIEW_ALL: R('View staff attendance', 'ATTENDANCE', ['summary', 'detail']),
+    STAFF_ATTENDANCE_ZONES_MANAGE: W('Set the staff clock zone and rules', 'ATTENDANCE', SCHOOL_ONLY),
+    STAFF_DEVICES_MANAGE: W('Approve and remove staff clock devices', 'ATTENDANCE', SCHOOL_ONLY),
 
     REPORTS_VIEW: R('View attendance & discipline reports', 'REPORTING', ['summary', 'detail']),
 

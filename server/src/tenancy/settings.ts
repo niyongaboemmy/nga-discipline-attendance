@@ -30,6 +30,24 @@ export const SCHOOL_SETTING_DEFAULTS = {
   RFID_GRACE_MINUTES: '3',
   RFID_BREAK_MIN_GAP_MINUTES: '10',
   RFID_DEBOUNCE_SECONDS: '10',
+  /* Staff attendance clock (modules/clock, STAFF_ATTENDANCE_CLOCK_PLAN.md §6.4). */
+  STAFF_CLOCK_ENABLED: '0',
+  STAFF_CLOCK_REQUIRE_ZONE: '1',
+  STAFF_CLOCK_MAX_ACCURACY_M: '100',
+  STAFF_CLOCK_ACCURACY_ALLOWANCE_M: '50',
+  STAFF_CLOCK_OPENS: '05:00',
+  STAFF_EARLY_LEAVE_BEFORE: '16:00',
+  STAFF_MIN_SHIFT_MINUTES: '60',
+  STAFF_AUTO_CLOSE_AT: '23:59',
+  STAFF_DEVICE_SELF_REPLACE_DAYS: '30',
+  STAFF_CLOCK_GOOGLE_DOMAINS: '',
+  STAFF_CLOCK_SCHOOL_NETWORKS: '',
+  /** allow_flag | refuse -- a tap on a day outside SCHOOL_DAYS or an RFID day off. */
+  STAFF_CLOCK_NON_SCHOOL_DAYS: 'allow_flag',
+  /** Staff the MIS knows as non-students but who hold no Tendo role may still clock. */
+  STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF: '1',
+  /** Coordinates of clock taps are blanked after this many days (privacy, plan §10). */
+  STAFF_CLOCK_RETENTION_DAYS: '730',
 } as const;
 
 export type SchoolSettingKey = keyof typeof SCHOOL_SETTING_DEFAULTS;
@@ -110,6 +128,7 @@ export const staffLateCutoffMinutes = () => numberSetting('STAFF_LATE_CUTOFF_MIN
 export const rfidGraceMinutes = () => numberSetting('RFID_GRACE_MINUTES');
 export const rfidBreakMinGapMs = () => numberSetting('RFID_BREAK_MIN_GAP_MINUTES') * 60_000;
 export const rfidDebounceSeconds = () => numberSetting('RFID_DEBOUNCE_SECONDS');
+export { numberSetting };
 
 /** Test hook. */
 export function __resetSchoolSettingsCache(): void {

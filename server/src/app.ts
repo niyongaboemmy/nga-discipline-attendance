@@ -26,6 +26,8 @@ import { activityRouter } from './routes/activity.js';
 import { activityRelay } from './activity/relay.js';
 import rfidRoutes from './modules/rfid/rfid.routes.js';
 import tenantRoutes from './routes/tenants.js';
+import clockRoutes from './modules/clock/clock.routes.js';
+import clockAdminRoutes from './modules/clock/clockAdmin.routes.js';
 
 /** The Express app, with no side effects (no DB init, no `listen`) — so
  *  tests can import it directly against an in-memory DB via supertest.
@@ -63,6 +65,9 @@ app.use('/api/attendance', subjectAttendanceRoutes);
 app.use('/api/attendance', scheduleRoutes);
 app.use('/api/discipline', disciplineRoutes);
 app.use('/api/discipline', disciplineRulesRoutes);
+// Staff attendance clock: the public page (/c/<school>) and its school-admin side.
+app.use('/api/clock/:slug', clockRoutes);
+app.use('/api/staff/clock', clockAdminRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/reporting', reportingRoutes);

@@ -236,36 +236,42 @@ router.get('/students', async (req: any, res) => {
   }
 });
 
+/** Every active staff member (not a student) the MIS knows, read with the user's MIS token.
+ *  Shared with the staff clock dashboard (modules/clock). */
+export async function loadStaffRoster(misToken: string): Promise<Array<{ id: string; name: string; email: string; [k: string]: any }>> {
+  // /users spans every staff role at once but needs MANAGE_USERS; the
+  // teacher-assignment list is permission-free and names every teacher
+  // actually assigned to teach something.
+  const viaUsers = await misGetListOrNull(misToken, '/users', { limit: '1000', status: 'ACTIVE' });
+  if (viaUsers) {
+    const staffOnly = viaUsers.filter(
+      (entry: any) =>
+        !(entry.roles || []).some((r: any) => String(r.name).toUpperCase() === 'STUDENT')
+    );
+    return dedupeById(await onlyActive(staffOnly, normalizeMisUser));
+  }
+
+  // Assignment rows carry no account status (their `status` is the
+  // assignment's), so only Tendo's synced copy can filter these.
+  const assignments = await misGetList(misToken, '/academics/teacher-assignments');
+  const staff = dedupeById(
+    await onlyActive(
+      assignments.map((a: any) => ({ ...a, status: undefined })),
+      (a: any) => ({
+        id: String(a.user_id),
+        name: a.teacher_name || a.teacher_username || 'Unknown',
+        email: a.teacher_username || '',
+      })
+    )
+  );
+  return staff;
+}
+
 router.get('/staff', async (req: any, res) => {
   const misToken = requireMisToken(req, res);
   if (!misToken) return;
   try {
-    // /users spans every staff role at once but needs MANAGE_USERS; the
-    // teacher-assignment list is permission-free and names every teacher
-    // actually assigned to teach something.
-    const viaUsers = await misGetListOrNull(misToken, '/users', { limit: '1000', status: 'ACTIVE' });
-    if (viaUsers) {
-      const staffOnly = viaUsers.filter(
-        (entry: any) =>
-          !(entry.roles || []).some((r: any) => String(r.name).toUpperCase() === 'STUDENT')
-      );
-      return res.json({ success: true, data: dedupeById(await onlyActive(staffOnly, normalizeMisUser)) });
-    }
-
-    // Assignment rows carry no account status (their `status` is the
-    // assignment's), so only Tendo's synced copy can filter these.
-    const assignments = await misGetList(misToken, '/academics/teacher-assignments');
-    const staff = dedupeById(
-      await onlyActive(
-        assignments.map((a: any) => ({ ...a, status: undefined })),
-        (a: any) => ({
-          id: String(a.user_id),
-          name: a.teacher_name || a.teacher_username || 'Unknown',
-          email: a.teacher_username || '',
-        })
-      )
-    );
-    return res.json({ success: true, data: staff });
+    return res.json({ success: true, data: await loadStaffRoster(misToken) });
   } catch (error) {
     sendMisError(res, '/users', error);
   }
