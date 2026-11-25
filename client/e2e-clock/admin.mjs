@@ -151,6 +151,19 @@ async function run(browser, vp) {
   await expectText(page, 'Same spot and time as another check-in', `${tag} review`);
   await shot('02-review');
 
+  // No request storm: an idle zone page must not keep refetching (it once looped forever).
+  {
+    let calls = 0;
+    const count = (r) => { if (/\/api\/staff\/clock\/(config|overview)/.test(r.url())) calls += 1; };
+    await page.goto(`${BASE}/staff/clock/zone`);
+    await expectText(page, 'Check-in rules', `${tag} zone loaded`);
+    await page.waitForTimeout(500);
+    page.on('request', count);
+    await page.waitForTimeout(4000);
+    page.off('request', count);
+    if (calls > 2) fail(`${tag}: idle zone page made ${calls} config/overview requests in 4 s`);
+  }
+
   // The setup step links straight to the rules on the zone page.
   await page.goto(`${BASE}/staff/clock`);
   await page.getByRole('button', { name: 'Review times' }).click();
