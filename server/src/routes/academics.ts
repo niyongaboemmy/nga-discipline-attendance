@@ -1,10 +1,11 @@
 import { Router, Response } from 'express';
-import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizePermission } from '../middleware/authorize.js';
 import { resolveCurrentAcademicPeriod } from '../utils/misAcademics.js';
 import { getDb } from '../database.js';
+import { signSession } from '../auth/sessionToken.js';
+import { currentTenant } from '../tenancy/index.js';
 import { syncAll } from '../modules/academics/academicsSync.service.js';
 
 /**
@@ -115,9 +116,10 @@ router.post('/switch', authorizePermission('ACADEMIC_PERIOD_SWITCH'), async (req
     // resolves fresh from the DB every request and must never be baked into
     // the token itself (permissions is a Set, which doesn't even survive
     // JSON serialization).
-    const { id, name, email, role, preferred_theme } = req.user as any;
-    const updatedUser = { id, name, email, role, preferred_theme, academicYearId, academicTermId };
-    const token = jwt.sign({ ...updatedUser, misToken }, config.jwtSecret, { expiresIn: '24h' });
+    // signSession keeps the school (tid / tenantSlug / tslug): the session stays
+    // in the tenant authMiddleware entered for this request.
+    const tenant = currentTenant();
+    const { token, user: updatedUser } = signSession({ ...(req.user as any), academicYearId, academicTermId }, { tid: tenant.tid, slug: tenant.slug }, misToken);
 
     return res.json({ success: true, data: { token, user: updatedUser } });
   } catch (error) {
