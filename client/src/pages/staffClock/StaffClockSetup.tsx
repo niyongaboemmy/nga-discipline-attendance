@@ -26,6 +26,9 @@ interface Step {
   progress?: { value: number; total: number };
 }
 
+/** Checklist step -> setup guide step. */
+const GUIDE_STEP: Record<string, string> = { google: 'google', zone: 'zone', rules: 'times', tested: 'test', open: 'open', shared: 'share', phones: 'phones' };
+
 export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ place }) => {
   const toast = useToast();
   const navigate = useNavigate();
@@ -194,7 +197,12 @@ export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ pla
                     </div>
                   )}
                   {s.blocked && !s.done && <p className="sc-step-blocked"><AlertTriangle size={14} />{s.blocked}</p>}
-                  {isCurrent && !s.blocked && s.action && <div className="sc-step-actions">{s.action}</div>}
+                  {isCurrent && !s.blocked && (
+                    <div className="sc-step-actions">
+                      <Link className="sc-btn sc-btn-primary sc-btn-sm" to={`/staff/clock/setup?step=${GUIDE_STEP[s.key] ?? 'google'}`}>Do this step <ArrowRight size={15} /></Link>
+                      {s.action}
+                    </div>
+                  )}
                 </div>
               </li>
             );

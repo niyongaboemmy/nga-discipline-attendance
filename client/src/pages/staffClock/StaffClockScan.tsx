@@ -34,43 +34,56 @@ export const StaffClockScan: React.FC = () => {
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [manual, setManual] = useState('');
 
-  const locate = useCallback(async () => {
+  // One location lookup at a time: a second caller waits for the one already running.
+  const inflight = useRef<Promise<{ best: Fix; samples: Fix[]; at: number } | null> | null>(null);
+  const fixRef = useRef<{ best: Fix; samples: Fix[]; at: number } | null>(null);
+  const locate = useCallback((): Promise<{ best: Fix; samples: Fix[]; at: number } | null> => {
+    if (inflight.current) return inflight.current;
     setLocating(true);
-    try {
-      const r = await sampleLocation({ maxMs: 8000 });
-      const f = { ...r, at: Date.now() };
-      setFix(f);
-      return f;
-    } catch {
-      toast.error('Location not found', 'Allow location for this site: the scanner must be at school.');
-      return null;
-    } finally {
-      setLocating(false);
-    }
+    const p = (async () => {
+      try {
+        const r = await sampleLocation({ maxMs: 8000 });
+        const f = { ...r, at: Date.now() };
+        fixRef.current = f;
+        setFix(f);
+        return f;
+      } catch {
+        toast.error('Location not found', 'Allow location for this site: the scanner must be at school.');
+        return null;
+      } finally {
+        setLocating(false);
+        inflight.current = null;
+      }
+    })();
+    inflight.current = p;
+    return p;
   }, [toast]);
 
-  const submit = useCallback(async (code: string) => {
-    if (busyRef.current) return;
+  const submit = useCallback(async (code: string): Promise<boolean> => {
+    if (busyRef.current) return false;
     busyRef.current = true;
     setBusy(true);
     try {
-      let f = fix && Date.now() - fix.at < 120_000 ? fix : null;
+      const known = fixRef.current;
+      let f = known && Date.now() - known.at < 120_000 ? known : null;
       if (!f) f = await locate();
-      if (!f) return;
+      if (!f) return false;
       const res = await staffClockApi.scan({ code, position: { lat: f.best.lat, lng: f.best.lng, accuracy: f.best.accuracy, ts: f.best.ts }, samples: f.samples });
       const r = res.data as ScanResult;
       setOutcome({ ok: true, r });
       navigator.vibrate?.(40);
       toast.success(r.action === 'check_in' ? `${r.person.name} checked in · ${r.at}` : `${r.person.name} checked out · ${r.at}`);
+      return true;
     } catch (e) {
       const message = e instanceof ApiError ? e.message : 'Could not record this card. Try again.';
       setOutcome({ ok: false, message });
       toast.error('Not recorded', message);
+      return false;
     } finally {
       busyRef.current = false;
       setBusy(false);
     }
-  }, [fix, locate, toast]);
+  }, [locate, toast]);
 
   const stop = () => {
     if (raf.current) cancelAnimationFrame(raf.current);
@@ -188,7 +201,7 @@ export const StaffClockScan: React.FC = () => {
                 <button className="sc-btn sc-btn-sm" onClick={() => void locate()} disabled={locating} style={{ alignSelf: 'flex-start' }}>Find my location</button>
               </section>
 
-              <form className="sc-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} onSubmit={(e) => { e.preventDefault(); if (manual.trim()) void submit(manual.trim()).then(() => setManual('')); }}>
+              <form className="sc-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }} onSubmit={(e) => { e.preventDefault(); if (manual.trim()) void submit(manual.trim()).then((ok) => { if (ok) setManual(''); }); }}>
                 <label className="sc-field">Card code (if the camera cannot read it)
                   <input className="sc-input" value={manual} onChange={(e) => setManual(e.target.value.toUpperCase())} placeholder="TC1-…" autoComplete="off" spellCheck={false} />
                 </label>

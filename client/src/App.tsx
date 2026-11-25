@@ -41,6 +41,7 @@ import { StaffClockZone } from './pages/staffClock/StaffClockZone';
 import { StaffClockDevices } from './pages/staffClock/StaffClockDevices';
 import { StaffClockScan } from './pages/staffClock/StaffClockScan';
 import { StaffClockPoster } from './pages/staffClock/StaffClockPoster';
+import { StaffClockGuide } from './pages/staffClock/StaffClockGuide';
 
 export const App: React.FC = () => {
   return (
@@ -278,6 +279,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher']}>
                 <StaffClockScan />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock/setup"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockGuide />
               </ProtectedRoute>
             }
           />

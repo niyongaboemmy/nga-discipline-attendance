@@ -179,6 +179,8 @@ async function run(browser, vp) {
   await page.getByPlaceholder('Search a place or paste coordinates').fill('-1.95111, 30.06222');
   await page.getByRole('button', { name: 'Find' }).click();
   await expectText(page, '-1.95111, 30.06222', `${tag} pin moved by coordinates`);
+  await page.locator('#zone-map').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(300);
   const box = await page.locator('.sc-map-el').boundingBox();
   await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.6);
   await page.waitForTimeout(300);
@@ -214,6 +216,40 @@ async function run(browser, vp) {
   await page.getByRole('link', { name: 'Open staff check-in settings' }).click();
   await page.waitForURL(/\/staff\/clock\/zone$/);
   await expectText(page, 'Zone & settings', `${tag} settings -> zone`);
+
+  // The setup guide, step by step.
+  await page.goto(`${BASE}/staff/clock/setup?step=google`);
+  await expectText(page, 'Google sign-in is set up for Tendo', `${tag} guide google`);
+  if (vp.name === 'phone') {
+    if (!(await page.locator('.sc-guide-strip').isVisible())) fail(`${tag}: phone strip missing`);
+  } else if (!(await page.locator('.sc-guide-rail').isVisible())) fail(`${tag}: rail missing`);
+  await page.screenshot({ path: path.join(OUT, `${tag}-g1-google.png`) });
+  const nextBtn = () => page.locator('.sc-guide-nav').getByRole('button', { name: /Next/ });
+  await nextBtn().click();
+  await expectText(page, 'Check-in only works inside this area', `${tag} guide zone`);
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: path.join(OUT, `${tag}-g2-zone.png`) });
+  await nextBtn().click();
+  await expectText(page, 'Check-out opens after', `${tag} guide times`);
+  await page.screenshot({ path: path.join(OUT, `${tag}-g3-times.png`) });
+  await page.getByRole('button', { name: 'Save times and continue' }).click();
+  await expectText(page, 'Go where staff arrive', `${tag} guide test`);
+  await page.getByRole('button', { name: 'Test from where I stand' }).click();
+  await expectText(page, 'You are inside Main campus', `${tag} guide test result`);
+  await page.screenshot({ path: path.join(OUT, `${tag}-g4-test.png`) });
+  await nextBtn().click();
+  await expectText(page, 'Staff check-in is on', `${tag} guide open`);
+  await page.screenshot({ path: path.join(OUT, `${tag}-g5-open.png`) });
+  await nextBtn().click();
+  await expectText(page, 'Copy message', `${tag} guide share`);
+  await page.locator('.sc-guide-qr img').waitFor();
+  await page.screenshot({ path: path.join(OUT, `${tag}-g6-share.png`) });
+  await nextBtn().click();
+  await expectText(page, 'staff have registered a phone', `${tag} guide phones`);
+  await expectText(page, 'Olivier Mugisha', `${tag} guide unregistered list`);
+  await page.screenshot({ path: path.join(OUT, `${tag}-g7-phones.png`) });
+  await page.getByRole('button', { name: /Finish/ }).click();
+  await page.waitForURL(/\/staff\/clock$/);
 
   await page.goto(`${BASE}/staff/clock/devices`);
   await expectText(page, 'Staff QR cards', `${tag} devices`);
