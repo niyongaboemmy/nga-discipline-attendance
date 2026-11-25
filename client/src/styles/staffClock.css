@@ -378,3 +378,19 @@ html:has(.sc-savebar) { scroll-padding-top: calc(var(--navbar-height, 64px) + 16
 .sc-map-loading { position: absolute; left: 50%; top: 72px; transform: translateX(-50%); z-index: 600; display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--border); font-size: 13px; font-weight: 600; color: var(--text-secondary); pointer-events: none; }
 /* room under the last settings card so the fixed save bar never covers it */
 .sc-page:not(.sc-page-embedded) .sc-zone-panel { padding-bottom: 96px; }
+
+/* an approximate (no-GPS) test result */
+.sc-vague { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 16px; background: var(--primary-light); color: var(--text-primary); font-size: 14px; line-height: 20px; border: 1px solid var(--border); }
+.sc-vague svg { flex: none; margin-top: 2px; color: var(--primary-text); }
+.sc-phone-qr { display: flex; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--border); border-radius: 20px; max-width: 560px; flex-wrap: wrap; }
+.sc-phone-qr img { width: 150px; height: 150px; background: #fff; border-radius: 12px; padding: 6px; image-rendering: pixelated; }
+.sc-phone-qr > span { display: flex; flex-direction: column; gap: 4px; flex: 1 1 220px; min-width: 0; }
+.sc-phone-qr b { color: var(--text-primary); }
+.sc-phone-qr small { color: var(--text-secondary); font-size: 13px; line-height: 19px; }
+.sc-phone-qr { position: relative; }
+.sc-phone-wait { display: inline-flex; align-items: center; gap: 6px; color: var(--accent-blue, #2563eb) !important; font-weight: 600; }
+.sc-icon-close { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 9999px; border: 0; background: transparent; color: var(--text-secondary); display: grid; place-items: center; cursor: pointer; }
+.sc-icon-close:hover { background: var(--bg-hover, rgba(37,99,235,.08)); }
+.sc-guide-or { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.sc-guide-or > span { color: var(--text-secondary); font-size: 13px; }
+.sc-phone-wait .sc-spin { width: 14px; height: 14px; flex: none; }

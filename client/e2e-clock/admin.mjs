@@ -98,6 +98,7 @@ async function context(browser, { width, height, theme, mobile = false }) {
     ]) });
   });
   await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  const pairReadings = [];
   await ctx.route('**/api/**', (route) => {
     const u = new URL(route.request().url());
     const p = u.pathname;
@@ -111,6 +112,17 @@ async function context(browser, { width, height, theme, mobile = false }) {
     if (p === '/api/staff/clock/cards' || (p.endsWith('/cards') && route.request().method() === 'POST')) return ok({ school: 'New Generation Academy', cards: [] });
     if (p === '/api/staff/clock/scan') return ok({ action: 'check_in', at: '07:10', status: 'present', distance: 30, person: { name: 'Solange Iradukunda', firstName: 'Solange', initials: 'SI' }, checkIn: '07:10', checkOut: null });
     if (p.startsWith('/api/staff/clock/devices/')) return ok({});
+    // Phone-GPS pairing: the computer makes a code, the phone posts a reading to it.
+    if (p === '/api/staff/clock/pair' && route.request().method() === 'POST') return ok({ code: 'TESTPAIRCODE1234', url: `${BASE}/c/nga/pair/TESTPAIRCODE1234`, expiresIn: 600 });
+    if (p === '/api/staff/clock/pair/TESTPAIRCODE1234') return ok({ readings: pairReadings, expiresIn: 590 });
+    if (p === '/api/clock/nga/pair/TESTPAIRCODE1234') {
+      if (route.request().method() === 'POST') {
+        const pos = route.request().postDataJSON().position;
+        pairReadings.push({ lat: pos.lat, lng: pos.lng, accuracy: pos.accuracy, at: Date.now() });
+        return ok({ received: true });
+      }
+      return ok({ school: { name: 'New Generation Academy' } });
+    }
     return ok([]);
   });
   const page = await ctx.newPage();
@@ -250,6 +262,31 @@ async function run(browser, vp) {
   await page.getByRole('button', { name: 'Test from where I stand' }).click();
   await expectText(page, 'You are inside Main campus', `${tag} guide test result`);
   await page.screenshot({ path: path.join(OUT, `${tag}-g4-test.png`) });
+  if (vp.name === 'desktop') {
+    // A laptop (no GPS): ±194 m from Wi-Fi -> explained, confirmable, or finish on a phone.
+    await ctx.setGeolocation({ latitude: -1.95326, longitude: 30.10441, accuracy: 194 });
+    await page.getByRole('button', { name: 'Test from where I stand' }).click();
+    await expectText(page, 'This computer has no GPS', `${tag} laptop explanation`);
+    await expectText(page, 'Probably inside', `${tag} laptop best guess`);
+    await page.getByRole('button', { name: 'Use my phone’s GPS' }).click();
+    await page.locator('.sc-phone-qr img').waitFor();
+    await expectText(page, 'Waiting for your phone', `${tag} pair waiting`);
+    await page.screenshot({ path: path.join(OUT, `${tag}-g4b-laptop-test.png`) });
+    // The "phone" opens the QR link and shares a precise GPS reading.
+    await ctx.setGeolocation({ latitude: -1.95326, longitude: 30.10441, accuracy: 8 });
+    const phone = await ctx.newPage();
+    await phone.setViewportSize({ width: 390, height: 844 });
+    await phone.goto(`${BASE}/c/nga/pair/TESTPAIRCODE1234`);
+    await expectText(phone, 'New Generation Academy', `${tag} pair phone school`);
+    await phone.getByRole('button', { name: /Share my location/ }).click();
+    await expectText(phone, 'Location sent', `${tag} pair phone sent`);
+    await phone.screenshot({ path: path.join(OUT, `${tag}-g4c-pair-phone.png`) });
+    await phone.close();
+    await expectText(page, 'From your phone', `${tag} pair result`);
+    await expectText(page, 'You are inside Main campus (precision ± 8 m)', `${tag} pair precise`);
+    await page.screenshot({ path: path.join(OUT, `${tag}-g4d-pair-result.png`) });
+    await ctx.setGeolocation({ latitude: -1.95326, longitude: 30.10441, accuracy: 15 });
+  }
   await nextBtn().click();
   await expectText(page, 'Staff check-in is on', `${tag} guide open`);
   await page.screenshot({ path: path.join(OUT, `${tag}-g5-open.png`) });

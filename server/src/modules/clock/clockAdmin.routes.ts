@@ -11,6 +11,7 @@ import { currentTenant } from '../../tenancy/index.js';
 import { loadStaffRoster } from '../../routes/mis.js';
 import { ClockError, clockNow, clockRules, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
 import { validCidrList } from './geofence.js';
+import { createPairing, readPairing } from './pairing.js';
 
 /**
  * School admin side of the staff clock (Tendo -> Staff attendance): zone and rules,
@@ -481,6 +482,22 @@ router.post('/scan', authorizePermission('STAFF_CLOCK_SCAN'), async (req: any, r
     if (err instanceof ClockError) return res.status(err.status).json({ success: false, code: err.code, message: err.message, ...err.extra });
     return fail(res, err);
   }
+});
+
+// ---------------------------------------------------------------------------
+// "Use my phone's GPS" while setting up on a computer (setup tests only)
+// ---------------------------------------------------------------------------
+
+router.post('/pair', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), (req: any, res) => {
+  const tenant = currentTenant('pair');
+  const p = createPairing(tenant.tid, actorOf(req).id);
+  return res.json({ success: true, data: { ...p, url: `${config.appPublicUrl}/c/${tenant.slug}/pair/${p.code}` } });
+});
+
+router.get('/pair/:code', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), (req: any, res) => {
+  const r = readPairing(currentTenant('pair').tid, req.params.code, actorOf(req).id);
+  if (!r) return res.status(404).json({ success: false, code: 'PAIR_EXPIRED', message: 'This phone link expired. Make a new one.' });
+  return res.json({ success: true, data: r });
 });
 
 /** CSV of a date range (Excel opens it). */

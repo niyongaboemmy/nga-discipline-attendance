@@ -116,6 +116,8 @@ export const staffClockApi = {
   issueCards: (people: Array<{ id: string; name: string }>) => data(apiPost<{ school: string; cards: IssuedCard[] }>('/api/staff/clock/cards', { people })),
   revokeCard: (id: number) => apiPost(`/api/staff/clock/cards/${id}/revoke`),
   scan: (body: { code: string; position: unknown; samples?: unknown }) => apiPost<ScanResult>('/api/staff/clock/scan', body),
+  pair: () => data(apiPost<{ code: string; url: string; expiresIn: number }>('/api/staff/clock/pair')),
+  readPair: (code: string) => data(apiGet<{ readings: Array<{ lat: number; lng: number; accuracy: number; ts?: number; at: number }>; expiresIn: number }>(`/api/staff/clock/pair/${encodeURIComponent(code)}`)),
 };
 
 export function initialsOf(name: string): string {

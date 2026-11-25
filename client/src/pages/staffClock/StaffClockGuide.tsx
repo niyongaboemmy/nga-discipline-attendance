@@ -9,9 +9,12 @@ import { useToast } from '../../context/ToastContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { ApiError } from '../../api/client';
 import { staffClockApi, initialsOf, type ClockConfig, type ClockRules, type Overview } from '../../api/staffClock';
-import { distanceM, sampleLocation, GeoError } from '../../clock/geo';
+import { sampleLocation, GeoError } from '../../clock/geo';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { StaffClockZone } from './StaffClockZone';
+import { evaluateTest, isComputer, type TestOutcome } from './locationTest';
+import { PhoneGps } from './PhoneGps';
+import type { Fix } from '../../clock/geo';
 import { announceClockChange } from './clockEvents';
 
 /**
@@ -54,7 +57,7 @@ export const StaffClockGuide: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [times, setTimes] = useState<Pick<ClockRules, TimeKey> | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [test, setTest] = useState<TestOutcome | null>(null);
   const [qr, setQr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -141,26 +144,28 @@ export const StaffClockGuide: React.FC = () => {
     setBusy('test');
     setTest(null);
     try {
-      const { best } = await sampleLocation({ maxMs: 8000 });
-      const zones = cfg.zones.filter((z) => z.active && z.center_lat != null);
-      let bestZone: { name: string; gap: number } | null = null;
-      for (const z of zones) {
-        const d = distanceM(best, { lat: z.center_lat!, lng: z.center_lng! });
-        const gap = d - ((z.radius_m ?? 0) + Math.min(best.accuracy, cfg.rules.allowance ?? 50));
-        if (!bestZone || gap < bestZone.gap) bestZone = { name: z.name, gap };
-      }
-      if (best.accuracy > cfg.rules.maxAccuracy) setTest({ ok: false, text: `This device’s location is not precise enough (± ${Math.round(best.accuracy)} m). Step outside or turn on GPS and test again.` });
-      else if (!bestZone) setTest({ ok: false, text: 'Draw a zone first.' });
-      else if (bestZone.gap <= 0) {
-        setTest({ ok: true, text: `You are inside ${bestZone.name} (precision ± ${Math.round(best.accuracy)} m). Staff standing here can check in.` });
-        await mark('tested');
-      } else setTest({ ok: false, text: `You are ${Math.round(bestZone.gap)} m outside ${bestZone.name}. Make the circle bigger or move it, then test again.` });
+      const { best } = await sampleLocation({ maxMs: 10000 });
+      const zones = cfg.zones.filter((z) => z.active && z.center_lat != null).map((z) => ({ name: z.name, lat: z.center_lat!, lng: z.center_lng!, radius: z.radius_m ?? 0 }));
+      const outcome = evaluateTest(best, zones, { maxAccuracy: cfg.rules.maxAccuracy, allowance: cfg.rules.allowance ?? 50, computer: isComputer() });
+      setTest(outcome);
+      if (outcome.ok) await mark('tested');
     } catch (e) {
-      setTest({ ok: false, text: e instanceof GeoError && e.kind === 'denied' ? 'Location is blocked for this site. Allow it in the browser and test again.' : 'Location not found. Try near a window or outside.' });
+      setTest({ kind: 'no-zone', ok: false, vague: false, title: 'Location not found', accuracy: 0, text: e instanceof GeoError && e.kind === 'denied' ? 'Location is blocked for this site. Allow it in the browser (the icon left of the address) and test again.' : 'Location not found. On a computer, make sure Wi-Fi is on; on a phone, try near a window or outside.' });
     } finally {
       setBusy(null);
     }
   };
+
+  /** A reading from the paired phone: a real GPS test, judged like a check-in. */
+  const judgeFix = async (fix: Fix, fromPhone: boolean) => {
+    if (!cfg) return;
+    const zones = cfg.zones.filter((z) => z.active && z.center_lat != null).map((z) => ({ name: z.name, lat: z.center_lat!, lng: z.center_lng!, radius: z.radius_m ?? 0 }));
+    const outcome = evaluateTest(fix, zones, { maxAccuracy: cfg.rules.maxAccuracy, allowance: cfg.rules.allowance ?? 50, computer: !fromPhone && isComputer() });
+    setTest(fromPhone ? { ...outcome, text: `From your phone: ${outcome.text}` } : outcome);
+    if (outcome.ok) await mark('tested');
+  };
+
+
 
   const setOpen = async (on: boolean) => {
     setBusy('open');
@@ -287,13 +292,33 @@ export const StaffClockGuide: React.FC = () => {
 
                 {step === 'test' && (
                   <div className="sc-guide-body">
-                    <p>Go where staff arrive (the gate, the staffroom) with this phone or laptop, then test. It uses the same rule as a check-in.</p>
+                    <p>Go where staff arrive (the gate, the staffroom) and test. It uses the same rule as a check-in. {isComputer() ? <>On a laptop the result is only approximate, because computers have no GPS: you can confirm the zone yourself or finish the test on your phone.</> : null}</p>
                     <button className="sc-btn sc-btn-primary sc-guide-big" onClick={() => void runTest()} disabled={busy === 'test' || !done.zone}>
                       {busy === 'test' ? <Spinner /> : <Crosshair size={20} />}Test from where I stand
                     </button>
                     {!done.zone && <div className="sc-bad"><AlertTriangle size={18} />Draw the zone first.</div>}
-                    {test && <div className={test.ok ? 'sc-ok' : 'sc-bad'} role="status">{test.ok ? <Check size={18} /> : <AlertTriangle size={18} />}<span style={{ overflowWrap: 'anywhere' }}>{test.text}</span></div>}
-                    {test && !test.ok && <button className="sc-btn sc-btn-sm" onClick={() => go('zone')} style={{ alignSelf: 'flex-start' }}>Adjust the zone</button>}
+                    {test && (
+                      <div className={test.ok ? 'sc-ok' : test.vague ? 'sc-vague' : 'sc-bad'} role="status">
+                        {test.ok ? <Check size={18} /> : <AlertTriangle size={18} />}
+                        <span style={{ overflowWrap: 'anywhere' }}><b>{test.title}.</b> {test.text}</span>
+                      </div>
+                    )}
+                    {test && !test.ok && (
+                      <div className="sc-step-actions">
+                        {test.vague && canEdit && !done.test && (
+                          <button className="sc-btn sc-btn-primary sc-btn-sm" onClick={async () => { await mark('tested'); toast.success('Zone confirmed', 'You can still test on a phone later.'); }}>
+                            <Check size={15} /> The circle covers the school
+                          </button>
+                        )}
+                        <button className="sc-btn sc-btn-sm" onClick={() => go('zone')}>Adjust the zone</button>
+                      </div>
+                    )}
+                    {isComputer() && done.zone && (
+                      <div className="sc-guide-or">
+                        <span>No GPS on this computer? Borrow your phone’s:</span>
+                        <PhoneGps onFix={(f) => void judgeFix(f, true)} />
+                      </div>
+                    )}
                   </div>
                 )}
 

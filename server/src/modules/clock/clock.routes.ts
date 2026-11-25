@@ -7,6 +7,7 @@ import { resolveAndPersistUser, resolveMisRole } from '../../routes/sso.js';
 import { resolvePermissions } from '../../middleware/auth.js';
 import { domainAllowed, GoogleTokenError, verifyGoogleCredential } from './google.js';
 import { IdentityUnavailable, resolveStaffIdentity } from './identity.js';
+import { addPairReading, pairingExists } from './pairing.js';
 import {
   challengeFor,
   ClockError,
@@ -219,6 +220,23 @@ router.post('/register', async (req: Request, res: Response) => {
   } catch (err) {
     return send(res, err);
   }
+});
+
+/** A phone lending its GPS to an admin's setup test on a computer (no sign-in; the code is the key). */
+router.get('/pair/:code', (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  if (!pairingExists(tenant.tid, String(req.params.code))) return res.status(404).json({ success: false, code: 'PAIR_EXPIRED', message: 'This link expired. Make a new one on the computer.' });
+  return res.json({ success: true, data: { school: { name: tenant.name, slug: tenant.slug } } });
+});
+
+router.post('/pair/:code', (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  if (limited(`pair:${tenant.tid}:${ipOf(req)}`, 30, 600_000)) return res.status(429).json({ success: false, code: 'RATE_LIMITED', message: 'Too many tries. Wait a little.' });
+  const r = addPairReading(tenant.tid, String(req.params.code), req.body?.position);
+  if (r === 'unknown') return res.status(404).json({ success: false, code: 'PAIR_EXPIRED', message: 'This link expired. Make a new one on the computer.' });
+  if (r === 'bad') return res.status(400).json({ success: false, code: 'NO_LOCATION', message: 'No location was sent.' });
+  if (r === 'full') return res.status(409).json({ success: false, code: 'PAIR_FULL', message: 'Enough readings were sent. Look at the computer.' });
+  return res.json({ success: true, data: { received: true } });
 });
 
 /** The person's state: drives the single button. Pending devices get an answer too. */
