@@ -188,7 +188,9 @@ async function fullFlow(browser, vp, theme) {
   await shot(page, `${tag}-08-done`);
 
   await page.getByRole('button', { name: 'Help' }).click();
-  await expectText(page, 'Lost or changed your', `${tag} help`);
+  await expectText(page, 'New, lost or shared phone', `${tag} help`);
+  await page.getByRole('button', { name: 'New, lost or shared phone' }).click();
+  await expectText(page, 'The office removes the old phone', `${tag} help device steps`);
   await page.waitForTimeout(300);
   await shot(page, `${tag}-09-help`);
   await ctx.close();
@@ -201,11 +203,20 @@ async function edgeStates(browser, vp, theme) {
     const { ctx, page } = await newPage(browser, vp, theme, { grant: false, server: mockServer({ noAccount: true }) });
     await page.goto(`${BASE}/c/nga`);
     await page.getByTestId('gis').click();
-    await expectText(page, 'No staff account uses grace.phone@gmail.com.', `${tag} no account`);
+    await page.getByTestId('no-account').waitFor();
+    await expectText(page, 'grace.phone@gmail.com', `${tag} no account email`);
+    await expectText(page, 'Not recognised', `${tag} no account chip`);
     if (!(await page.locator('.ck-logo-img img').first().evaluate((i) => i.complete && i.naturalWidth > 0))) fail(`${tag} school logo`);
-    const link = page.getByRole('link', { name: 'Add this Gmail in my Amashuri profile' });
+    const link = page.getByRole('link', { name: 'Open my Amashuri profile' });
     if ((await link.getAttribute('href')) !== 'https://mis.example/profile#staff-attendance') fail(`${tag} profile link href`);
     await shot(page, `${tag}-no-account`);
+    // Need help? opens the troubleshooter on the Gmail topic; another topic expands on tap.
+    await page.getByRole('button', { name: 'Need help?' }).click();
+    await expectText(page, 'What is happening?', `${tag} help pick`);
+    await expectText(page, 'Type your Gmail in “Staff attendance”', `${tag} help gmail steps`);
+    await page.getByRole('button', { name: 'Location is blocked' }).click();
+    await expectText(page, 'Allow location for this site', `${tag} help location steps`);
+    await shot(page, `${tag}-help`);
     await ctx.close();
   }
   // Registered device, far from school.

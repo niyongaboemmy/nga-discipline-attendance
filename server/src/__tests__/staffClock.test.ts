@@ -364,6 +364,22 @@ describe('the school admin side', () => {
     const grace = d.rows.find((r: any) => r.userId === '101');
     expect(grace).toMatchObject({ checkIn: '07:42', checkOut: '16:10', status: 'present' });
     expect(d.phones.registered).toBeGreaterThanOrEqual(3);
+    expect(d.health).toMatchObject({ zones: 1, unregistered: expect.any(Number) });
+    // 10:15 today: the check-out window (16:00) is not open, so nobody is "missing" a check-out yet.
+    expect(d.missing).toMatchObject({ checkoutOpen: false, noCheckoutToday: [] });
+  });
+
+  it('lists missing check-outs: today only after the check-out window opens, and the last 7 days', async () => {
+    await db.run(`INSERT INTO staff_attendance (staff_id, staff_name, date, clock_in, status, source) VALUES ('777', 'Open Day', '2026-12-05', '2026-12-05T05:30:00.000Z', 'present', 'device')`);
+    await db.run(`INSERT INTO staff_attendance (staff_id, staff_name, date, clock_in, status, source) VALUES ('777', 'Open Day', '2026-12-06', '2026-12-06T05:30:00.000Z', 'present', 'device')`);
+    now = kigali('10:00', '2026-12-06');
+    const morning = (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+    expect(morning.missing.checkoutOpen).toBe(false);
+    expect(morning.missing.noCheckoutToday).toEqual([]);
+    expect(morning.missing.recentNoCheckout).toEqual(expect.arrayContaining([expect.objectContaining({ userId: '777', date: '2026-12-05', checkIn: '07:30' })]));
+    now = kigali('17:30', '2026-12-06');
+    const evening = (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+    expect(evening.missing.noCheckoutToday).toEqual([expect.objectContaining({ userId: '777', name: 'Open Day', checkIn: '07:30' })]);
   });
 
   it('reviews a flagged check-in and exports CSV', async () => {

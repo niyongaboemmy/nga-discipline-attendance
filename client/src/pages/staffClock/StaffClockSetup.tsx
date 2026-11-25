@@ -38,8 +38,8 @@ export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ pla
   const [cfg, setCfg] = useState<ClockConfig | null>(null);
   const [phones, setPhones] = useState<{ registered: number; staff: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  // On the zone page the map comes first: the checklist starts folded there.
-  const [open, setOpen] = useState<boolean>(() => place !== 'zone' && localStorage.getItem('tendo.clockSetup.collapsed') !== '1');
+  // Folded by default (one line: progress + next step); it opens on tap and remembers.
+  const [open, setOpen] = useState<boolean>(() => place !== 'zone' && localStorage.getItem('tendo.clockSetup.collapsed') === '0');
 
   const load = useCallback(async () => {
     try {
@@ -169,6 +169,8 @@ export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ pla
   const doneCount = steps.filter((s) => s.done).length;
   const current = steps.find((s) => !s.done);
   const complete = !current || (current.key === 'phones' && cfg.rules.enabled);
+  // Set up: the dashboard's Attention strip takes over from here.
+  if (place === 'dashboard' && complete) return null;
 
   return (
     <section className="sc-card sc-setup" aria-label="Set up staff check-in">
