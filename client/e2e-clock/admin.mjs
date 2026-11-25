@@ -185,12 +185,35 @@ async function run(browser, vp) {
   const moved = await page.getByText('-1.95111, 30.06222').count();
   if (moved !== 0) fail(`${tag}: a map click did not move the pin`);
   await shot('04c-zone-after-click');
+  // The save bar is always reachable; on wide screens the map stays in view while the panel scrolls.
+  await expectText(page, 'Unsaved changes', `${tag} save bar dirty`);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(400);
+  const vh = page.viewportSize().height;
+  const bar = await page.locator('.sc-savebar').boundingBox();
+  if (!bar || bar.y + bar.height > vh + 1 || bar.y < 0) fail(`${tag}: save bar not on screen after scrolling (${JSON.stringify(bar)})`);
+  if (vp.name === 'desktop') {
+    const mapBox = await page.locator('#zone-map').boundingBox();
+    if (!mapBox || mapBox.y < 0 || mapBox.y > vh / 2) fail(`${tag}: map scrolled away (${JSON.stringify(mapBox)})`);
+  }
+  await page.screenshot({ path: path.join(OUT, `${tag}-04e-zone-scrolled.png`) });
 
   // The old clock card is gone; the staff link is shown instead.
   await page.goto(`${BASE}/staff/attendance`);
   await expectText(page, 'Check in and out with your phone', `${tag} staff link card`);
   if (await page.getByText('Shift duty clock').count()) fail(`${tag}: old Shift duty clock still shown`);
   await shot('04d-staff-attendance');
+
+  // Easy to find: Settings links to it; Staff Attendance has a settings button.
+  if (vp.name === 'desktop') {
+    if (!(await page.getByRole('link', { name: 'Staff Check-in' }).first().isVisible())) fail(`${tag}: sidebar lacks Staff Check-in`);
+    await page.getByRole('link', { name: 'Staff check-in settings' }).click();
+    await page.waitForURL(/\/staff\/clock\/zone$/);
+  }
+  await page.goto(`${BASE}/settings`);
+  await page.getByRole('link', { name: 'Open staff check-in settings' }).click();
+  await page.waitForURL(/\/staff\/clock\/zone$/);
+  await expectText(page, 'Zone & settings', `${tag} settings -> zone`);
 
   await page.goto(`${BASE}/staff/clock/devices`);
   await expectText(page, 'Staff QR cards', `${tag} devices`);
@@ -208,6 +231,8 @@ async function run(browser, vp) {
 
   await page.goto(`${BASE}/staff/clock/poster`);
   await expectText(page, 'Check in and out with your own phone', `${tag} poster`);
+  const ink = await page.locator('.sc-poster h1').evaluate((el) => getComputedStyle(el).color);
+  if (ink !== 'rgb(17, 24, 39)') fail(`${tag}: poster title colour ${ink}`);
   await page.waitForTimeout(500);
   await shot('07-poster');
   await ctx.close();

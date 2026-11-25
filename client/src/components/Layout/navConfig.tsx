@@ -32,6 +32,8 @@ export interface NavItem {
   /** Labeled section this item belongs to; consecutive items sharing a
       section render under one small heading. Unsectioned items stand alone. */
   section?: string;
+  /** Also require one of these permissions (in addition to the role). */
+  anyPermission?: string[];
 }
 
 /* Items are ordered so that, after filtering by role, every section's items
@@ -57,8 +59,8 @@ export const navItems: NavItem[] = [
   // Card attendance: the card tap stands in for the teacher marking the register.
   { label: 'Attendance Cards', path: '/attendance/cards', icon: CreditCard, roles: ['admin'], section: 'Attendance' },
   { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
-  { label: 'Staff Clock', path: '/staff/clock', icon: MapPin, roles: ['admin'], section: 'Attendance' },
-  { label: 'Scan Staff Card', path: '/staff/clock/scan', icon: ScanLine, roles: ['admin'], section: 'Attendance' },
+  { label: 'Staff Check-in', path: '/staff/clock', icon: MapPin, roles: ['admin', 'teacher'], section: 'Attendance', anyPermission: ['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL', 'STAFF_DEVICES_MANAGE'] },
+  { label: 'Scan Staff Card', path: '/staff/clock/scan', icon: ScanLine, roles: ['admin', 'teacher'], section: 'Attendance', anyPermission: ['STAFF_CLOCK_SCAN'] },
 
   // Attendance (student) — deliberately just the calendar (tick/cross, no
   // record/history browsing) and the report above; no separate "My

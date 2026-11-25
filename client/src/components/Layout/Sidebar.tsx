@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { navItems, type NavItem } from './navConfig';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const COLLAPSE_STORAGE_KEY = 'discipline_sidebar_collapsed';
 
@@ -10,8 +11,11 @@ type NavGroup = { standalone: NavItem } | { section: string; items: NavItem[] };
 
 /** Group the role's visible nav items by section; unsectioned items stand alone.
     Mirrors the grouping the top navbar used to do, but rendered as a sidebar. */
-function buildGroups(role: NavItem['roles'][number]): NavGroup[] {
-  const visible = navItems.filter((i) => i.roles.includes(role));
+function visibleItems(role: NavItem['roles'][number], can: (k: string[]) => boolean): NavItem[] {
+  return navItems.filter((i) => i.roles.includes(role) && (!i.anyPermission || can(i.anyPermission)));
+}
+
+function buildGroups(visible: NavItem[]): NavGroup[] {
   const groups: NavGroup[] = [];
   for (const item of visible) {
     if (!item.section) {
@@ -62,10 +66,12 @@ const SidebarNav: React.FC<{ collapsed: boolean; role: NavItem['roles'][number];
   collapsed, role, onNavigate,
 }) => {
   const { pathname } = useLocation();
-  const active = activePathFor(pathname, navItems.filter((i) => i.roles.includes(role)));
+  const { can } = usePermissions();
+  const items = visibleItems(role, (k) => can(k));
+  const active = activePathFor(pathname, items);
   return (
     <nav className="sidebar-nav" aria-label="Primary">
-      {buildGroups(role).map((g, i) =>
+      {buildGroups(items).map((g, i) =>
         'standalone' in g ? (
           <SidebarLink key={g.standalone.path} item={g.standalone} collapsed={collapsed} active={g.standalone.path === active} onNavigate={onNavigate} />
         ) : (

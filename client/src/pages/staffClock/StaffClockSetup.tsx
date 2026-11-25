@@ -34,7 +34,8 @@ export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ pla
   const [cfg, setCfg] = useState<ClockConfig | null>(null);
   const [phones, setPhones] = useState<{ registered: number; staff: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [open, setOpen] = useState<boolean>(() => localStorage.getItem('tendo.clockSetup.collapsed') !== '1');
+  // On the zone page the map comes first: the checklist starts folded there.
+  const [open, setOpen] = useState<boolean>(() => place !== 'zone' && localStorage.getItem('tendo.clockSetup.collapsed') !== '1');
 
   const load = useCallback(async () => {
     try {
