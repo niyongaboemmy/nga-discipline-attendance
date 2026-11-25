@@ -75,15 +75,40 @@ function storedUser(kv: KV): { email?: string; tenantSlug?: string } {
   }
 }
 
-/** The `id` inside a session JWT (unverified), or null. */
-function uidOfToken(token: string): string | null {
+/** The claims of a session JWT (unverified: the server verifies), or null. */
+function claimsOfToken(token: string | null | undefined): Record<string, unknown> | null {
+  if (!token) return null;
   try {
     const part = token.split('.')[1] || '';
     const json = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=')));
-    return json?.id == null ? null : String(json.id);
+    return json && typeof json === 'object' ? json : null;
   } catch {
     return null;
   }
+}
+
+/** The `id` inside a session JWT (unverified), or null. */
+function uidOfToken(token: string): string | null {
+  const id = claimsOfToken(token)?.id;
+  return id == null ? null : String(id);
+}
+
+/**
+ * `<tid>.<uid>` of the person a session token speaks for (WEB-ISO-5), or
+ * null. A cached reply is filed under the token that was SENT with its
+ * request, never under whoever is stored when the answer arrives.
+ */
+export function ownerOfToken(token: string | null | undefined): string | null {
+  if (!token) return null;
+  const uid = uidOfToken(token);
+  const tid = tidOfToken(token);
+  return uid && tid ? `${tid}.${uid}` : null;
+}
+
+/** True while the session token has not expired (`exp`, unverified). No `exp` = not usable. */
+export function tokenUnexpired(token: string | null | undefined, now = Date.now()): boolean {
+  const exp = Number(claimsOfToken(token)?.exp);
+  return Number.isFinite(exp) && exp * 1000 > now;
 }
 
 /** The signed-in person (sso_user), so one teacher never sends another's queue. */
@@ -293,11 +318,37 @@ export function readCache<T>(kv: KV, path: string, uid: string | null = currentO
   }
 }
 
+/**
+ * Offline read (WEB-ISO-2): the cached copy only while the stored session is
+ * alive (unexpired token) and the token's (tid, uid) is both the signed-in
+ * person and the copy's owner. A dead, expired or mismatched session gets
+ * nothing, so a shared device never shows the previous person's rosters.
+ */
+export function readCacheForSession<T>(
+  kv: KV & { length?: number; key?(i: number): string | null },
+  path: string,
+  token: string | null = kv.getItem('sso_token'),
+  now = Date.now(),
+): { at: number; body: T } | null {
+  if (!tokenUnexpired(token, now)) return null;
+  const owner = ownerOfToken(token);
+  if (!owner || owner !== currentOwner(kv)) return null;
+  return readCache<T>(kv, path, owner);
+}
+
+/** Store a reply under the owner of the token that was sent with its request (WEB-ISO-5). */
+export function writeCacheForToken(kv: KV, path: string, body: unknown, sentToken: string | null | undefined) {
+  const owner = ownerOfToken(sentToken);
+  if (owner) writeCache(kv, path, body, owner);
+}
+
 /** Cached reads older than this go at any sign-out, whoever they belong to. */
 export const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Sign-out: drop cached rosters. The outbox always stays for its owner.
+ * Sign-out: drop cached rosters. The outbox always stays for its owner, so
+ * registers taken offline can still be sent when that person signs in again
+ * (until pruneOtherIdentities expires them after CACHE_MAX_AGE_MS, see below).
  *
  * With `owner` (what sign-out passes): the signed-out person's cached reads
  * in the school they were signed in to, every pre-tenancy (v1) copy, and any
@@ -332,15 +383,57 @@ export function clearCache(kv: KV & { length?: number; key?(i: number): string |
 }
 
 /**
+ * Sign-in (TD-ISO-3): what OTHER identities (any `<tid>.<uid>` but `owner`)
+ * left on this device longer than CACHE_MAX_AGE_MS ago goes: their cached
+ * rosters, and registers they queued and never sent. The signed-in person's
+ * own queue and copies are untouched; another identity's recent ones stay so
+ * a teacher sharing the device can still send them.
+ */
+export function pruneOtherIdentities(
+  kv: KV & { length?: number; key?(i: number): string | null },
+  owner: string | null,
+  now = Date.now(),
+) {
+  if (!owner || typeof kv.length !== 'number' || !kv.key) return;
+  const keys: string[] = [];
+  for (let i = 0; i < kv.length; i++) {
+    const k = kv.key(i);
+    if (k && (k.startsWith('tendo.outbox.v2.') || k.startsWith('tendo.cache.v2.'))) keys.push(k);
+  }
+  const old = (at: unknown) => {
+    const n = Number(at);
+    return !Number.isFinite(n) || now - n > CACHE_MAX_AGE_MS;
+  };
+  for (const k of keys) {
+    if (k.startsWith('tendo.outbox.v2.')) {
+      const o = k.slice('tendo.outbox.v2.'.length);
+      if (o === owner) continue;
+      const items = list(kv, o);
+      const keep = items.filter((w) => !old(w.savedAt));
+      if (keep.length !== items.length) save(kv, o, keep);
+      continue;
+    }
+    if (k.startsWith(`tendo.cache.v2.${owner}.`)) continue;
+    try {
+      if (old(JSON.parse(kv.getItem(k) || 'null')?.at)) kv.removeItem(k);
+    } catch {
+      kv.removeItem(k);
+    }
+  }
+}
+
+/**
  * Registers this person queued in OTHER schools on this device, by school.
- * "This person" = the same e-mail (one account per school, same e-mail); an
- * item without an e-mail stamp is only matched by an identical user id.
+ * "This person" = the same e-mail stamped on the item (one account per
+ * school, same e-mail). An item without an e-mail stamp is never counted
+ * (TD-ISO-3): a bare user id is a different person in another school.
  */
 export function waitingElsewhere(kv: KV & { length?: number; key?(i: number): string | null }): Array<{ tid: number; slug: string | null; count: number }> {
   const owner = currentOwner(kv);
   if (!owner || typeof kv.length !== 'number' || !kv.key) return [];
-  const { tid: here, uid: me } = splitOwner(owner);
+  const { tid: here } = splitOwner(owner);
   const email = String(storedUser(kv).email || '').toLowerCase();
+  if (!email) return [];
   const byTid = new Map<number, { tid: number; slug: string | null; count: number }>();
   const keys: string[] = [];
   for (let i = 0; i < kv.length; i++) {
@@ -352,8 +445,7 @@ export function waitingElsewhere(kv: KV & { length?: number; key?(i: number): st
     if (o.tid === here) continue;
     for (const w of list(kv, `${o.tid}.${o.uid}`)) {
       if (w.error) continue;
-      const same = w.email ? !!email && w.email === email : o.uid === me;
-      if (!same) continue;
+      if (!w.email || w.email !== email) continue;
       const tid = w.tid ?? o.tid;
       const e = byTid.get(tid) ?? { tid, slug: w.slug ?? null, count: 0 };
       e.count++;

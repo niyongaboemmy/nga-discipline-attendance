@@ -30,6 +30,7 @@ describe('central profile picture', () => {
           token: 'mis-tok',
           user: { user_id: 9101, username: 'aline', email: 'aline@school.test', avatar_url: AVATAR.md },
           permissions: [],
+          tenant: { tid: 1, slug: 'nga', status: 'ACTIVE' },
           ...(mis.avatar === undefined ? {} : { avatar: mis.avatar }),
         });
       }

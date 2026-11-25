@@ -46,6 +46,12 @@ interface Verified {
   tid: number | null;
   at: number;
   period?: { academicYearId?: number; academicTermId?: number };
+  /**
+   * The cache-version hints of a FRESH MIS answer, applied once inside the
+   * tenant's context (TD-ISO-1): a hint noted outside it would land on
+   * school 1's caches, count as a fallback and throw in enforce mode.
+   */
+  hints?: { accessVersion?: unknown; aiPolicyV?: unknown; aiRoutesV?: unknown };
 }
 const verified = new Map<string, Verified>();
 
@@ -57,7 +63,9 @@ export interface IntegrationRequest extends AuthenticatedRequest {
   misUserId?: number;
 }
 
-type VerifyResult = { ok: true; entry: Verified } | { ok: false; status: 401 | 503 };
+type VerifyResult =
+  | { ok: true; entry: Verified }
+  | { ok: false; status: 401 | 503; code?: 'TENANT_MISMATCH' };
 
 /** Bounded: expired entries go first, then the oldest (Map insertion order). */
 function remember(key: string, entry: Verified) {
@@ -101,15 +109,22 @@ async function verifyWithMis(token: string): Promise<VerifyResult> {
   const misUserId = Number(data?.userId ?? data?.user_id);
   if (!Number.isInteger(misUserId) || misUserId <= 0) return { ok: false, status: 401 };
 
-  // Same hint the verify-mis poll gives: a changed access_version drops the
-  // cached access snapshot so this request decides with fresh grants.
-  noteAccessVersion(misUserId, data?.access_version);
-  noteAiPolicyVersion(data?.ai_policy_v);
-  // My AI: a new ai_routes_v (or ai_policy_v) drops this person's cached route map.
-  noteAiRoutesVersion(misUserId, data?.ai_routes_v, data?.ai_policy_v);
-
-  const tid = tenantOfMisPayload(data)?.tid ?? tidOfMisToken(token) ?? legacyTidFallback('legacy_tid', 'MIS bearer token');
-  const entry: Verified = { misUserId, tid, at: Date.now() };
+  // TD-ISO-5: MIS's answer and the token itself must name the same school
+  // (the SSO exchange applies the same rule). Never cached.
+  const bodyTid = tenantOfMisPayload(data)?.tid ?? null;
+  const tokenTid = tidOfMisToken(token);
+  if (bodyTid != null && tokenTid != null && bodyTid !== tokenTid) {
+    return { ok: false, status: 401, code: 'TENANT_MISMATCH' };
+  }
+  const tid = bodyTid ?? tokenTid ?? legacyTidFallback('legacy_tid', 'MIS bearer token');
+  const entry: Verified = {
+    misUserId,
+    tid,
+    at: Date.now(),
+    // Same hints the verify-mis poll gives (access_version, ai_policy_v,
+    // ai_routes_v); noted by applyHints once the tenant is entered.
+    hints: { accessVersion: data?.access_version, aiPolicyV: data?.ai_policy_v, aiRoutesV: data?.ai_routes_v },
+  };
   remember(key, entry);
   return { ok: true, entry };
 }
@@ -128,6 +143,9 @@ export async function misBearerAuth(req: Request, res: Response, next: NextFunct
   try {
     const result = await verifyWithMis(token);
     if (!result.ok) {
+      if (result.code === 'TENANT_MISMATCH') {
+        return res.status(401).json({ success: false, code: 'TENANT_MISMATCH', message: 'The MIS answered for a different school than the session names.' });
+      }
       return result.status === 401
         ? res.status(401).json({ success: false, code: 'MIS_TOKEN_INVALID', message: 'The MIS session is not valid.' })
         : res.status(503).json({ success: false, code: 'MIS_UNAVAILABLE', message: 'Could not verify the session with the MIS.' });
@@ -148,10 +166,30 @@ export async function misBearerAuth(req: Request, res: Response, next: NextFunct
       return res.status(gate.status).json({ success: false, code: gate.code, message: gate.message });
     }
     await ensureTenantDb(gate.tenant.tid);
-    return await runWithTenant(gate.tenant, () => attachUser(req, next, token, entry));
+    return await runWithTenant(gate.tenant, () => {
+      applyHints(entry);
+      return attachUser(req, next, token, entry);
+    });
   } catch (err) {
     return next(err);
   }
+}
+
+/**
+ * Note a fresh verification's version hints, inside the tenant's context, so
+ * they evict only that school's cached access snapshot / AI policy / AI
+ * routes (TD-ISO-1). Once per verification: a cache hit carries no news.
+ */
+function applyHints(entry: Verified) {
+  const h = entry.hints;
+  if (!h) return;
+  entry.hints = undefined;
+  // A changed access_version drops the cached access snapshot so this
+  // request decides with fresh grants.
+  noteAccessVersion(entry.misUserId, h.accessVersion);
+  noteAiPolicyVersion(h.aiPolicyV);
+  // My AI: a new ai_routes_v (or ai_policy_v) drops this person's cached route map.
+  noteAiRoutesVersion(entry.misUserId, h.aiRoutesV, h.aiPolicyV);
 }
 
 /** The local user behind a verified MIS token, inside its tenant's context. */
