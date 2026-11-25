@@ -24,7 +24,8 @@ import {
   attendanceWarnThreshold,
   attendanceRate,
 } from '../../shared/attendancePolicy.js';
-import { excludeInactiveSql, inactiveIdSet } from '../../services/activeStudents.js';
+import { inactiveIdSet } from '../../services/activeStudents.js';
+import { attendanceTermSql, reportableStudentSql } from '../../shared/attendanceScope.js';
 import { homeroomStartTime, schoolDays } from '../../tenancy/settings.js';
 
 /**
@@ -308,6 +309,11 @@ const isDetail = (d: Depth | null) => d === 'detail' || d === 'sensitive';
 function classFilter(s: ClassScope, column: string): { sql: string; params: any[] } {
   if (s.all) return { sql: '', params: [] };
   return { sql: ` AND ${column} IN (SELECT value FROM json_each(?))`, params: [JSON.stringify([...s.classIds])] };
+}
+
+/** Term filter for attendance_records (untermed rows by date, not in every term). */
+function recordTermFilter(ctx: Ctx, alias = ''): { sql: string; params: any[] } {
+  return attendanceTermSql(ctx.academicTermId, alias);
 }
 
 function termFilter(ctx: Ctx, column = 'academic_term_id'): { sql: string; params: any[] } {
@@ -625,13 +631,13 @@ async function approvedNotReconciled(ctx: Ctx): Promise<AttentionItem[]> {
 async function belowThreshold(ctx: Ctx): Promise<AttentionItem[]> {
   const scope = await classScope(ctx, 'ATTENDANCE_VIEW_ALL', 'summary');
   if (!hasClasses(scope)) return [];
-  const term = termFilter(ctx);
+  const term = recordTermFilter(ctx);
   const cls = classFilter(scope, 'class_id');
   const rows = await ctx.db.all(
     `SELECT class_id, MAX(class_name) AS class_name, student_id, MAX(student_name) AS student_name,
             SUM(${ATTENDED_SQL_CASE}) AS attended, COUNT(*) AS total
        FROM attendance_records
-      WHERE session_type = 'homeroom'${term.sql}${cls.sql}${excludeInactiveSql('student_id')}
+      WHERE session_type = 'homeroom'${term.sql}${cls.sql}${reportableStudentSql()}
       GROUP BY class_id, student_id`,
     ...term.params, ...cls.params
   );
@@ -680,7 +686,7 @@ async function absentWithoutNotice(ctx: Ctx): Promise<AttentionItem[]> {
   const rows = await ctx.db.all(
     `SELECT ar.class_id, MAX(ar.class_name) AS class_name, ar.student_id, MAX(ar.student_name) AS student_name
        FROM attendance_records ar
-      WHERE ar.session_date = ? AND ar.status = 'absent'${cls.sql}${excludeInactiveSql('ar.student_id')}
+      WHERE ar.session_date = ? AND ar.status = 'absent'${cls.sql}${reportableStudentSql('ar')}
         AND NOT EXISTS (
           SELECT 1 FROM excuse_requests e
            WHERE e.student_id = ar.student_id AND e.session_date = ar.session_date
@@ -722,7 +728,7 @@ async function presentTodayTile(ctx: Ctx): Promise<GlanceTile | null> {
     `SELECT COUNT(DISTINCT student_id) AS total,
             COUNT(DISTINCT CASE WHEN status IN ('present', 'late') THEN student_id END) AS present
        FROM attendance_records
-      WHERE session_type = 'homeroom' AND session_date = ? AND class_id IN (SELECT value FROM json_each(?))`,
+      WHERE session_type = 'homeroom' AND session_date = ? AND class_id IN (SELECT value FROM json_each(?))${reportableStudentSql()}`,
     ctx.date, JSON.stringify(classes.map((c) => c.id))
   );
   const lenses = [...new Set(classes.map((c) => lensForClass(ctx.lenses, c.id)))];
@@ -757,7 +763,7 @@ async function presentTodayTile(ctx: Ctx): Promise<GlanceTile | null> {
 /** S-06: own absences with no excuse yet (the /excuses/me/absences rule). */
 async function ownUnexcusedAbsences(ctx: Ctx): Promise<AttentionItem[]> {
   if (!(await holds(ctx, ['EXCUSES_SUBMIT']))) return [];
-  const term = termFilter(ctx, 'ar.academic_term_id');
+  const term = recordTermFilter(ctx, 'ar');
   const rows = await ctx.db.all(
     `SELECT ar.session_date, ar.period, ar.session_type, ar.class_id, ar.class_name,
             ar.subject_id, COALESCE(s.name, '') AS subject_name
@@ -804,7 +810,7 @@ async function ownUnexcusedAbsences(ctx: Ctx): Promise<AttentionItem[]> {
 /** Own term attendance (homeroom rate, the /attendance/me headline). */
 async function ownAttendance(ctx: Ctx): Promise<{ total: number; rate: number } | null> {
   if (!(await holds(ctx, ['ATTENDANCE_VIEW_OWN', 'ATTENDANCE_DASHBOARD_VIEW_OWN']))) return null;
-  const term = termFilter(ctx);
+  const term = recordTermFilter(ctx);
   const row = await ctx.db.get(
     `SELECT COUNT(*) AS total, SUM(${ATTENDED_SQL_CASE}) AS attended
        FROM attendance_records

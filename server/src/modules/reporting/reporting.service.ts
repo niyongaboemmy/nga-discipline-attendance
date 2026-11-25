@@ -1,6 +1,7 @@
 import { Database } from 'sqlite';
 import { listTermBalances } from '../discipline/ledger.service.js';
-import { ATTENDED_SQL_CASE, attendanceRate } from '../../shared/attendancePolicy.js';
+import { ATTENDED_SQL_CASE, attendanceMinSessions, attendanceRate } from '../../shared/attendancePolicy.js';
+import { reportableAttendanceSql } from '../../shared/attendanceScope.js';
 
 /** Unified reporting (C): termly/annual/combined/comparison views reading
  *  from attendance_records + discipline_records + the term-balance view,
@@ -15,11 +16,15 @@ function periodFilter(column: string, academicTermId?: number): { clause: string
 export interface AttendanceSummary {
   overallRate: number;
   totalRecords: number;
+  /** Homeroom records that count as attended, behind overallRate. */
+  attendedRecords: number;
   bySessionType: Array<{ sessionType: string; total: number; presentRate: number }>;
 }
 
 export async function getAttendanceSummary(db: Database, academicTermId?: number): Promise<AttendanceSummary> {
-  const { clause, params } = periodFilter('academic_term_id', academicTermId);
+  // Only rows that count: this term's (untermed rows by date, not in every
+  // term) and students still active and still in the class.
+  const { sql: clause, params } = reportableAttendanceSql(academicTermId);
   const [overall, bySessionType] = await Promise.all([
     // Remediation A7: the headline rate is the homeroom (overall daily
     // attendance) signal only. Mixing subject sessions in counted a day with a
@@ -40,6 +45,7 @@ export async function getAttendanceSummary(db: Database, academicTermId?: number
   return {
     overallRate: attendanceRate(overall.attended, overall.total),
     totalRecords: overall.total || 0,
+    attendedRecords: overall.attended || 0,
     bySessionType: bySessionType.map((r: any) => ({
       sessionType: r.sessionType,
       total: r.total,
@@ -100,15 +106,15 @@ export async function getCombinedReport(db: Database, academicTermId?: number): 
     getDisciplineSummary(db, academicTermId),
   ]);
 
-  const { clause, params } = periodFilter('academic_term_id', academicTermId);
+  const { sql: clause, params } = reportableAttendanceSql(academicTermId);
   const [attendanceByStudent, balanceByStudent] = await Promise.all([
     db.all(
-      `SELECT student_id as studentId, student_name as studentName,
+      `SELECT student_id as studentId, MAX(student_name) as studentName,
               COUNT(*) as total, SUM(${ATTENDED_SQL_CASE}) as attended
        FROM attendance_records WHERE session_type = 'homeroom'${clause}
        GROUP BY student_id
-       HAVING total >= 3`,
-      ...params
+       HAVING total >= ?`,
+      ...params, attendanceMinSessions()
     ),
     listTermBalances(db, academicTermId),
   ]);
@@ -164,12 +170,15 @@ export async function getAnnualReport(db: Database, academicYearId: number) {
       return { academicTermId: t.id, termName: t.name, attendance, discipline };
     })
   );
-  const attendanceRates = perTerm.map((t) => t.attendance.overallRate).filter((r) => !Number.isNaN(r));
+  // Weighted by records: a term with 3 registers must not count as much as
+  // one with 300. Terms with nothing recorded no longer pull the year to 100%.
+  const yearTotal = perTerm.reduce((n, t) => n + t.attendance.totalRecords, 0);
+  const yearAttended = perTerm.reduce((n, t) => n + t.attendance.attendedRecords, 0);
   const balances = perTerm.map((t) => t.discipline.averageBalance).filter((r) => !Number.isNaN(r));
   return {
     academicYearId,
     terms: perTerm,
-    yearAttendanceRate: attendanceRates.length ? Math.round(attendanceRates.reduce((a, b) => a + b, 0) / attendanceRates.length) : 100,
+    yearAttendanceRate: attendanceRate(yearAttended, yearTotal),
     yearAverageBalance: balances.length ? Math.round(balances.reduce((a, b) => a + b, 0) / balances.length) : 100,
   };
 }
