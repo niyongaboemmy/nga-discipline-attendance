@@ -4,10 +4,11 @@ import { askPersistentStorage, deviceInfo, ensureKeys, forgetDevice, installUuid
 import { formatDistance, GeoError, permissionState, sampleLocation, weakButPlausible, zoneHint, type Fix, type ZoneHint } from './geo';
 import { renderGoogleButton } from './google';
 import { PhoneTap } from './PhoneTap';
-import { QuickActions } from './Quick';
+import { QuickIcons, QuickMissed, QuickSheets, type QuickWhich } from './Quick';
+import { reminderSupport } from './reminders';
 import { detectLang, makeT, type Lang, type T } from './i18n';
 import {
-  IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconIn, IconKeyboard, IconMail, IconOut, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
+  IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconKeyboard, IconMail, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
 } from './icons';
 
 /**
@@ -89,6 +90,8 @@ export function ClockApp() {
   const [seeking, setSeeking] = useState<number | null>(null);
   /** the reading is vague but the school accepts it for review */
   const [weak, setWeak] = useState(false);
+  /** which popup of the daily screen is open: my calendar, reminders, a forgotten check-out */
+  const [quickOpen, setQuickOpen] = useState<QuickWhich | null>(null);
   const [hint, setHint] = useState<ZoneHint | null>(null);
   const [serverOutside, setServerOutside] = useState<number | null>(null);
   const [busy, setBusy] = useState<'in' | 'out' | null>(null);
@@ -487,6 +490,7 @@ export function ClockApp() {
   // "Use my phone": a computer has no GPS; a phone whose reading fails can lend another phone's.
   const canTap = !!me && (me.next === 'check_in' || (me.next === 'check_out' && !me.checkoutOpensAt));
   const computer = me?.device.formFactor === 'desktop';
+  const pushCfg = boot?.pushKey && !computer ? { key: boot.pushKey, minutes: boot.rules.remindMinutes ?? 15 } : null;
   const struggling = geoMode === 'vague' || geoMode === 'failed' || geoMode === 'outside';
   const offerPhone = canTap && !busy && !offline && (computer || struggling);
   const phoneOpen = offerPhone && (phoneChoice ?? (computer && struggling));
@@ -655,10 +659,12 @@ export function ClockApp() {
           clockText={clockText}
           dateText={dateText}
           place={place}
-          quick={slug && token && me.device.status === 'active' ? (
-            <QuickActions t={t} lang={lang} locale={locale} slug={slug} token={token} me={me} setMe={setMe} flash={flash}
-              push={boot?.pushKey && !computer ? { key: boot.pushKey, minutes: boot.rules.remindMinutes ?? 15 } : null} />
+          quickIcons={slug && token && me.device.status === 'active' ? <QuickIcons t={t} me={me} canRemind={!!pushCfg && reminderSupport() !== 'unsupported'} onOpen={setQuickOpen} /> : null}
+          quickAlert={slug && token && me.device.status === 'active' ? <QuickMissed t={t} me={me} onOpen={setQuickOpen} /> : null}
+          quickSheets={slug && token && me.device.status === 'active' ? (
+            <QuickSheets t={t} lang={lang} locale={locale} slug={slug} token={token} me={me} setMe={setMe} flash={flash} push={pushCfg} open={quickOpen} onClose={() => setQuickOpen(null)} />
           ) : null}
+          onCalendar={() => setQuickOpen('calendar')}
           geoMode={geoMode}
           seeking={seeking}
           weak={weak}
@@ -926,8 +932,13 @@ interface DailyProps {
   clockText: string;
   dateText: string;
   place: string;
-  /** under the week: short buttons that open my calendar, reminders, a forgotten check-out */
-  quick?: React.ReactNode;
+  /** header icons that open my calendar and reminders */
+  quickIcons?: React.ReactNode;
+  /** a forgotten check-out: one button under the status */
+  quickAlert?: React.ReactNode;
+  /** the popups those open */
+  quickSheets?: React.ReactNode;
+  onCalendar: () => void;
   geoMode: GeoMode;
   seeking: number | null;
   weak: boolean;
@@ -952,46 +963,102 @@ interface DailyProps {
   onPhoneHide: () => void;
 }
 
+const hm = (t?: string | null): number | null => (t && /^\d\d:\d\d/.test(t) ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null);
+
+/**
+ * The daily screen, essentials only (mobile first): a quiet header (my calendar,
+ * reminders, help), the school clock, one ring button whose ring is the person's
+ * working day, one status line, and the week as seven small rings. Everything
+ * else opens in a popup.
+ */
 function Daily(p: DailyProps) {
   const { t, me, deviceWord } = p;
   const v = dailyVisual(p);
-  const done = me.week.filter((d) => d.checkIn).length;
-  const dayName = (date: string) => {
+  const nowM = hm(p.clockText);
+  /** The share of an expected day (start to end) spent at school; a day still open counts up to now. */
+  const share = (inT: string | null | undefined, outT: string | null | undefined, start: string | null | undefined, end: string | null | undefined, live: boolean): number => {
+    const a = hm(inT);
+    if (a == null) return 0;
+    const b = hm(outT) ?? (live ? nowM : null);
+    const s0 = hm(start);
+    const e0 = hm(end);
+    if (b == null || s0 == null || e0 == null || e0 <= s0) return 1;
+    return Math.max(0.04, Math.min(1, (b - a) / (e0 - s0)));
+  };
+  const todayShare = me.today ? share(me.today.checkIn, me.today.checkOut, me.rules.lateAfter, me.rules.earlyLeaveBefore, true) : 0;
+
+  // The seven days of this week: the person's working days come from the server, the others are days off.
+  const monday = (() => {
+    const d = new Date(`${me.schoolDate}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+    return d;
+  })();
+  const letter = (date: string) => {
     try {
-      return new Intl.DateTimeFormat(p.locale, { weekday: 'short', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
+      return new Intl.DateTimeFormat(p.locale, { weekday: 'narrow', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
     } catch {
-      return new Intl.DateTimeFormat('en-GB', { weekday: 'short', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
+      return new Intl.DateTimeFormat('en-GB', { weekday: 'narrow', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
     }
   };
+  const longDay = (date: string) => {
+    try {
+      return new Intl.DateTimeFormat(p.locale, { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
+    } catch {
+      return date;
+    }
+  };
+  const week7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setUTCDate(monday.getUTCDate() + i);
+    const date = d.toISOString().slice(0, 10);
+    const w = me.week.find((x) => x.date === date) ?? null;
+    const isToday = date === me.schoolDate;
+    const kind = !w ? 'off' : w.checkIn ? (w.status === 'late' ? 'late' : 'ok') : isToday ? 'today' : w.future ? 'next' : 'absent';
+    const part = w ? share(w.checkIn, w.checkOut, w.start, w.end, isToday) : 0;
+    const text = !w ? t('myHoursOff') : w.checkIn ? `${w.checkIn} – ${w.checkOut ?? '…'}` : w.future || isToday ? w.start ?? '' : t('calAbsentK');
+    return { date, isToday, kind, part, name: letter(date), label: `${longDay(date)}: ${text}` };
+  });
+  const done = me.week.filter((d) => d.checkIn).length;
+  const late = me.week.filter((d) => d.status === 'late').length;
+  const minutes = me.week.reduce((n, d) => {
+    const a = hm(d.checkIn);
+    const b = hm(d.checkOut) ?? (d.isToday ? nowM : null);
+    return a != null && b != null && b > a ? n + (b - a) : n;
+  }, 0);
+  const hours = `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`;
+  const C = 2 * Math.PI * 47;
+  const c = 2 * Math.PI * 15;
+  const helper = p.phonePanel || (p.phoneOffer && me.device.formFactor === 'desktop') ? t('usePhoneHint') : v.helper;
+
   return (
-    <main className="ck-screen ck-daily">
-      <div className="ck-topbar">
+    <main className="ck-screen ck-daily ck-e">
+      <div className="ck-e-top">
         <SchoolMark initials={p.initials} logoUrl={p.logoUrl} />
-        <div className="ck-topbar-name"><b className="ck-clip">{p.school}</b><span>{t('staffAttendance')}</span></div>
-        <button className="ck-icon-btn" onClick={p.onHelp} aria-label={t('help')}><IconHelp size={22} /><span className="ck-help-label">{t('help')}</span></button>
+        <b className="ck-e-hello ck-clip" title={p.school}>{p.greeting}</b>
+        {p.quickIcons}
+        <button className="ck-e-icon" onClick={p.onHelp} aria-label={t('help')} title={t('help')}><IconHelp size={23} /></button>
       </div>
 
-      <div className="ck-daily-body">
-        <section className="ck-info" aria-live="polite">
-          <div className="ck-greeting">{p.greeting}</div>
-          <div className="ck-date">{p.dateText}</div>
-          <div className="ck-clock" aria-label={p.clockText}>{p.clockText}</div>
-          <div className="ck-tz"><IconClock size={14} />{t('schoolTime', { place: p.place })}</div>
-          <div className="ck-chip-row">
-            <span className={`ck-chip ck-chip-${v.chipTone}`}><i /><span className="ck-wrap">{v.chip}</span></span>
-          </div>
-          <p className="ck-helper">{p.phonePanel || (p.phoneOffer && me.device.formFactor === 'desktop') ? t('usePhoneHint') : v.helper}</p>
-        </section>
+      <div className="ck-e-gap" />
 
-        <section className={`ck-action${p.phonePanel ? ' ck-action-phone' : ''}`}>
-          {p.phonePanel ? (
-            <>
-              {p.phonePanel}
-              <button className="ck-link-btn" onClick={p.onPhoneHide}>{t('hide')}</button>
-            </>
-          ) : (<>
-          <div className={`ck-ring${v.style === 'grey' ? ' ck-ring-grey' : ''}`}>
-            {v.pulse && <div className="ck-pulse" />}
+      <div className="ck-e-clock" aria-label={p.clockText}>{p.clockText}</div>
+      <div className="ck-e-date">{p.dateText} · <span className="ck-e-place">{p.place}</span></div>
+
+      <div className="ck-e-gap ck-e-gap-2" />
+
+      {p.phonePanel ? (
+        <section className="ck-action ck-action-phone ck-e-phone">
+          {p.phonePanel}
+          <button className="ck-link-btn" onClick={p.onPhoneHide}>{t('hide')}</button>
+        </section>
+      ) : (
+        <>
+          <div className="ck-e-ring">
+            {/* The ring is the person's working day: it fills with the time at school. */}
+            <svg aria-hidden="true" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="47" fill="none" className="ck-e-track" strokeWidth="2.6" />
+              {todayShare > 0 && <circle cx="50" cy="50" r="47" fill="none" className="ck-e-prog" strokeWidth="2.6" strokeLinecap="round" strokeDasharray={`${(C * todayShare).toFixed(1)} ${C.toFixed(1)}`} transform="rotate(-90 50 50)" />}
+            </svg>
             <button
               className={`ck-big${v.style === 'outline' ? ' ck-big-outline' : v.style === 'grey' ? ' ck-big-grey' : ''}`}
               onClick={p.onTap}
@@ -999,28 +1066,25 @@ function Daily(p: DailyProps) {
               aria-label={`${v.label}. ${v.sub}`}
               aria-busy={v.icon === 'spin'}
             >
-              {v.icon === 'in' && <IconIn size={36} />}
-              {v.icon === 'out' && <IconOut size={36} />}
-              {v.icon === 'done' && <IconCheck size={40} sw={2.2} />}
-              {v.icon === 'retry' && <IconRetry size={34} />}
+              {v.icon === 'retry' && <IconRetry size={30} />}
               {v.icon === 'spin' && <span className="ck-spinner" />}
               <span className="ck-big-label">{v.label}</span>
               <span className="ck-big-sub">{v.sub}</span>
             </button>
           </div>
-          {p.phoneOffer ? (
+          <div className={`ck-e-note ck-e-note-${v.chipTone}`} aria-live="polite">{v.chip}</div>
+          {helper && <p className="ck-e-help">{helper}</p>}
+          {p.phoneOffer && (
             <button className="ck-phone-offer" onClick={p.onPhone} data-testid="use-phone">
               <span className="ck-phone-offer-icon"><IconQr size={20} /></span>
               <span className="ck-phone-offer-text"><b>{t('usePhone')}</b><small>{t('usePhoneHint')}</small></span>
             </button>
-          ) : (
-            <span className="ck-rule">{t('oneCheck')}</span>
           )}
-          </>)}
-        </section>
-      </div>
+        </>
+      )}
+      {p.quickAlert}
 
-      <div className="ck-grow" />
+      <div className="ck-e-gap ck-e-gap-3" />
 
       {p.showHow && (
         <div className="ck-how" role="note">
@@ -1041,28 +1105,23 @@ function Daily(p: DailyProps) {
         </div>
       )}
 
-      <div className="ck-week">
-        <div className="ck-week-head"><b>{t('thisWeek')}</b><span>{t('daysOf', { done, total: me.week.length })}</span></div>
-        <div className="ck-week-days" style={{ '--ck-days': me.week.length || 5 } as React.CSSProperties}>
-          {me.week.map((d) => {
-            const isDone = !!d.checkIn && !!d.checkOut;
-            const isIn = !!d.checkIn && !d.checkOut;
-            const cls = isDone ? 'ck-dot ck-dot-done' : d.isToday ? (isIn ? 'ck-dot ck-dot-in' : 'ck-dot ck-dot-today') : isIn ? 'ck-dot ck-dot-done' : 'ck-dot';
-            // A day still to come shows when it starts for this person.
-            const times = d.checkIn ? `${d.checkIn} – ${d.checkOut ?? '…'}` : d.isToday ? t('notYet') : d.future && d.start ? d.start : '—';
-            return (
-              <div className="ck-day" key={d.date} title={times}>
-                <span className={cls}>{(isDone || (!d.isToday && isIn)) && <IconCheck size={16} sw={3} />}</span>
-                <span className="ck-day-text">
-                  <span className={`ck-day-name${d.isToday ? ' today' : ''}`}>{d.isToday ? t('today') : dayName(d.date)}</span>
-                  <span className="ck-day-times ck-clip">{times}</span>
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      <div className="ck-e-week" role="group" aria-label={t('thisWeek')}>
+        {week7.map((d) => (
+          <button key={d.date} className={`ck-e-day k-${d.kind}${d.isToday ? ' is-today' : ''}`} onClick={p.onCalendar} aria-label={d.label} title={d.label}>
+            <svg aria-hidden="true" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="15" fill="none" className="ck-e-dtrack" strokeWidth="3.5" />
+              {d.part > 0 && <circle cx="18" cy="18" r="15" fill="none" className="ck-e-dprog" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(c * d.part).toFixed(1)} ${c.toFixed(1)}`} transform="rotate(-90 18 18)" />}
+            </svg>
+            <span>{d.name}</span>
+          </button>
+        ))}
       </div>
-      {p.quick}
+      <div className="ck-e-total">
+        <b>{t('daysOf', { done, total: me.week.length })}</b>
+        {minutes > 0 && <> · {hours}</>}
+        {late > 0 && <> · <span className="late">{t('weekLate', { n: late })}</span></>}
+      </div>
+      {p.quickSheets}
       <span className="ck-sr">{deviceWord}</span>
     </main>
   );

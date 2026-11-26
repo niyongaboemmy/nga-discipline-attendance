@@ -228,6 +228,11 @@ async function fullFlow(browser, vp, theme) {
   await page.getByRole('button', { name: 'OK' }).click();
   await expectText(page, 'In since 07:42', `${tag} checked in`);
   await page.waitForTimeout(300);
+  // Essentials layout: the whole daily screen fits the window (no scrolling), with the three header icons.
+  if (await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 1)) fail(`${tag}: the daily screen needs scrolling`);
+  for (const id of ['quick-calendar']) if (!(await page.getByTestId(id).isVisible())) fail(`${tag}: header icon ${id} is missing`);
+  if (!(await page.getByRole('button', { name: 'Help' }).isVisible())) fail(`${tag}: the help icon is missing`);
+  if ((await page.locator('.ck-e-day').count()) !== 7) fail(`${tag}: the week should show seven day rings`);
   await shot(page, `${tag}-06-checked-in`);
 
   await page.getByRole('button', { name: /^Check out\./ }).click();
