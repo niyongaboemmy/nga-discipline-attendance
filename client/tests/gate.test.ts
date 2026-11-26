@@ -128,3 +128,10 @@ test('the day-off list names who is not expected today, and why', () => {
   const closed = gateModel({ ...overview([row('1', 'Zed', { expected: false, status: 'day_off', moment: 'day_off' }), row('2', 'Abe', { expected: false, status: 'day_off', moment: 'day_off' })]), holiday: true }, NOW, 'out');
   assert.deepEqual(closed.off.map((p) => [p.name, p.note]), [['Abe', 'School closed today'], ['Zed', 'School closed today']]);
 });
+
+test('a start far off says who is due and when, not "N still to come"', () => {
+  const m = gateModel(overview([row('6', 'Irene', { plan: { own: true, works: true, start: '09:00', end: '13:00' } }), row('7', 'Olivier', { plan: { own: true, works: true, start: '09:00', end: '16:00' } }), row('8', 'Diane', { plan: { own: true, works: true, start: '10:00', end: '16:00' } })]), NOW, 'in');
+  assert.deepEqual(gateHeadline(m), { kicker: 'Next start 09:00 · in 1 h 36', line: '2 people due at 09:00', tone: 'calm' });
+  const one = gateModel(overview([row('6', 'Irene', { plan: { own: true, works: true, start: '09:00', end: '13:00' } })]), NOW, 'in');
+  assert.equal(gateHeadline(one).line, '1 person due at 09:00');
+});

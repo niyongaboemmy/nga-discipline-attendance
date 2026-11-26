@@ -151,11 +151,12 @@ export function gateHeadline(m: GateModel): { kicker: string; line: string; tone
   if (m.mode === 'in') {
     if (m.next && m.next.minutes <= SOON_MIN) return { kicker: `Start ${m.next.at} · ${m.next.people} ${m.next.people === 1 ? 'person' : 'people'}`, line: `Late in ${span(m.next.minutes)}`, tone: 'warn' };
     if (late) return { kicker: m.next ? `Next start ${m.next.at}` : 'No start left today', line: `${late} late now`, tone: 'warn' };
-    if (m.next) return { kicker: `Next start ${m.next.at}`, line: `${m.next.people} still to come`, tone: 'calm' };
+    // Far off: say who is due and when, in plain words ("1 still to come" read like the day's total).
+    if (m.next) return { kicker: `Next start ${m.next.at} · in ${span(m.next.minutes)}`, line: `${m.next.people} ${m.next.people === 1 ? 'person' : 'people'} due at ${m.next.at}`, tone: 'calm' };
     return { kicker: m.total ? 'Nobody left to wait for' : 'Nobody is expected today', line: m.total ? 'Everyone is in' : 'Quiet day', tone: 'calm' };
   }
   if (late) return { kicker: 'Their day is over', line: `${late} still inside`, tone: 'warn' };
-  if (m.next) return { kicker: `Next end ${m.next.at} · ${m.next.people} ${m.next.people === 1 ? 'person' : 'people'}`, line: m.next.minutes <= SOON_MIN ? `Ends in ${span(m.next.minutes)}` : `${m.waiting.length} inside`, tone: 'calm' };
+  if (m.next) return { kicker: `Next end ${m.next.at} · ${m.next.people} ${m.next.people === 1 ? 'person' : 'people'}`, line: m.next.minutes <= SOON_MIN ? `Ends in ${span(m.next.minutes)}` : `${m.waiting.length} still inside`, tone: 'calm' };
   return { kicker: 'Nobody is inside', line: m.total ? 'Everyone has left' : 'Nobody came today', tone: 'calm' };
 }
 
