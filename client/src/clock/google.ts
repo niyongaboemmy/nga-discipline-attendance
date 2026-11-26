@@ -38,7 +38,8 @@ export function loadGis(): Promise<void> {
 export interface GoogleButtonOptions {
   clientId: string;
   container: HTMLElement;
-  width: number;
+  /** Leave out to let Google size the button to its text (no empty sides). */
+  width?: number;
   dark: boolean;
   locale: string;
   onCredential: (credential: string) => void;
@@ -65,8 +66,8 @@ export async function renderGoogleButton(o: GoogleButtonOptions): Promise<void> 
     size: 'large',
     shape: 'pill',
     text: 'continue_with',
-    logo_alignment: 'center',
-    width: Math.max(200, Math.min(400, Math.round(o.width))),
+    logo_alignment: 'left',
+    ...(o.width ? { width: Math.max(200, Math.min(400, Math.round(o.width))) } : {}),
     locale: o.locale,
   });
 }

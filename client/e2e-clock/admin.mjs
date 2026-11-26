@@ -247,7 +247,7 @@ async function run(browser, vp) {
     let calls = 0;
     const count = (r) => { if (/\/api\/staff\/clock\/(config|overview)/.test(r.url())) calls += 1; };
     await page.goto(`${BASE}/staff/clock/zone`);
-    await expectText(page, 'Check-in rules', `${tag} zone loaded`);
+    await expectText(page, 'School areas', `${tag} zone loaded`);
     await page.waitForTimeout(500);
     page.on('request', count);
     await page.waitForTimeout(4000);
@@ -255,52 +255,67 @@ async function run(browser, vp) {
     if (calls > 2) fail(`${tag}: idle zone page made ${calls} config/overview requests in 4 s`);
   }
 
-  // The setup step links straight to the rules on the zone page.
+  // The setup step links straight to the rules: the Rules drawer opens over the map.
   await page.goto(`${BASE}/staff/clock/zone#zone-rules`);
-  await expectText(page, 'Check-in rules', `${tag} zone rules`);
+  await expectText(page, 'Check-in rules', `${tag} zone rules drawer`);
   await page.waitForTimeout(1500);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: zone page scrolls sideways`);
+  if (vp.name === 'desktop') {
+    // The page fits the window: the map never scrolls away.
+    if (await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight + 2)) fail(`${tag}: zone page scrolls vertically`);
+    const mb = await page.locator('#zone-map').boundingBox();
+    if (!mb || mb.y + mb.height > page.viewportSize().height + 1) fail(`${tag}: map taller than the window (${JSON.stringify(mb)})`);
+  }
   await shot('03-zone');
-  await page.getByRole('button', { name: 'Satellite' }).click();
-  await page.getByRole('button', { name: 'Test from where I stand' }).click();
-  await expectText(page, 'inside Main campus', `${tag} zone test`);
-  await page.waitForTimeout(1500);
-  await shot('04-zone-satellite-test');
+  await page.getByRole('button', { name: 'Close rules' }).click();
 
-  // Search -> pick a result -> the selected zone's pin moves there (Save becomes possible).
-  await expectText(page, 'Staff check-in link for New Generation Academy', `${tag} link banner`);
-  await page.getByPlaceholder('Search a place or paste coordinates').fill('new generation academy');
-  await page.getByRole('button', { name: 'Find' }).click();
-  await expectText(page, 'Choose the right place', `${tag} search results`);
+  // The list: the selected area is spotlighted and editable.
+  await expectText(page, 'Main campus', `${tag} area list`);
+  await page.getByRole('button', { name: 'Satellite' }).click();
+  await page.getByRole('button', { name: 'Test here' }).click();
+  await expectText(page, 'inside Main campus', `${tag} zone test`);
+  await page.waitForTimeout(1200);
+  await shot('04-zone-satellite-test');
+  await page.getByRole('button', { name: 'Map', exact: true }).click();
+  // − / + change the radius by 10 m and mark the area Edited.
+  await page.getByRole('button', { name: '10 m larger' }).click();
+  await expectText(page, '160 m', `${tag} radius stepper`);
+  await expectText(page, 'Edited', `${tag} edited tag`);
+
+  // Finding a place only moves the map, then offers to move the area or add one there.
+  await page.getByPlaceholder('Go to a place or paste coordinates').fill('new generation academy');
+  await page.getByRole('button', { name: 'Go', exact: true }).click();
+  await expectText(page, 'Go to…', `${tag} search results`);
   if (globalThis.__lastSearch?.countrycodes !== 'rw') fail(`${tag}: search not biased to Rwanda (${JSON.stringify(globalThis.__lastSearch)})`);
   await shot('04b-zone-search-results');
-  await page.getByRole('option', { name: /New Generation Academy/ }).click();
-  await expectText(page, '-1.95000, 30.06000', `${tag} pin moved by search`);
-  if (await page.getByRole('button', { name: 'Save changes' }).isDisabled()) fail(`${tag}: Save not enabled after moving the pin`);
-  // Coordinates pasted also place the pin; a map click moves it again.
-  await page.getByPlaceholder('Search a place or paste coordinates').fill('-1.95111, 30.06222');
-  await page.getByRole('button', { name: 'Find' }).click();
-  await expectText(page, '-1.95111, 30.06222', `${tag} pin moved by coordinates`);
-  await page.locator('#zone-map').evaluate((el) => el.scrollIntoView({ block: 'center' }));
-  await page.waitForTimeout(300);
+  await page.getByRole('option', { name: /New Generation Academy/ }).first().click();
+  await page.locator('.zc-found-card').waitFor();
+  if ((await page.getByText('-1.95000, 30.06000').count()) !== 0) fail(`${tag}: searching moved the area by itself`);
+  await page.getByRole('button', { name: /Move “Main campus” here/ }).click();
+  await expectText(page, '-1.95000, 30.06000', `${tag} area moved by "Move here"`);
+  if (await page.locator('.zc-save').getByRole('button', { name: 'Save' }).isDisabled()) fail(`${tag}: Save not enabled after moving the area`);
+
+  // Adding is its own mode: banner + draft row, then a map click drops the new area.
+  await page.getByTestId('add-area').click();
+  await expectText(page, 'Click the map or search a place to drop the new area', `${tag} adding banner`);
+  await expectText(page, 'click the map', `${tag} draft row`);
+  await shot('04c-zone-adding');
   const box = await page.locator('.sc-map-el').boundingBox();
-  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.6);
+  await page.mouse.click(box.x + box.width * 0.62, box.y + box.height * (vp.name === 'phone' ? 0.42 : 0.55));
+  await expectText(page, 'Area 3', `${tag} new area added`);
+  await expectText(page, 'New area, not saved yet', `${tag} new tag`);
+  // Remove asks first.
+  await page.getByRole('button', { name: 'Remove Area 3' }).click();
+  await page.locator('.zc-confirm').getByRole('button', { name: 'Yes' }).click();
   await page.waitForTimeout(300);
-  const moved = await page.getByText('-1.95111, 30.06222').count();
-  if (moved !== 0) fail(`${tag}: a map click did not move the pin`);
-  await shot('04c-zone-after-click');
-  // The save bar is always reachable; on wide screens the map stays in view while the panel scrolls.
+  if (await page.locator('.zc-row', { hasText: 'Area 3' }).count()) fail(`${tag}: area not removed`);
   await expectText(page, 'Unsaved changes', `${tag} save bar dirty`);
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await page.waitForTimeout(400);
-  const vh = page.viewportSize().height;
-  const bar = await page.locator('.sc-savebar').boundingBox();
-  if (!bar || bar.y + bar.height > vh + 1 || bar.y < 0) fail(`${tag}: save bar not on screen after scrolling (${JSON.stringify(bar)})`);
-  if (vp.name === 'desktop') {
-    const mapBox = await page.locator('#zone-map').boundingBox();
-    if (!mapBox || mapBox.y < 0 || mapBox.y > vh / 2) fail(`${tag}: map scrolled away (${JSON.stringify(mapBox)})`);
-  }
-  await page.screenshot({ path: path.join(OUT, `${tag}-04e-zone-scrolled.png`) });
+  // Share drawer: the staff link.
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  await expectText(page, 'tendo.amashuri.com/c/nga', `${tag} share drawer`);
+  await page.screenshot({ path: path.join(OUT, `${tag}-04e-zone-share.png`) });
+  await page.locator('.zc-save').getByRole('button', { name: 'Discard' }).click();
+  await expectText(page, 'All saved', `${tag} discarded`);
 
   // The old clock card is gone; the staff link is shown instead.
   await page.goto(`${BASE}/staff/attendance`);
