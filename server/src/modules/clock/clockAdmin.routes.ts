@@ -10,7 +10,7 @@ import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettin
 import { currentTenant } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
 import { schoolBranding } from '../../routes/sso.js';
-import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, scanCard, setManualCheckout } from './clock.service.js';
+import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, personWeek, scanCard, setManualCheckout } from './clock.service.js';
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 import { buildReport, reportStaff } from './clockReport.js';
@@ -34,6 +34,15 @@ const fail = (res: Response, err: unknown) => {
 };
 
 const TIME = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 08:30.');
+
+/** The signed-in staff member's own week: expected hours, days off, what was recorded (their Tendo home card). */
+router.get('/my-week', authorizePermission('STAFF_ATTENDANCE_CLOCK', 'STAFF_ATTENDANCE_VIEW_OWN', 'STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
+  try {
+    return res.json({ success: true, data: await personWeek(getDb(), String(actorOf(req).id)) });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Rules + zones
