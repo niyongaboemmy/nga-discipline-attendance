@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { useToast } from '../../context/ToastContext';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, Clock, ExternalLink, KeyRound, LogIn, LogOut, MapPin, Power, UserX } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, Clock, ExternalLink, KeyRound, LogIn, LogOut, MapPin, Power, UserX, Copy } from 'lucide-react';
 import '../../styles/staffClock.css';
 import { apiGet } from '../../api/client';
 import { staffClockApi, type Overview } from '../../api/staffClock';
@@ -85,6 +86,7 @@ const AdminCard: React.FC<{ canSetup: boolean }> = ({ canSetup }) => {
 
 const StaffCard: React.FC = () => {
   const { user } = useAuth();
+  const toast = useToast();
   const [logs, setLogs] = useState<MyLog[] | null>(null);
   const [days, setDays] = useState<{ today: string; weekAgo: string } | null>(null);
   useEffect(() => {
@@ -107,6 +109,15 @@ const StaffCard: React.FC = () => {
   const t = mine.find((l) => l.date === today);
   const missed = mine.filter((l) => l.date < today && l.date >= weekAgo && l.clock_in && !l.clock_out);
   const link = user?.tenantSlug ? `/c/${user.tenantSlug}` : null;
+  const copyLink = async () => {
+    const url = `${window.location.origin}${link}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success('Check-in link copied', 'Open it on your phone, or paste it in a browser.');
+    } catch {
+      toast.error('Could not copy', url);
+    }
+  };
 
   const state = !t?.clock_in
     ? { tone: 'amber', icon: <LogIn size={20} />, title: 'Not checked in today', sub: 'Check in on your phone when you arrive' }
@@ -122,10 +133,18 @@ const StaffCard: React.FC = () => {
           <b>{state.title}</b>
           <small>{state.sub}</small>
         </div>
-        {link && (!t?.clock_out) && (
-          <a className="sc-btn sc-btn-primary sc-btn-sm" href={link} target="_blank" rel="noopener noreferrer">
-            {t?.clock_in ? 'Check out' : 'Check in'} <ExternalLink size={14} />
-          </a>
+        {link && (
+          <div className="sc-home-actions">
+            {/* Where the link cannot open (the desktop app), copy it and open it on the phone. */}
+            <button type="button" className="sc-btn sc-btn-sm" onClick={() => void copyLink()} title="Copy the check-in link to open it on your phone or in a browser" data-testid="clock-copy-link">
+              <Copy size={14} /> Copy link
+            </button>
+            {!t?.clock_out && (
+              <a className="sc-btn sc-btn-primary sc-btn-sm" href={link} target="_blank" rel="noopener noreferrer">
+                {t?.clock_in ? 'Check out' : 'Check in'} <ExternalLink size={14} />
+              </a>
+            )}
+          </div>
         )}
       </div>
       {missed.length > 0 && (

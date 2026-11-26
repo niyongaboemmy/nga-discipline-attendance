@@ -12,6 +12,8 @@ import { StaffClockSetup } from './StaffClockSetup';
 import { AttentionStrip, ListSheet, type SheetPerson } from './StaffClockAttention';
 import { StaffHistoryModal, type HistoryNavPerson } from './StaffHistoryModal';
 import { DayReport } from './StaffClockDayReport';
+import { NowBoard } from './StaffClockNow';
+import { nowList } from './nowList';
 import { Columns, GroupCards, HeatLegend, MonthGrid, SplitBar, TermCalendar, WeekdayBars, WeeklyChart } from './StaffClockReportParts';
 import { dayRate, delta, fmtDate, medianTime, pct, sumDays } from './reportMath';
 
@@ -25,7 +27,7 @@ import { dayRate, delta, fmtDate, medianTime, pct, sumDays } from './reportMath'
  */
 
 type Mode = 'today' | 'date' | 'range' | 'term';
-type Sheet = { title: string; subtitle?: string; people: SheetPerson[]; empty: string; loading?: boolean };
+type Sheet = { title: string; subtitle?: string; people: SheetPerson[]; empty: string; loading?: boolean; /** remind everyone in the list to check in / out */ remind?: 'in' | 'out' };
 
 const long = (date: string) => fmtDate(date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const short = (date: string) => fmtDate(date, { day: 'numeric', month: 'short' });
@@ -303,6 +305,10 @@ export const StaffClockDashboard: React.FC = () => {
           />
         )}
 
+        {mode === 'today' && todayOv?.now && (
+          <NowBoard overview={todayOv} onOpen={(g) => { const l = nowList(g, todayOv); setSheet({ title: l.title, subtitle: l.subtitle, empty: l.empty, people: l.people, remind: l.remind }); }} />
+        )}
+
         {!report && !error && (
           <>
             <div className="scr-row-hero"><div className="sc-skel scr-skel-a" /><div className="sc-skel scr-skel-a" /></div>
@@ -506,6 +512,21 @@ export const StaffClockDashboard: React.FC = () => {
           </div>
         ) : (
           <ListSheet title={sheet.title} subtitle={sheet.subtitle} people={sheet.people} empty={sheet.empty} onClose={() => setSheet(null)}
+            action={sheet.remind && sheet.people.length ? {
+              label: `Remind ${sheet.people.length === 1 ? 'them' : `all ${sheet.people.length}`} to check ${sheet.remind}`,
+              hint: 'Sends a notification to the phones that have reminders on. Once per person a day.',
+              run: async () => {
+                try {
+                  const res = await staffClockApi.nudge(sheet.remind!, sheet.people.map((p) => p.personId ?? p.id));
+                  const d = res.data;
+                  const rest = d ? [d.noReminders ? `${d.noReminders} without reminders on their phone` : '', d.already ? `${d.already} already reminded today` : '', d.notNeeded ? `${d.notNeeded} no longer need it` : ''].filter(Boolean).join(' · ') : '';
+                  if (d?.sent) toast.success(res.message || 'Reminder sent', rest || 'They get a notification on their phone.');
+                  else toast.info(res.message || 'Nobody could be reminded', rest || 'Ask them to turn reminders on from the check-in page.');
+                } catch (e) {
+                  toast.error('Reminder not sent', e instanceof ApiError ? e.message : 'Check the connection and try again.');
+                }
+              },
+            } : undefined}
             onPick={(p) => {
               if (!p.personId) return;
               const nav = sheet.people.filter((x) => x.personId).map((x) => ({ id: x.personId!, name: x.name, note: [x.group, x.meta].filter(Boolean).join(' · ') }));

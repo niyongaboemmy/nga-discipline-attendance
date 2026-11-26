@@ -4,7 +4,7 @@ import { askPersistentStorage, deviceInfo, ensureKeys, forgetDevice, installUuid
 import { formatDistance, GeoError, permissionState, sampleLocation, weakButPlausible, zoneHint, type Fix, type ZoneHint } from './geo';
 import { renderGoogleButton } from './google';
 import { PhoneTap } from './PhoneTap';
-import { MissedCheckout, Reminders } from './Extras';
+import { QuickActions } from './Quick';
 import { detectLang, makeT, type Lang, type T } from './i18n';
 import {
   IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconIn, IconKeyboard, IconMail, IconOut, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
@@ -655,15 +655,10 @@ export function ClockApp() {
           clockText={clockText}
           dateText={dateText}
           place={place}
-          extras={
-            <>
-              {me.missedOut && slug && token && <MissedCheckout t={t} slug={slug} token={token} locale={locale} missed={me.missedOut} flash={flash} onState={(st) => setMe((m) => (m ? { ...m, ...st } : m))} />}
-              {boot?.pushKey && !computer && slug && token && (
-                <Reminders t={t} lang={lang} slug={slug} token={token} pushKey={boot.pushKey} minutes={boot.rules.remindMinutes ?? 15} me={me} flash={flash}
-                  onChange={(on) => setMe((m) => (m ? { ...m, reminders: { on } } : m))} />
-              )}
-            </>
-          }
+          quick={slug && token && me.device.status === 'active' ? (
+            <QuickActions t={t} lang={lang} locale={locale} slug={slug} token={token} me={me} setMe={setMe} flash={flash}
+              push={boot?.pushKey && !computer ? { key: boot.pushKey, minutes: boot.rules.remindMinutes ?? 15 } : null} />
+          ) : null}
           geoMode={geoMode}
           seeking={seeking}
           weak={weak}
@@ -931,8 +926,8 @@ interface DailyProps {
   clockText: string;
   dateText: string;
   place: string;
-  /** cards above the week: a forgotten check-out, the reminders switch */
-  extras?: React.ReactNode;
+  /** under the week: short buttons that open my calendar, reminders, a forgotten check-out */
+  quick?: React.ReactNode;
   geoMode: GeoMode;
   seeking: number | null;
   weak: boolean;
@@ -1046,8 +1041,6 @@ function Daily(p: DailyProps) {
         </div>
       )}
 
-      {p.extras}
-
       <div className="ck-week">
         <div className="ck-week-head"><b>{t('thisWeek')}</b><span>{t('daysOf', { done, total: me.week.length })}</span></div>
         <div className="ck-week-days" style={{ '--ck-days': me.week.length || 5 } as React.CSSProperties}>
@@ -1055,7 +1048,8 @@ function Daily(p: DailyProps) {
             const isDone = !!d.checkIn && !!d.checkOut;
             const isIn = !!d.checkIn && !d.checkOut;
             const cls = isDone ? 'ck-dot ck-dot-done' : d.isToday ? (isIn ? 'ck-dot ck-dot-in' : 'ck-dot ck-dot-today') : isIn ? 'ck-dot ck-dot-done' : 'ck-dot';
-            const times = d.checkIn ? `${d.checkIn} – ${d.checkOut ?? '…'}` : d.isToday ? t('notYet') : d.future ? '—' : '—';
+            // A day still to come shows when it starts for this person.
+            const times = d.checkIn ? `${d.checkIn} – ${d.checkOut ?? '…'}` : d.isToday ? t('notYet') : d.future && d.start ? d.start : '—';
             return (
               <div className="ck-day" key={d.date} title={times}>
                 <span className={cls}>{(isDone || (!d.isToday && isIn)) && <IconCheck size={16} sw={3} />}</span>
@@ -1068,6 +1062,7 @@ function Daily(p: DailyProps) {
           })}
         </div>
       </div>
+      {p.quick}
       <span className="ck-sr">{deviceWord}</span>
     </main>
   );
@@ -1091,13 +1086,20 @@ function dailyVisual(p: DailyProps): Visual {
   const statusWord = today?.status === 'late' ? t('late') : t('onTime');
   const atSchoolChip = p.weak && p.fix ? t('weakChip', { accuracy: Math.round(p.fix.accuracy) }) : hint ? t('atSchoolDist', { distance: formatDistance(hint.distance) }) : t('atSchool');
   const okTone = p.weak ? 'amber' : 'green';
-  const lateHelp = p.weak ? t('weakHelp') : me.rules.lateAfter ? t('lateAfter', { time: me.rules.lateAfter }) : '';
+  const lateHelp = p.weak ? t('weakHelp') : me.dayOff ? t('dayOffAllowed') : me.rules.lateAfter ? t('lateAfter', { time: me.rules.lateAfter }) : '';
 
   if (me.next === 'done' && today) {
     return { style: 'grey', icon: 'done', label: t('doneToday'), sub: t('inOut', { in: today.checkIn ?? '', out: today.checkOut ?? '' }), pulse: false, disabled: true,
       chip: t('hoursAtSchool', { hours: fmtDuration(today.minutesAtSchool) }), chipTone: 'muted', helper: t('seeTomorrow') };
   }
   if (me.next === 'closed') {
+    if (me.dayOffClosed) {
+      // A day off: check-in is closed; say when they are next expected.
+      const next = me.nextDay;
+      const day = next ? new Date(`${next.date}T12:00:00Z`).toLocaleDateString(p.locale, { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }) : '';
+      return { style: 'grey', icon: 'in', label: t('dayOffTitle'), sub: t('closedToday'), pulse: false, disabled: true, chip: t('dayOffChip'), chipTone: 'muted',
+        helper: next && next.start ? t('dayOffNext', { day, time: next.start }) : t('dayOffHelp') };
+    }
     return { style: 'grey', icon: 'in', label: t('checkIn'), sub: t('closedToday'), pulse: false, disabled: true, chip: t('closedToday'), chipTone: 'muted',
       helper: me.schoolDay ? t('opensAt', { time: me.opensAt }) : t('notSchoolDay') };
   }

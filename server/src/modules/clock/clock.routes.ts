@@ -20,6 +20,7 @@ import {
   clockRules,
   loadZones,
   logEvent,
+  personCalendar,
   personState,
   personView,
   punch,
@@ -333,6 +334,17 @@ router.get('/me', async (req: Request, res: Response) => {
         ...(await personState(db, device)),
       },
     });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** The person's own calendar: a month of expected hours, days off and what was recorded. */
+router.get('/calendar', async (req: Request, res: Response) => {
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req));
+    return res.json({ success: true, data: await personCalendar(db, device, req.query.month) });
   } catch (err) {
     return send(res, err);
   }

@@ -58,6 +58,9 @@ export interface WeekDay {
   checkIn: string | null;
   checkOut: string | null;
   status: string | null;
+  /** the hours expected of the person that day */
+  start?: string | null;
+  end?: string | null;
 }
 
 export interface DayState {
@@ -70,10 +73,26 @@ export interface DayState {
   opensAt: string;
   today: { checkIn: string | null; checkOut: string | null; status: string; outStatus: string | null; minutesAtSchool: number } | null;
   week: WeekDay[];
+  /** today is not a working day for this person */
+  dayOff?: boolean;
+  /** ...and the school closes check-in on a day off */
+  dayOffClosed?: boolean;
+  /** the next day they are expected */
+  nextDay?: { date: string; start: string | null } | null;
+  /** their working week: keys '0'..'6', 0 = Sunday */
+  myWeek?: { own: boolean; days: Record<string, { works: boolean; start: string; end: string }> };
   /** a recent day left without a check-out that the person has not explained yet */
   missedOut?: { date: string; checkIn: string | null } | null;
   /** today's times for this person: their own hours (own) or the school's */
   rules: { lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; own?: boolean };
+}
+
+export type MyDayKind = 'on_time' | 'late' | 'absent' | 'today' | 'planned' | 'off' | 'closed' | 'untracked';
+export interface MyDay { date: string; kind: MyDayKind; start: string | null; end: string | null; in: string | null; out: string | null; early: boolean; noOut: boolean; own: boolean }
+/** One month of the person's own days. */
+export interface MyCalendar {
+  month: string; today: string; min: string; max: string; days: MyDay[];
+  summary: { workDays: number; worked: number; late: number; absent: number; daysOff: number; plannedMinutes: number; left: number };
 }
 
 export interface Me extends DayState {
@@ -148,6 +167,7 @@ export const clockApi = {
   me: (slug: string, token: string) => call<Me>(slug, '/me', { token }),
   challenge: (slug: string, token: string) => call<{ nonce: string; expiresIn: number; serverNow: string }>(slug, '/challenge', { method: 'POST', token, body: '{}' }),
   punch: (slug: string, token: string, payload: Record<string, unknown>) => call<PunchResult>(slug, '/punch', { method: 'POST', token, body: JSON.stringify(payload) }),
+  calendar: (slug: string, token: string, month?: string) => call<MyCalendar>(slug, `/calendar${month ? `?month=${month}` : ''}`, { token }),
   pushOn: (slug: string, token: string, payload: { subscription: unknown; lang: string; test?: boolean }) =>
     call<{ on: boolean; tested: boolean }>(slug, '/push', { method: 'POST', token, body: JSON.stringify(payload) }),
   pushOff: (slug: string, token: string) => call<{ on: boolean }>(slug, '/push', { method: 'DELETE', token }),

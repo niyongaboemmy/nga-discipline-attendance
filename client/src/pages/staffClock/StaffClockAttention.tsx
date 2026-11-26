@@ -1,6 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Copy, KeyRound, MapPin, Power, ShieldAlert, Smartphone, X, ChevronRight } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Copy, KeyRound, MapPin, Power, ShieldAlert, Smartphone, X, ChevronRight, BellRing } from 'lucide-react';
 import type { Overview } from '../../api/staffClock';
 import { initialsOf } from '../../api/staffClock';
 import { useToast } from '../../context/ToastContext';
@@ -73,8 +73,13 @@ export const Ring: React.FC<{ value: number; total: number; size?: number; label
 export interface SheetPerson { id: string; name: string; meta?: string; tag?: string; group?: string; personId?: string; /** the day this row is about */ date?: string }
 
 /** Side sheet listing people (not in, no check-out ...), with "Copy names". */
-export const ListSheet: React.FC<{ title: string; subtitle?: string; people: SheetPerson[]; empty: string; onClose: () => void; onPick?: (p: SheetPerson) => void }> = ({ title, subtitle, people, empty, onClose, onPick }) => {
+export const ListSheet: React.FC<{
+  title: string; subtitle?: string; people: SheetPerson[]; empty: string; onClose: () => void; onPick?: (p: SheetPerson) => void;
+  /** one thing to do with the whole list (remind them, for instance) */
+  action?: { label: string; hint?: string; run: () => Promise<void> };
+}> = ({ title, subtitle, people, empty, onClose, onPick, action }) => {
   const toast = useToast();
+  const [acting, setActing] = useState(false);
   useEffect(() => {
     // A person's history open on top: Escape closes that first, not this list.
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('.sh-overlay')) onClose(); };
@@ -131,6 +136,12 @@ export const ListSheet: React.FC<{ title: string; subtitle?: string; people: She
         )}
         {people.length > 0 && (
           <footer className="sc-sheet-foot">
+            {action && (
+              <button className="sc-btn sc-btn-primary" disabled={acting} title={action.hint} data-testid="sheet-action"
+                onClick={() => { setActing(true); void action.run().finally(() => setActing(false)); }}>
+                <BellRing size={16} /> {acting ? 'Sending…' : action.label}
+              </button>
+            )}
             <button className="sc-btn sc-btn-soft" onClick={() => void copy()}><Copy size={16} /> Copy names</button>
           </footer>
         )}

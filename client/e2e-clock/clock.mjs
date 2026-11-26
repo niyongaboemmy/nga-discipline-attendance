@@ -67,7 +67,9 @@ function mockServer(opts = {}) {
   const person = { name: opts.name || 'Grace Mukamana', firstName: (opts.name || 'Grace Mukamana').split(' ')[0], initials: 'GM', role: 'Teacher' };
   const day = () => ({
     serverNow: st.now, schoolDate: '2026-11-24', timezone: 'Africa/Kigali', schoolDay: true,
-    next: st.checkOut ? 'done' : st.checkIn ? 'check_out' : 'check_in', checkoutOpensAt: null, opensAt: '05:00',
+    next: opts.dayOff ? 'closed' : st.checkOut ? 'done' : st.checkIn ? 'check_out' : 'check_in', checkoutOpensAt: null, opensAt: '05:00',
+    dayOff: !!opts.dayOff, dayOffClosed: !!opts.dayOff, nextDay: opts.dayOff ? { date: '2026-11-26', start: '10:00' } : null,
+    myWeek: { own: !!opts.dayOff, days: Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, { works: opts.dayOff ? d === '4' || d === '1' : d !== '0' && d !== '6', start: opts.dayOff ? '10:00' : '08:30', end: opts.dayOff ? '14:00' : '16:00' }])) },
     missedOut: opts.missed && !st.claimed ? { date: '2026-11-23', checkIn: '07:35' } : null,
     today: st.checkIn ? { checkIn: st.checkIn, checkOut: st.checkOut, status: 'present', outStatus: st.checkOut ? 'on_time' : null, minutesAtSchool: st.checkOut ? 508 : 0 } : null,
     week: [
@@ -103,6 +105,29 @@ function mockServer(opts = {}) {
         rules: opts.own ? { lateAfter: '10:00', earlyLeaveBefore: '14:00', minShiftMinutes: 60, own: true } : { lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60 } }));
     }
     if (p === '/missed-checkout') { st.claimed = body.time; return route.fulfill(ok(day())); }
+    if (p === '/calendar') {
+      // One month of the person's days: weekdays 08:30-16:00 (or Mon + Thu 10:00-14:00 with own hours), the 18th closed.
+      const month = u.searchParams.get('month') || '2026-11';
+      const days = [];
+      const sum = { workDays: 0, worked: 0, late: 0, absent: 0, daysOff: 0, plannedMinutes: 0, left: 0 };
+      for (let d = new Date(`${month}-01T12:00:00Z`); d.toISOString().slice(0, 7) === month; d.setUTCDate(d.getUTCDate() + 1)) {
+        const date = d.toISOString().slice(0, 10);
+        const wd = d.getUTCDay();
+        const closed = date === '2026-11-18';
+        const works = !closed && (opts.dayOff ? wd === 1 || wd === 4 : wd !== 0 && wd !== 6);
+        const past = date < '2026-11-24';
+        const n = d.getUTCDate();
+        const kind = closed ? 'closed' : !works ? 'off' : date === '2026-11-24' ? (st.checkIn ? 'on_time' : 'today') : !past ? 'planned' : n === 5 ? 'absent' : n % 6 === 0 ? 'late' : 'on_time';
+        const came = kind === 'on_time' || kind === 'late';
+        days.push({ date, kind, start: works ? (opts.dayOff ? '10:00' : '08:30') : null, end: works ? (opts.dayOff ? '14:00' : '16:00') : null,
+          in: came ? (kind === 'late' ? '08:47' : date === '2026-11-24' ? st.checkIn : '07:3' + (n % 10)) : null, out: came && past && n !== 23 ? '16:1' + (n % 10) : null, early: false, noOut: came && n === 23, own: !!opts.dayOff });
+        if (works) { sum.workDays++; sum.plannedMinutes += opts.dayOff ? 240 : 450; if (!past && !came) sum.left++; } else sum.daysOff++;
+        if (came) sum.worked++;
+        if (kind === 'late') sum.late++;
+        if (kind === 'absent') sum.absent++;
+      }
+      return route.fulfill(ok({ month, today: '2026-11-24', min: '2025-11', max: '2027-05', days, summary: sum }));
+    }
     if (p === '/challenge') return route.fulfill(ok({ nonce: 'n' + Math.random().toString(36).slice(2), expiresIn: 60, serverNow: st.now }));
     if (p === '/punch') {
       const d = Math.abs(body.position.lat - SCHOOL.lat) * 111195;
@@ -392,9 +417,16 @@ async function extrasFlow(browser, theme) {
   await page.getByRole('button', { name: /Yes, this is my/ }).click();
   const allow = page.getByRole('button', { name: 'Allow location' });
   if (await allow.isVisible().catch(() => false)) await allow.click();
-  await expectText(page, 'You did not check out', `${tag} missed check-out card`);
-  await expectText(page, 'Remind me', `${tag} reminders card`);
+  // The page stays small: three short buttons; each opens a popup.
+  if (await page.getByTestId('my-calendar').count()) fail(`${tag}: the calendar is shown on the page itself`);
+  await page.getByTestId('quick-reminders').click();
+  await expectText(page, 'Remind me', `${tag} reminders popup`);
   await expectText(page, '15 minutes before', `${tag} reminders lead`);
+  await shot(page, `${tag}-39-reminders-popup`);
+  await page.keyboard.press('Escape');
+  if (await page.getByTestId('ck-sheet').count()) fail(`${tag}: Escape did not close the popup`);
+  await page.getByTestId('quick-missed').click();
+  await expectText(page, 'You did not check out', `${tag} missed check-out popup`);
   const card = page.getByTestId('missed-out');
   await card.getByLabel('What time did you leave?').fill('07:00');
   await expectText(page, 'Enter a time after 07:35', `${tag} time before the check-in refused`);
@@ -405,8 +437,60 @@ async function extrasFlow(browser, theme) {
   await shot(page, `${tag}-40-missed-and-reminders`);
   await card.getByRole('button', { name: 'Send' }).click();
   await expectText(page, 'Your school will confirm the time', `${tag} claim sent`);
-  if (await page.getByTestId('missed-out').count()) fail(`${tag}: the missed check-out card is still shown after sending`);
+  if (await page.getByTestId('ck-sheet').count()) fail(`${tag}: the popup stayed open after sending`);
+  if (await page.getByTestId('quick-missed').count()) fail(`${tag}: the forgotten check-out button is still shown after sending`);
+  await shot(page, `${tag}-40b-minimal-page`);
+
+  // My calendar (popup): the month with expected hours, days off, the school closed, what was recorded.
+  await page.getByTestId('quick-calendar').click();
+  const calendar = page.getByTestId('my-calendar');
+  await calendar.waitFor();
+  await expectText(page, '20 working days', `${tag} calendar summary`);
+  if ((await calendar.locator('.ck-cal-cell.k-off').count()) !== 9) fail(`${tag}: the calendar should show 9 days off in November`);
+  if ((await calendar.locator('.ck-cal-cell.k-closed').count()) !== 1) fail(`${tag}: the closed day is missing`);
+  if ((await calendar.locator('.ck-cal-cell.is-today').count()) !== 1) fail(`${tag}: today is not marked`);
+  await expectText(page, 'At school 08:30 – 16:00', `${tag} today's expected hours`);
+  await calendar.locator('.ck-cal-cell.k-absent').first().click();
+  await expectText(page, 'Absent', `${tag} absent day detail`);
+  await calendar.locator('.ck-cal-cell.k-closed').first().click();
+  await expectText(page, 'School closed', `${tag} closed day detail`);
+  await page.waitForTimeout(200);
+  if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: calendar scrolls sideways`);
+  await shot(page, `${tag}-41-my-calendar`);
+  // A short phone (360 x 640): the month and the picked day's detail fit without scrolling the popup.
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.waitForTimeout(250);
+  {
+    const fits = await page.evaluate(() => {
+      const body = document.querySelector('.ck-pop-body');
+      const day = document.querySelector('.ck-cal-day');
+      return !!body && !!day && body.scrollHeight <= body.clientHeight + 1 && day.getBoundingClientRect().bottom <= window.innerHeight;
+    });
+    if (!fits) fail(`${tag}: the calendar popup does not fit a 360 x 640 phone`);
+    if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: calendar scrolls sideways on a short phone`);
+  }
+  await shot(page, `${tag}-41c-my-calendar-short-phone`);
+  await page.setViewportSize({ width: vp.width, height: vp.height });
+  await calendar.getByRole('button', { name: 'Next month' }).click();
+  await expectText(page, 'December 2026', `${tag} next month`);
+  await page.getByTestId('cal-weekly').click();
+  if ((await calendar.locator('.ck-hours li').count()) !== 7) fail(`${tag}: the weekly hours should list seven days`);
+  if ((await calendar.locator('.ck-hours li.off').count()) !== 2) fail(`${tag}: Saturday and Sunday should be days off`);
+  await shot(page, `${tag}-41b-weekly-hours`);
   await ctx.close();
+
+  // A day off (own hours: Monday and Thursday): check-in is closed and says when the next day is.
+  const off = await newPage(browser, vp, theme, { server: mockServer({ dayOff: true }) });
+  await off.page.goto(`${BASE}/c/nga`);
+  await off.page.getByTestId('gis').click();
+  await off.page.getByRole('button', { name: /Yes, this is my/ }).click();
+  const allow2 = off.page.getByRole('button', { name: 'Allow location' });
+  if (await allow2.isVisible().catch(() => false)) await allow2.click();
+  await expectText(off.page, 'Today is your day off', `${tag} day off chip`);
+  await expectText(off.page, 'Your next day is Thursday 26 November, from 10:00', `${tag} next working day`);
+  if (!(await off.page.locator('.ck-big').isDisabled())) fail(`${tag}: the check-in button is enabled on a day off`);
+  await shot(off.page, `${tag}-42-day-off`);
+  await off.ctx.close();
 }
 
 async function main() {

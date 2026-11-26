@@ -50,8 +50,10 @@ export const SCHOOL_SETTING_DEFAULTS = {
   /** Minutes before a person's own start / end that their phone reminds them to check
    *  in / out (modules/clock/reminders.ts). 0 = no reminders. */
   STAFF_CLOCK_REMIND_MINUTES: '15',
-  /** allow_flag | refuse -- a tap on a day outside SCHOOL_DAYS or an RFID day off. */
-  STAFF_CLOCK_NON_SCHOOL_DAYS: 'allow_flag',
+  /** refuse | allow_flag -- a check-in on a day the person is not expected (their day
+   *  off, a non-school weekday without an own plan, a school day off): closed, or
+   *  allowed and flagged. */
+  STAFF_CLOCK_NON_SCHOOL_DAYS: 'refuse',
   /** Staff the MIS knows as non-students but who hold no Tendo role may still clock. */
   STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF: '1',
   /** Coordinates of clock taps are blanked after this many days (privacy, plan §10). */
