@@ -917,3 +917,5 @@ span.ck-cal-cell { cursor: default; }
 /* Check-out confirm and help sheets */
 .ck-sheet { color: var(--ck-text); }
 .ck-sheet h2 { letter-spacing: -0.4px; }
+
+.ck-sheet .ck-stat { border: 0; background: var(--ck-fill); }
