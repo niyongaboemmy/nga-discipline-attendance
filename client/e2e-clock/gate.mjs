@@ -153,7 +153,10 @@ async function run(browser, vp) {
   // No sideways scrolling, nothing wider than the window; the long name is clipped, not wrapped.
   const over = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, w: window.innerWidth, tall: [...document.querySelectorAll('.gt-row')].map((r) => r.getBoundingClientRect().height) }));
   check(over.sw <= over.w, `${tag}: page is wider than the window (${over.sw} > ${over.w})`);
-  check(Math.max(...over.tall) <= 70, `${tag}: a row grew taller (${Math.max(...over.tall)})`);
+  // A person's row keeps room around the photo (and its ring) and before the edge.
+  const pad = await page.evaluate(() => [...document.querySelectorAll('[data-testid="gate-waiting"] .gt-row')].map((r) => { const b = r.getBoundingClientRect(); const a = r.querySelector('.gt-av').getBoundingClientRect(); const t = r.querySelector('.gt-tag').getBoundingClientRect(); const last = (r.querySelector('.gt-bell, .gt-sent') || r.querySelector('.gt-tag')).getBoundingClientRect(); return { left: Math.round(a.left - b.left), right: Math.round(b.right - last.right), top: Math.round(a.top - b.top), tag: Math.round(t.left - r.querySelector('.gt-row-text').getBoundingClientRect().right) }; }));
+  check(pad.every((x) => x.left >= 8 && x.right >= 8 && x.top >= 8 && x.tag >= 8), `${tag}: a row is cramped ${JSON.stringify(pad)}`);
+  check(Math.max(...over.tall) <= 72, `${tag}: a row grew taller (${Math.max(...over.tall)})`);
   await shot('1-gate');
 
   if (phone) {
@@ -240,6 +243,7 @@ async function main() {
       { name: 'desktop', width: 1440, height: 900, theme: 'light' },
       { name: 'desktop', width: 1440, height: 900, theme: 'dark' },
     ]) {
+      if (process.env.ONLY && !`${vp.name}-${vp.theme}`.includes(process.env.ONLY)) continue; // ONLY=desktop-dark for one size
       await run(browser, vp);
       console.log(`ok ${vp.name}-${vp.theme}`);
     }
