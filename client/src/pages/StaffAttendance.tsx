@@ -1,5 +1,6 @@
 import { UserAvatar } from '../components/common/UserAvatar';
 import { ClockHomeCard } from './staffClock/ClockHomeCard';
+import { StaffHistoryModal } from './staffClock/StaffHistoryModal';
 import React, { useState, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
@@ -50,6 +51,8 @@ export const StaffAttendance: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  /** the person whose window (history, working hours, device) is open */
+  const [person, setPerson] = useState<{ id: string; name: string; date?: string } | null>(null);
 
   const fetchLogs = async () => {
     setLoading(true);
@@ -157,7 +160,11 @@ export const StaffAttendance: React.FC = () => {
               </thead>
               <tbody>
                 {visibleLogs.map((log) => (
-                  <tr key={log.id}>
+                  <tr key={log.id} {...(canViewAll ? {
+                    className: 'sc-row-btn', tabIndex: 0, title: `Open ${log.staff_name}`, 'data-person': log.staff_id,
+                    onClick: () => setPerson({ id: log.staff_id, name: log.staff_name, date: String(log.date).slice(0, 10) }),
+                    onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPerson({ id: log.staff_id, name: log.staff_name, date: String(log.date).slice(0, 10) }); } },
+                  } : {})}>
                     {canViewAll && (
                       <td>
                         <div className="flex items-center gap-3">
@@ -180,6 +187,12 @@ export const StaffAttendance: React.FC = () => {
           </div>
         )}
       </div>
+      {person && (
+        <StaffHistoryModal key={person.id} personId={person.id} name={person.name} initialDate={person.date}
+          list={[...new Map(visibleLogs.map((l) => [l.staff_id, { id: l.staff_id, name: l.staff_name }])).values()]}
+          onNav={(p) => setPerson({ id: p.id, name: p.name })}
+          onClose={() => setPerson(null)} onChanged={() => void fetchLogs()} />
+      )}
     </DashboardLayout>
   );
 };

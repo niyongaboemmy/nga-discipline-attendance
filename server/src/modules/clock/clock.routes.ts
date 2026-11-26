@@ -151,7 +151,9 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
  * installed app could not check in). An optional handoff code rides in the start
  * address so the installed app on an iPhone can take over the sign-in (handoff.ts).
  */
-router.get('/manifest.webmanifest', (req: Request, res: Response) => {
+// Served as /manifest: the web server in front treats every "*.webmanifest" address as a
+// static file and answers 404 before this app is asked (seen live, 2026-11-26).
+router.get(['/manifest', '/manifest.webmanifest'], (req: Request, res: Response) => {
   const tenant: TenantCtx = (req as any).clockTenant;
   const h = HANDOFF_RE.test(String(req.query.h || '')) ? String(req.query.h) : null;
   const start = `/c/${tenant.slug}`;

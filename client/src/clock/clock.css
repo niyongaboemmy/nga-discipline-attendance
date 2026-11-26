@@ -934,3 +934,10 @@ span.ck-cal-cell { cursor: default; }
 .ck-code-row { display: flex; gap: 8px; }
 .ck-code-row .ck-time { height: 52px; border: 1px solid var(--ck-border-strong); background: transparent; color: var(--ck-text); font-size: 17px; }
 .ck-code-row .ck-x-btn { height: 52px; padding: 0 22px; font-size: 16px; }
+
+/* Essentials: keep the last line clear of browser bars. Some phone browsers (Chrome on iPhone)
+   draw their bottom bar over the page: size the screen to the SMALL viewport and leave room below. */
+.ck-e { min-height: 100svh; padding-bottom: calc(44px + env(safe-area-inset-bottom)); }
+@media (max-height: 700px) and (max-width: 767px) { .ck-e { padding-bottom: calc(30px + env(safe-area-inset-bottom)); } }
+@media (min-width: 768px) { .ck-e { padding-bottom: calc(36px + env(safe-area-inset-bottom)); } }
+@media (display-mode: standalone) { .ck-e { padding-bottom: calc(24px + env(safe-area-inset-bottom)); } }

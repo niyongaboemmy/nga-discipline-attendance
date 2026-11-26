@@ -22,7 +22,7 @@
       (function () {
         try {
           var m = location.pathname.match(/^\/c\/([A-Za-z0-9-]{1,63})\/?$/);
-          if (m) document.getElementById('ck-manifest').setAttribute('href', '/api/clock/' + m[1].toLowerCase() + '/manifest.webmanifest');
+          if (m) document.getElementById('ck-manifest').setAttribute('href', '/api/clock/' + m[1].toLowerCase() + '/manifest');
         } catch (e) { /* keep the shared manifest */ }
       })();
       // Never a blank page. If the page's script cannot load (an old copy asking for a file a new
