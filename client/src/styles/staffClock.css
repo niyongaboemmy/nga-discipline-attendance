@@ -1167,3 +1167,12 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
 .sd-confirm { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--bg-subtle); }
 .sd-confirm b { font-size: 14px; }
 @media (max-width: 640px) { .sd-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sd-head { flex-wrap: wrap; } }
+
+/* My check-in device (the signed-in person's own card) */
+.wl-device { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 22px; border: 1px solid var(--border); background: var(--bg-card); min-width: 0; flex-wrap: wrap; }
+.wl-device-ico { width: 34px; height: 34px; flex: none; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--primary-light); color: var(--primary); }
+.wl-device-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 180px; }
+.wl-device-text b { font-size: 14px; }
+.wl-device-text small { font-size: 12.5px; color: var(--text-secondary); }
+.wl-device-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wl-device-ask { font-size: 13px; font-weight: 600; white-space: nowrap; }

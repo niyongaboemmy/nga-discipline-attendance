@@ -10,6 +10,7 @@ import { IdentityUnavailable, resolveStaffIdentity } from './identity.js';
 import { addPairReading, pairingExists } from './pairing.js';
 import { polygonFromZone } from './geofence.js';
 import { createPhoneTap, previewPhoneTap, readPhoneTap, submitPhoneTap } from './phoneTap.js';
+import { createHandoff, HANDOFF_RE, takeHandoff } from './handoff.js';
 import { hasSubscription, parseSubscription, removeSubscription, saveSubscription, sendTest, vapidKeys } from './reminders.js';
 import {
   challengeFor,
@@ -27,6 +28,7 @@ import {
   registerDevice,
   requireDevice,
   roleLabelOf,
+  signOutDevice,
 } from './clock.service.js';
 
 /**
@@ -138,6 +140,97 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
         pushKey: rules.remindMinutes > 0 ? vapidKeys()?.publicKey ?? null : null,
       },
     });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/**
+ * The install manifest of one school's check-in page: the Home Screen icon opens
+ * THIS school (a shared static manifest started at /c/ with no school, so the
+ * installed app could not check in). An optional handoff code rides in the start
+ * address so the installed app on an iPhone can take over the sign-in (handoff.ts).
+ */
+router.get('/manifest.webmanifest', (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  const h = HANDOFF_RE.test(String(req.query.h || '')) ? String(req.query.h) : null;
+  const start = `/c/${tenant.slug}`;
+  res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.send(JSON.stringify({
+    id: start,
+    name: `${tenant.name} · Check-in`,
+    short_name: 'Check-in',
+    description: 'Check in and out at school with one tap.',
+    start_url: h ? `${start}?h=${h}` : start,
+    scope: '/c/',
+    display: 'standalone',
+    orientation: 'any',
+    background_color: '#ffffff',
+    theme_color: '#2563eb',
+    icons: [
+      { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/pwa-maskable-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  }));
+});
+
+/** The signed-in page asks for a code its installed app can trade for its own registration. */
+router.post('/handoff', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req));
+    if (limited(`ho:${tenant.tid}:${device.id}`, 30, 3600_000)) throw new ClockError(429, 'RATE_LIMITED', 'Too many tries. Wait a little.');
+    return res.json({ success: true, data: createHandoff(tenant.tid, device, clockNow()) });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** The installed app (empty storage, new key) takes over the sign-in of the page it was installed from. */
+router.post('/handoff/claim', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  const ip = ipOf(req);
+  const userAgent = req.get('User-Agent') || null;
+  if (limited(`hoc:${tenant.tid}:${ip}`, 20, 3600_000)) return res.status(429).json({ success: false, code: 'RATE_LIMITED', message: 'Too many tries. Wait a little.' });
+  const db = getDb();
+  try {
+    if (!(await clockReady(db))) throw new ClockError(403, 'CLOCK_OFF', 'Staff attendance is not open for this school yet.');
+    const h = takeHandoff(tenant.tid, req.body?.code, clockNow());
+    if (!h) throw new ClockError(410, 'HANDOFF_EXPIRED', 'This sign-in link expired. Sign in with Google.');
+    // The page it came from must still be this person's device.
+    const from = await db.get<{ status: string; user_id: string }>(`SELECT status, user_id FROM attendance_devices WHERE id = ?`, h.deviceId);
+    const user = await db.get<{ status: string | null; role: string | null }>(`SELECT status, role FROM users WHERE id = ?`, h.userId);
+    if (!from || from.status !== 'active' || from.user_id !== h.userId || user?.status === 'inactive') {
+      throw new ClockError(410, 'HANDOFF_EXPIRED', 'This sign-in link expired. Sign in with Google.');
+    }
+    const result = await registerDevice(db, {
+      userId: h.userId, userName: h.userName, google: { sub: h.googleSub, email: h.googleEmail },
+      jwk: req.body?.publicKeyJwk, installUuid: req.body?.installUuid, ngaDid: req.body?.ngaDid,
+      device: req.body?.device ?? {}, userAgent, ip, sameDeviceHandoff: true,
+    });
+    return res.json({
+      success: true,
+      data: {
+        deviceToken: result.deviceToken, deviceStatus: result.status, replaced: false,
+        person: personView(h.userName, user?.role === 'admin' ? 'Administrator' : user?.role === 'teacher' ? 'Teacher' : 'Staff'),
+        email: h.googleEmail,
+      },
+    });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** The person signs this device out themselves (the page then asks for Google sign-in again). */
+router.post('/signout', async (req: Request, res: Response) => {
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req), { allowPending: true });
+    await signOutDevice(db, device, 'signed_out_by_owner');
+    return res.json({ success: true, data: { signedOut: true } });
   } catch (err) {
     return send(res, err);
   }

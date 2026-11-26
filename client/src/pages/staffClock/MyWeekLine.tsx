@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { LogOut, Monitor, Smartphone } from 'lucide-react';
+import { ApiError } from '../../api/client';
 import { staffClockApi, type MyWeek, type MyWeekDay } from '../../api/staffClock';
+import { useToast } from '../../context/ToastContext';
 
 /**
  * The signed-in person's week in one line (their Tendo home card): one capsule per
@@ -31,7 +34,23 @@ export const MyWeekLine: React.FC = () => {
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [pinned, setPinned] = useState(false);
+  const [confirmOut, setConfirmOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const toast = useToast();
   const root = useRef<HTMLDivElement>(null);
+  const signOut = async () => {
+    setSigningOut(true);
+    try {
+      await staffClockApi.signOutMyDevice();
+      toast.success('Device signed out', 'Sign in with Google again on the check-in page when you next check in.');
+      setConfirmOut(false);
+      setW((cur) => (cur ? { ...cur, device: null } : cur));
+    } catch (e) {
+      toast.error('Not signed out', e instanceof ApiError ? e.message : 'Check the connection and try again.');
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -57,6 +76,7 @@ export const MyWeekLine: React.FC = () => {
   const selWork = sel ? worked(sel, w) : null;
 
   return (
+    <>
     <div className="wl" ref={root} data-testid="my-week-line">
       <div className="wl-days" role="group" aria-label={`Your week${w.own ? ' (your own hours)' : ''}`}>
         {w.days.map((d) => {
@@ -95,5 +115,21 @@ export const MyWeekLine: React.FC = () => {
         </span>
       </div>
     </div>
+    {w.device && (
+      <div className="wl-device" data-testid="my-device">
+        <span className="wl-device-ico">{w.device.form_factor === 'desktop' ? <Monitor size={17} /> : <Smartphone size={17} />}</span>
+        <span className="wl-device-text"><b className="sc-clip">{w.device.label || 'My check-in device'}</b><small className="sc-clip">{w.device.status === 'active' ? 'Signed in for check-in' : 'Waiting for approval'} · {w.device.google_email}</small></span>
+        {confirmOut ? (
+          <span className="wl-device-actions">
+            <span className="wl-device-ask">Sign this device out?</span>
+            <button type="button" className="sc-btn sc-btn-sm" disabled={signingOut} onClick={() => setConfirmOut(false)}>Cancel</button>
+            <button type="button" className="sc-btn sc-btn-primary sc-btn-sm" disabled={signingOut} onClick={() => void signOut()} data-testid="my-device-signout-yes">{signingOut ? 'Signing out…' : 'Yes, sign out'}</button>
+          </span>
+        ) : (
+          <button type="button" className="sc-btn sc-btn-sm" onClick={() => setConfirmOut(true)} title="Lost phone or shared computer: sign it out, then sign in again where you check in" data-testid="my-device-signout"><LogOut size={14} /> Sign out device</button>
+        )}
+      </div>
+    )}
+    </>
   );
 };

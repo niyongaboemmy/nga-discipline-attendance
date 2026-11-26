@@ -40,6 +40,7 @@ const WEEK = {
   ],
   summary: { workDays: 5, worked: 3, late: 1, absent: 1, daysOff: 2, plannedMinutes: 2250, left: 1 },
   month: { workDays: 19, worked: 17, late: 2, absent: 2 },
+  device: { id: 9, label: 'Tecno Spark 20 · Chrome', form_factor: 'phone', google_email: 'sample.teacher@gmail.com', status: 'active', registered_at: '2026-11-03T06:00:00Z', last_used_at: '2026-11-26T05:50:00Z' },
 };
 
 async function run(browser, { name, width, height, theme, mobile = false }) {
@@ -58,6 +59,7 @@ async function run(browser, { name, width, height, theme, mobile = false }) {
     const ok = (data) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
     if (p === '/api/sso/verify-mis') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
     if (p === '/api/roles-permissions/me') return ok({ permissionKeys: PERMS });
+    if (p === '/api/staff/clock/my-device/signout') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true,"message":"Device signed out"}' });
     if (p === '/api/staff/clock/my-week') return ok(WEEK);
     if (p === '/api/staff/attendance/me') return ok([{ date: new Date().toLocaleDateString('en-CA'), clock_in: new Date(new Date().setHours(7, 50, 0, 0)).toISOString(), clock_out: null }]);
     return ok([]);
@@ -106,6 +108,14 @@ async function run(browser, { name, width, height, theme, mobile = false }) {
   // Copy link (the desktop app cannot open the link).
   await page.getByTestId('clock-copy-link').click();
   await page.getByText('Check-in link copied').first().waitFor({ timeout: 5000 }).catch(() => fail(`${name}: no "link copied" message`));
+  // My check-in device: sign it out from my account.
+  for (const b of await page.locator('.toast-close').all()) await b.click().catch(() => {});
+  const dev = page.getByTestId('my-device');
+  if (!(await dev.getByText('Tecno Spark 20 · Chrome').isVisible())) fail(`${name}: my device is not shown`);
+  await page.getByTestId('my-device-signout').click();
+  await page.getByTestId('my-device-signout-yes').click();
+  await page.getByText('Device signed out').first().waitFor({ timeout: 5000 }).catch(() => fail(`${name}: no "signed out" message`));
+  if (await page.getByTestId('my-device').count()) fail(`${name}: the device row stayed after signing out`);
   await ctx.close();
   console.log(`ok ${name}`);
 }

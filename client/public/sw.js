@@ -13,7 +13,7 @@
  * page, so they switch to the current release at once. Pages where someone
  * could be mid-task (a quiz, an editor, a chat) are never reloaded.
  */
-const VERSION = "app-shell-v5";
+const VERSION = "app-shell-v6";
 // v5: the staff clock page (/c/<school>, clock.html) keeps its own offline copy
 // under "/clock.html"; it never overwrites the app page cached under "/".
 // v4: multi-tenancy -- offline keys now carry the school (tendo.outbox.v2.<tid>.<uid>).
@@ -21,10 +21,17 @@ const VERSION = "app-shell-v5";
 // content hash in their names, so they're cached the first time they load and
 // served from the cache after that: the app opens with no connection. A new
 // worker version starts a fresh assets cache.
-const ASSETS = "app-assets-v4";
+// v5: never keep a web page under a script or style address (see `real` below);
+// the new name also drops any such copy saved by an earlier worker.
+const ASSETS = "app-assets-v5";
 
 // Exact paths that are safe to reload without losing anyone's work.
 const SAFE_TO_REFRESH = new Set(["/", "/dashboard", "/home", "/login", "/app", "/welcome", "/reminders", "/apps"]);
+
+/** A built file answered with a web page is the server's "no such file", not the file. */
+function real(res) {
+  return !(res.headers.get("content-type") || "").includes("text/html");
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -75,6 +82,11 @@ self.addEventListener("fetch", (event) => {
           (hit) =>
             hit ||
             fetch(req).then((res) => {
+              // After a release the old files are gone and the server answers their
+              // addresses with the app's page (200, text/html). Keeping that as "the
+              // script" left pages blank for good: answer "not found" instead, so the
+              // page reloads itself onto the new release.
+              if (!real(res)) return new Response("", { status: 404, statusText: "Not Found" });
               if (res.ok) cache.put(req, res.clone());
               return res;
             }),

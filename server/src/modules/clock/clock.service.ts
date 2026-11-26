@@ -232,6 +232,26 @@ export interface RegisterInput {
   ip?: string | null;
   /** Check everything and say what would happen, write nothing (the confirm screen). */
   dryRun?: boolean;
+  /** The same phone moving its sign-in to the installed app (handoff.ts): replaces the old key, no approval, no quota. */
+  sameDeviceHandoff?: boolean;
+}
+
+/**
+ * An iPhone page and the same page added to the Home Screen report the same phone
+ * with slightly different words (the installed app drops "Version/x" and
+ * "Safari/x"): compare without them, so installing the app is "the same phone".
+ */
+export function sameBrowserFamily(a: string | null | undefined, b: string | null | undefined): boolean {
+  const norm = (ua: string) => ua.replace(/\s*(Version|Safari)\/[\w.]+/g, '').replace(/\s+/g, ' ').trim();
+  return !!a && !!b && norm(a) === norm(b);
+}
+
+/** The person signs their own device out: the next visit asks for Google sign-in again. */
+export async function signOutDevice(db: Database, device: DeviceRow, reason: string): Promise<void> {
+  await db.run(`UPDATE attendance_devices SET status = 'revoked', revoked_at = ?, revoked_by = ?, revoke_reason = ? WHERE id = ? AND status IN ('active','pending')`,
+    new Date(clockNow()).toISOString(), device.user_id, reason, device.id);
+  await db.run(`DELETE FROM staff_clock_push WHERE device_id = ?`, device.id).catch(() => undefined);
+  await logEvent(db, { kind: 'sign_out', reason, userId: device.user_id, deviceId: device.id });
 }
 
 export interface RegisterResult {
@@ -299,12 +319,13 @@ export async function registerDevice(db: Database, input: RegisterInput): Promis
 
   if (active) {
     const sameDevice =
+      input.sameDeviceHandoff === true ||
       active.install_uuid === installUuid ||
       (!!ngaDid && active.nga_did === ngaDid) ||
-      (!!input.userAgent && active.user_agent === input.userAgent && (active.model ?? '') === (info.model ?? ''));
+      (!!input.userAgent && sameBrowserFamily(active.user_agent, input.userAgent) && (active.model ?? '') === (info.model ?? ''));
     if (sameDevice) {
       replaces = active;
-      reason = 'rekey';
+      reason = input.sameDeviceHandoff ? 'handoff' : 'rekey';
     } else {
       const windowStart = new Date(clockNow() - rules.selfReplaceDays * 86_400_000).toISOString();
       const recent = await db.get(
@@ -332,7 +353,7 @@ export async function registerDevice(db: Database, input: RegisterInput): Promis
   if (replaces) {
     await db.run(
       `UPDATE attendance_devices SET status = 'replaced', revoked_at = ?, revoke_reason = ? WHERE id = ?`,
-      nowIso, reason === 'rekey' ? 'same_device_rekey' : 'replaced_by_owner', replaces.id
+      nowIso, reason === 'rekey' ? 'same_device_rekey' : reason === 'handoff' ? 'moved_to_installed_app' : 'replaced_by_owner', replaces.id
     );
   }
 

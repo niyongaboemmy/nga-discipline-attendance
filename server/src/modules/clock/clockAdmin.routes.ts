@@ -10,7 +10,7 @@ import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettin
 import { currentTenant } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
 import { schoolBranding } from '../../routes/sso.js';
-import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, personWeek, scanCard, setManualCheckout } from './clock.service.js';
+import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, personWeek, scanCard, setManualCheckout, signOutDevice } from './clock.service.js';
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 import { buildReport, reportStaff } from './clockReport.js';
@@ -38,7 +38,28 @@ const TIME = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a time like 08:3
 /** The signed-in staff member's own week: expected hours, days off, what was recorded (their Tendo home card). */
 router.get('/my-week', authorizePermission('STAFF_ATTENDANCE_CLOCK', 'STAFF_ATTENDANCE_VIEW_OWN', 'STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
   try {
-    return res.json({ success: true, data: await personWeek(getDb(), String(actorOf(req).id)) });
+    const db = getDb();
+    const id = String(actorOf(req).id);
+    // Their own check-in device, so they can sign it out from their account.
+    const device = (await db.get(
+      `SELECT id, label, form_factor, google_email, status, registered_at, last_used_at FROM attendance_devices
+        WHERE user_id = ? AND status IN ('active','pending') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, registered_at DESC LIMIT 1`, id)) ?? null;
+    return res.json({ success: true, data: { ...(await personWeek(db, id)), device } });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+/** The signed-in person signs their own check-in device out (lost phone, shared computer). */
+router.post('/my-device/signout', authorizePermission('STAFF_ATTENDANCE_CLOCK', 'STAFF_ATTENDANCE_VIEW_OWN', 'STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
+  try {
+    const db = getDb();
+    const actor = actorOf(req);
+    const devices = await db.all<any[]>(`SELECT * FROM attendance_devices WHERE user_id = ? AND status IN ('active','pending')`, String(actor.id));
+    if (!devices.length) throw new ClockError(404, 'NOT_FOUND', 'No device is signed in for your check-in.');
+    for (const d of devices) await signOutDevice(db, d, 'signed_out_from_account');
+    await recordAudit(db, actor, 'STAFF_CLOCK_DEVICE_SIGNOUT_SELF', 'attendance_device', devices[0].id, { devices: devices.map((d) => d.label) });
+    return res.json({ success: true, message: 'Device signed out' });
   } catch (err) {
     return fail(res, err);
   }

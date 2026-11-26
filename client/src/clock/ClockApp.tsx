@@ -5,7 +5,7 @@ import { formatDistance, GeoError, permissionState, sampleLocation, weakButPlaus
 import { renderGoogleButton } from './google';
 import { PhoneTap } from './PhoneTap';
 import { QuickIcons, QuickMissed, QuickSheets, type QuickWhich } from './Quick';
-import { reminderSupport } from './reminders';
+import { reminderSupport, unsubscribeReminders } from './reminders';
 import { detectLang, makeT, type Lang, type T } from './i18n';
 import {
   IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconKeyboard, IconMail, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
@@ -90,6 +90,9 @@ export function ClockApp() {
   const [seeking, setSeeking] = useState<number | null>(null);
   /** the reading is vague but the school accepts it for review */
   const [weak, setWeak] = useState(false);
+  const [schoolCode, setSchoolCode] = useState('');
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   /** which popup of the daily screen is open: my calendar, reminders, a forgotten check-out */
   const [quickOpen, setQuickOpen] = useState<QuickWhich | null>(null);
   const [hint, setHint] = useState<ZoneHint | null>(null);
@@ -260,7 +263,22 @@ export function ClockApp() {
       setBoot(b);
       adoptServerTime(b.serverNow);
       document.title = `${t('staffAttendance')} · ${b.school.name}`;
-      const stored = await loadDevice(slug);
+      let stored = await loadDevice(slug);
+      // Opened from the Home Screen icon with a sign-in code (an iPhone gives the installed app
+      // empty storage): take over the sign-in of the page it was installed from, once.
+      const handoffCode = new URLSearchParams(window.location.search).get('h');
+      if (handoffCode) window.history.replaceState(null, '', `/c/${slug}`);
+      if (!stored?.token && handoffCode && b.open) {
+        try {
+          const keys = await ensureKeys(slug);
+          const res = await clockApi.claimHandoff(slug, { code: handoffCode, publicKeyJwk: keys.publicJwk, installUuid: await installUuid(), ngaDid: ngaDeviceId(), device: await deviceInfo() });
+          await saveToken(slug, res.deviceToken);
+          void askPersistentStorage();
+          stored = await loadDevice(slug);
+        } catch {
+          /* expired or used: the welcome screen asks for Google sign-in */
+        }
+      }
       if (stored?.token) {
         setToken(stored.token);
         try {
@@ -290,6 +308,31 @@ export function ClockApp() {
     void Promise.resolve().then(start);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // While signed in in a browser tab, keep the install manifest carrying a fresh sign-in code, so
+  // "Add to Home Screen" gives an app that is already signed in (iPhones do not share storage with it).
+  useEffect(() => {
+    if (view !== 'daily' || !token || !slug) return;
+    const standalone = window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    if (standalone) return;
+    let live = true;
+    const link = document.getElementById('ck-manifest');
+    const refresh = async () => {
+      try {
+        const { code } = await clockApi.handoff(slug, token);
+        if (live) link?.setAttribute('href', `/api/clock/${slug}/manifest.webmanifest?h=${code}`);
+      } catch {
+        /* the plain manifest still opens this school */
+      }
+    };
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 8 * 60_000);
+    return () => {
+      live = false;
+      window.clearInterval(id);
+      link?.setAttribute('href', `/api/clock/${slug}/manifest.webmanifest`);
+    };
+  }, [view, token, slug]);
 
   // Refresh the state when the page comes back (and every minute on screen).
   useEffect(() => {
@@ -473,6 +516,31 @@ export function ClockApp() {
     [slug, token, t]
   );
 
+  /** Sign this device out: the server forgets it, so does the browser, and the page asks for Google again. */
+  const signOutHere = async () => {
+    if (!slug || !token) return;
+    setSigningOut(true);
+    try {
+      await clockApi.signOut(slug, token).catch((err) => {
+        // Already removed on the server: still forget it here.
+        if (!(err instanceof ClockApiError) || err.status !== 401) throw err;
+      });
+      await unsubscribeReminders();
+      await forgetDevice(slug);
+      setToken(null);
+      setMe(null);
+      setHelp(false);
+      setConfirmSignOut(false);
+      setQuickOpen(null);
+      flash(t('signedOut'));
+      await start();
+    } catch (err) {
+      flash(err instanceof OfflineError ? t('noInternet') : t('somethingWrong'), true);
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   const installApp = async () => {
     if (installEvt) {
       installEvt.prompt();
@@ -505,7 +573,17 @@ export function ClockApp() {
 
       {view === 'fatal' && fatal && (
         <MessageScreen tone="amber" icon={<IconWarn size={42} />} title={fatal.title} lead={fatal.lead}
-          action={fatal.retry ? <button className="ck-btn ck-btn-primary ck-btn-block" onClick={() => void start()}>{t('tryAgain')}</button> : undefined} />
+          action={fatal.retry ? <button className="ck-btn ck-btn-primary ck-btn-block" onClick={() => void start()}>{t('tryAgain')}</button>
+            : !slug ? (
+              // Opened without a school (an old Home Screen icon): let the person type their school's code.
+              <form className="ck-code" onSubmit={(e) => { e.preventDefault(); const c = schoolCode.trim().toLowerCase().replace(/^.*\/c\//, '').replace(/[^a-z0-9-]/g, ''); if (c) window.location.assign(`/c/${c}`); }}>
+                <label className="ck-code-label" htmlFor="ck-code">{t('schoolCode')}</label>
+                <div className="ck-code-row">
+                  <input id="ck-code" className="ck-time" value={schoolCode} onChange={(e) => setSchoolCode(e.target.value)} placeholder={t('schoolCodeHint')} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                  <button className="ck-x-btn" type="submit" disabled={!schoolCode.trim()}>{t('openSchool')}</button>
+                </div>
+              </form>
+            ) : undefined} />
       )}
 
       {view === 'welcome' && boot && (
@@ -728,6 +806,24 @@ export function ClockApp() {
                 ))}
               </div>
             </div>
+            {token && slug && me && (
+              <div className="ck-help-card ck-help-row ck-signout">
+                {confirmSignOut ? (
+                  <>
+                    <b className="ck-wrap">{t('signOutAsk')}</b>
+                    <span className="ck-signout-actions">
+                      <button className="ck-pill" onClick={() => setConfirmSignOut(false)} disabled={signingOut}>{t('cancel')}</button>
+                      <button className="ck-pill ck-pill-danger" onClick={() => void signOutHere()} disabled={signingOut} data-testid="signout-yes">{signingOut ? t('oneMoment') : t('signOutYes')}</button>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="ck-signout-who"><b>{me.person.name}</b><small className="ck-clip">{me.email}</small></span>
+                    <button className="ck-pill" onClick={() => setConfirmSignOut(true)} data-testid="signout">{t('signOut')}</button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
