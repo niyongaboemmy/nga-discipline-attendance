@@ -328,7 +328,7 @@ export function ClockApp() {
   useEffect(() => {
     if (view !== 'welcome' || !boot?.googleClientId || !googleSlot.current) return;
     const el = googleSlot.current;
-    renderGoogleButton({ clientId: boot.googleClientId, container: el, width: el.clientWidth || 320, dark, locale: lang === 'rw' ? 'rw' : lang, onCredential }).catch(() =>
+    renderGoogleButton({ clientId: boot.googleClientId, container: el, dark, locale: lang === 'rw' ? 'rw' : lang, onCredential }).catch(() =>
       setWelcomeError(t('somethingWrong'))
     );
   }, [view, boot, dark, lang, onCredential, t]);
