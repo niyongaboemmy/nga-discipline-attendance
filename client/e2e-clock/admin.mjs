@@ -508,7 +508,18 @@ async function run(browser, vp) {
   await expectText(page, 'Closed before', `${tag} rules day picture`);
   await expectText(page, 'Earliest check-in.', `${tag} rule help line`);
   await page.getByRole('button', { name: 'About Check-in opens' }).click();
+  // The tip floats: opening it must not move the rules under it.
+  const lateTop0 = await page.locator('[data-rule="lateAfter"]').evaluate((el) => el.getBoundingClientRect().top);
   await expectText(page, 'nobody can check in before this time', `${tag} rule tooltip`);
+  {
+    const lateTop1 = await page.locator('[data-rule="lateAfter"]').evaluate((el) => el.getBoundingClientRect().top);
+    // (measured before the click below, so compare after closing and reopening)
+    await page.keyboard.press('Escape');
+    const closedTop = await page.locator('[data-rule="lateAfter"]').evaluate((el) => el.getBoundingClientRect().top);
+    if (Math.abs(lateTop1 - closedTop) > 1) fail(`${tag}: the rule tip pushes the rules down (${Math.round(lateTop1 - closedTop)} px)`);
+    void lateTop0;
+    await page.getByRole('button', { name: 'About Check-in opens' }).click();
+  }
   {
     const fit = await page.locator('#zone-rules .zc-drawer-body').evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && [...el.querySelectorAll('.zr-label b, .zr-seg-pick button')].every((n) => n.scrollWidth <= n.clientWidth + 1));
     if (!fit) fail(`${tag}: a rule label or choice is cut off in the rules drawer`);
