@@ -42,6 +42,11 @@ export const SCHOOL_SETTING_DEFAULTS = {
   STAFF_DEVICE_SELF_REPLACE_DAYS: '30',
   STAFF_CLOCK_GOOGLE_DOMAINS: '',
   STAFF_CLOCK_SCHOOL_NETWORKS: '',
+  /** review | refuse -- off the school network with a GPS reading less precise than
+   *  STAFF_CLOCK_MAX_ACCURACY_M (mobile data indoors): accept it for an admin to
+   *  review while its circle still reaches the school, or refuse it. */
+  STAFF_CLOCK_WEAK_LOCATION: 'review',
+  STAFF_CLOCK_WEAK_MAX_ACCURACY_M: '500',
   /** allow_flag | refuse -- a tap on a day outside SCHOOL_DAYS or an RFID day off. */
   STAFF_CLOCK_NON_SCHOOL_DAYS: 'allow_flag',
   /** Staff the MIS knows as non-students but who hold no Tendo role may still clock. */

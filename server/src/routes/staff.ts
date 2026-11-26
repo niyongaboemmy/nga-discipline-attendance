@@ -5,6 +5,7 @@ import { authorizePermission } from '../middleware/authorize.js';
 import { resolveAcademicPeriod } from '../utils/academicPeriod.js';
 import { schoolDateString, schoolMinutesOfDay } from '../shared/schoolTime.js';
 import { staffLateCutoffMinutes } from '../tenancy/settings.js';
+import { loadPlanBook } from '../modules/clock/workPlan.js';
 import { clockRules } from '../modules/clock/clock.service.js';
 
 /** Staff are "late" if they clock in after this local time (minutes from midnight). */
@@ -38,9 +39,12 @@ router.post('/clock-in', authorizePermission('STAFF_ATTENDANCE_CLOCK'), phoneClo
   // school's timezone, not a mix of UTC and server-local.
   const today = schoolDateString();
   const now = new Date().toISOString();
-  const status = schoolMinutesOfDay() > LATE_CUTOFF_MINUTES() ? 'late' : 'present';
-
   const db = getDb();
+  // Late against this person's own hours when they have them (modules/clock/workPlan.ts).
+  const rule = (await loadPlanBook(db, staffId)).dayFor(staffId, today);
+  const cutoff = rule.own ? rule.lateAfter : LATE_CUTOFF_MINUTES();
+  const status = cutoff != null && schoolMinutesOfDay() > cutoff ? 'late' : 'present';
+
   try {
     const existing = await db.get(
       'SELECT id FROM staff_attendance WHERE staff_id = ? AND date = ?',

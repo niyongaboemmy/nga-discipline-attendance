@@ -98,13 +98,24 @@ export interface ZoneVerdict {
   distance: number | null;
   /** metres outside the nearest zone's edge, 0 when inside */
   outsideBy: number;
+  /** metres from the reading's centre to the nearest zone's edge, before any tolerance (0 inside) */
+  edge: number;
+}
+
+/**
+ * A reading too coarse for the normal rule (a phone on mobile data indoors) that
+ * may still count, for an admin to review: within the school's wider limit, and
+ * its circle of doubt reaches the school.
+ */
+export function weakButPlausible(fix: Fix, verdict: ZoneVerdict, opts: { maxAccuracy: number; weakMaxAccuracy: number }): boolean {
+  return fix.accuracy > opts.maxAccuracy && fix.accuracy <= opts.weakMaxAccuracy && verdict.zoneId != null && verdict.edge <= fix.accuracy;
 }
 
 export function judge(fix: Fix, zones: Zone[], opts: { maxAccuracy: number; allowance: number }): ZoneVerdict {
   const active = zones.filter((z) => z.active);
   const preciseEnough = fix.accuracy <= opts.maxAccuracy;
   const credit = Math.min(fix.accuracy, opts.allowance);
-  let best: ZoneVerdict = { inside: false, preciseEnough, zoneId: null, zoneName: null, distance: null, outsideBy: Infinity };
+  let best: ZoneVerdict = { inside: false, preciseEnough, zoneId: null, zoneName: null, distance: null, outsideBy: Infinity, edge: Infinity };
   for (const z of active) {
     if (z.kind === 'polygon') {
       const ring = polygonRing(z);
@@ -114,7 +125,7 @@ export function judge(fix: Fix, zones: Zone[], opts: { maxAccuracy: number; allo
       const d = within ? 0 : edgeDistance(fix, ring);
       const outsideBy = within ? 0 : Math.max(0, d - credit);
       if (outsideBy < best.outsideBy || (outsideBy === best.outsideBy && (best.distance ?? Infinity) > d)) {
-        best = { inside: outsideBy === 0 && preciseEnough, preciseEnough, zoneId: z.id, zoneName: z.name, distance: Math.round(d), outsideBy };
+        best = { inside: outsideBy === 0 && preciseEnough, preciseEnough, zoneId: z.id, zoneName: z.name, distance: Math.round(d), outsideBy, edge: d };
       }
       continue;
     }
@@ -122,10 +133,11 @@ export function judge(fix: Fix, zones: Zone[], opts: { maxAccuracy: number; allo
     const d = haversine(fix, { lat: z.center_lat, lng: z.center_lng });
     const outsideBy = Math.max(0, d - (z.radius_m + credit));
     if (outsideBy < best.outsideBy || (outsideBy === best.outsideBy && (best.distance ?? Infinity) > d)) {
-      best = { inside: outsideBy === 0 && preciseEnough, preciseEnough, zoneId: z.id, zoneName: z.name, distance: Math.round(d), outsideBy };
+      best = { inside: outsideBy === 0 && preciseEnough, preciseEnough, zoneId: z.id, zoneName: z.name, distance: Math.round(d), outsideBy, edge: Math.max(0, d - z.radius_m) };
     }
   }
   if (best.outsideBy === Infinity) best.outsideBy = 0;
+  if (best.edge === Infinity) best.edge = 0;
   return best;
 }
 
@@ -142,6 +154,7 @@ export type ClockFlag =
   | 'clock_skew'
   | 'non_school_day'
   | 'on_school_network'
+  | 'weak_location'
   | 'phone_location';
 
 export function plausibilityFlags(input: {

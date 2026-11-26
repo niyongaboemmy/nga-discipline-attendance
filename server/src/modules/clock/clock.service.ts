@@ -4,7 +4,8 @@ import { addDays, dayOfWeekFor, schoolDateString, schoolMinutesOfDay, timeToMinu
 import { schoolDays, schoolSetting, schoolTimezone, numberSetting, staffLateCutoffMinutes } from '../../tenancy/settings.js';
 import { resolveAcademicPeriodForDate } from '../../utils/academicPeriod.js';
 import { cleanJwk, consumeNonce, hashDeviceToken, issueNonce, jwkThumbprint, newDeviceToken, punchMessage, verifyDeviceSignature, type EcJwk } from './deviceAuth.js';
-import { judge, onSchoolNetwork, plausibilityFlags, validFix, type ClockFlag, type Fix, type Zone } from './geofence.js';
+import { judge, onSchoolNetwork, plausibilityFlags, validFix, weakButPlausible, type ClockFlag, type Fix, type Zone } from './geofence.js';
+import { loadPlanBook, minShiftFor, opensFor } from './workPlan.js';
 
 /**
  * The staff attendance clock (STAFF_ATTENDANCE_CLOCK_PLAN.md §4-§7): device rules,
@@ -45,6 +46,9 @@ export interface ClockRules {
   selfReplaceDays: number;
   googleDomains: string;
   schoolNetworks: string;
+  /** off the school network with an imprecise reading: accept for review, or refuse */
+  weakLocation: 'review' | 'refuse';
+  weakMaxAccuracy: number;
   nonSchoolDays: 'allow_flag' | 'refuse';
   allowUnassignedStaff: boolean;
   retentionDays: number;
@@ -68,6 +72,8 @@ export function clockRules(): ClockRules {
     selfReplaceDays: numberSetting('STAFF_DEVICE_SELF_REPLACE_DAYS'),
     googleDomains: schoolSetting('STAFF_CLOCK_GOOGLE_DOMAINS'),
     schoolNetworks: schoolSetting('STAFF_CLOCK_SCHOOL_NETWORKS'),
+    weakLocation: schoolSetting('STAFF_CLOCK_WEAK_LOCATION') === 'refuse' ? 'refuse' : 'review',
+    weakMaxAccuracy: numberSetting('STAFF_CLOCK_WEAK_MAX_ACCURACY_M'),
     nonSchoolDays: schoolSetting('STAFF_CLOCK_NON_SCHOOL_DAYS') === 'refuse' ? 'refuse' : 'allow_flag',
     allowUnassignedStaff: schoolSetting('STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF') !== '0',
     retentionDays: numberSetting('STAFF_CLOCK_RETENTION_DAYS'),
@@ -86,14 +92,18 @@ export async function clockReady(db: Database, rules = clockRules()): Promise<bo
   return (await loadZones(db, true)).length > 0;
 }
 
+/** A day the school is closed for everyone (the days-off calendar). */
+export async function isHoliday(db: Database, date: string): Promise<boolean> {
+  try {
+    return !!(await db.get(`SELECT 1 FROM rfid_days_off WHERE session_date = ?`, date));
+  } catch {
+    return false;
+  }
+}
+
 export async function isSchoolDay(db: Database, date: string): Promise<boolean> {
   if (!schoolDays().has(dayOfWeekFor(date))) return false;
-  try {
-    const off = await db.get(`SELECT 1 FROM rfid_days_off WHERE session_date = ?`, date);
-    return !off;
-  } catch {
-    return true;
-  }
+  return !(await isHoliday(db, date));
 }
 
 // ---------------------------------------------------------------------------
@@ -385,23 +395,28 @@ export async function personState(db: Database, device: DeviceRow) {
   const minutes = schoolMinutesOfDay(now);
   const rules = clockRules();
   const row = await db.get<StaffDayRow>(`SELECT * FROM staff_attendance WHERE staff_id = ? AND date = ?`, device.user_id, today);
+  // The person's own week (workPlan.ts) or the school's rules.
+  const book = await loadPlanBook(db, device.user_id);
+  const rule = book.dayFor(device.user_id, today);
+  const opens = opensFor(rules.opens, rule);
+  const minShift = minShiftFor(rules.minShiftMinutes, rule);
   const weekStart = weekStartFor(today);
-  const weekDates = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(weekStart, i)).filter((d) => schoolDays().has(dayOfWeekFor(d)));
+  const weekDates = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(weekStart, i)).filter((d) => book.dayFor(device.user_id, d).works);
   const weekRows = await db.all<StaffDayRow[]>(
     `SELECT * FROM staff_attendance WHERE staff_id = ? AND date >= ? AND date <= ?`,
     device.user_id, weekStart, addDays(weekStart, 6)
   );
   const byDate = new Map(weekRows.map((r) => [r.date, r]));
-  const schoolDay = await isSchoolDay(db, today);
+  const schoolDay = rule.works && !(await isHoliday(db, today));
 
   let next: NextAction;
   let checkoutOpensAt: string | null = null;
   if (!row) {
-    next = minutes < timeToMinutes(rules.opens) || (!schoolDay && rules.nonSchoolDays === 'refuse') ? 'closed' : 'check_in';
+    next = minutes < timeToMinutes(opens) || (!schoolDay && rules.nonSchoolDays === 'refuse') ? 'closed' : 'check_in';
   } else if (!row.clock_out) {
     next = 'check_out';
     const inAt = Date.parse(row.clock_in!);
-    const opensAt = inAt + rules.minShiftMinutes * 60_000;
+    const opensAt = inAt + minShift * 60_000;
     if (Number.isFinite(opensAt) && opensAt > now.getTime()) checkoutOpensAt = schoolClockLabel(new Date(opensAt));
   } else {
     next = 'done';
@@ -415,7 +430,9 @@ export async function personState(db: Database, device: DeviceRow) {
     schoolDay,
     next,
     checkoutOpensAt,
-    opensAt: rules.opens,
+    opensAt: opens,
+    /** today's times for this person: their own plan, or the school's rules */
+    rules: { lateAfter: rule.start ?? '', earlyLeaveBefore: rule.end ?? '', minShiftMinutes: minShift, own: rule.own },
     today: row
       ? {
           checkIn: label(row.clock_in),
@@ -460,7 +477,7 @@ export interface PunchResult {
   flags: ClockFlag[];
 }
 
-const REVIEW_FLAGS = new Set(['suspicious_accuracy', 'no_jitter', 'stale_fix', 'impossible_travel', 'twin_punch']);
+const REVIEW_FLAGS = new Set(['suspicious_accuracy', 'no_jitter', 'stale_fix', 'impossible_travel', 'twin_punch', 'weak_location']);
 // Card scans are reviewed like phone taps only on their location flags (a card has no device of its own).
 
 export function needsReview(flags: string | null, reviewState: string | null): boolean {
@@ -557,18 +574,21 @@ export async function applyTap(
 
   const today = schoolDateString(now);
   const minutes = schoolMinutesOfDay(now);
-  const schoolDay = await isSchoolDay(db, today);
+  // This person's day: their own week when they have one, else the school's rules.
+  const rule = (await loadPlanBook(db, t.userId)).dayFor(t.userId, today);
+  const opens = opensFor(rules.opens, rule);
+  const schoolDay = rule.works && !(await isHoliday(db, today));
   if (!schoolDay && rules.nonSchoolDays === 'refuse') await refuse(403, 'NOT_SCHOOL_DAY', 'Attendance is closed today.', 'non_school_day');
 
   const row = await db.get<StaffDayRow>(`SELECT * FROM staff_attendance WHERE staff_id = ? AND date = ?`, t.userId, today);
   if (row?.clock_out) await refuse(409, 'ALREADY_DONE', 'Already checked in and out today.', 'already_done');
   const action: 'check_in' | 'check_out' = row ? 'check_out' : 'check_in';
 
-  if (action === 'check_in' && minutes < timeToMinutes(rules.opens)) {
-    await refuse(403, 'NOT_OPEN', `Check-in opens at ${rules.opens}.`, 'not_open', { opensAt: rules.opens });
+  if (action === 'check_in' && minutes < timeToMinutes(opens)) {
+    await refuse(403, 'NOT_OPEN', `Check-in opens at ${opens}.`, 'not_open', { opensAt: opens });
   }
   if (action === 'check_out') {
-    const opensAt = Date.parse(row!.clock_in!) + rules.minShiftMinutes * 60_000;
+    const opensAt = Date.parse(row!.clock_in!) + minShiftFor(rules.minShiftMinutes, rule) * 60_000;
     if (Number.isFinite(opensAt) && opensAt > nowMs) {
       await refuse(409, 'TOO_SOON', `Check-out opens at ${schoolClockLabel(new Date(opensAt))}.`, 'too_soon', { checkoutOpensAt: schoolClockLabel(new Date(opensAt)) });
     }
@@ -577,7 +597,11 @@ export async function applyTap(
   const zones = await loadZones(db, true);
   const network = onSchoolNetwork(t.ip, rules.schoolNetworks);
   const verdict = judge(fix!, zones, { maxAccuracy: rules.maxAccuracy, allowance: rules.allowance });
-  if (rules.requireZone && !network) {
+  // On their own network (mobile data) a phone indoors often cannot do better than a
+  // coarse reading: it counts when its circle still reaches the school, and an admin reviews it.
+  const weak = rules.requireZone && !network && rules.weakLocation === 'review'
+    && weakButPlausible(fix!, verdict, { maxAccuracy: rules.maxAccuracy, weakMaxAccuracy: rules.weakMaxAccuracy });
+  if (rules.requireZone && !network && !weak) {
     if (!verdict.preciseEnough) {
       await refuse(422, 'LOW_ACCURACY', 'The location is not precise enough.', 'low_accuracy', { accuracy: Math.round(fix!.accuracy) }, verdict.distance);
     }
@@ -589,6 +613,7 @@ export async function applyTap(
   const flags = [...t.flags];
   if (!schoolDay) flags.push('non_school_day');
   if (network) flags.push('on_school_network');
+  if (weak) flags.push('weak_location');
   if (action === 'check_in' && t.source === 'device') {
     const twins = await db.all<{ clock_in: string; in_lat: number; in_lng: number }[]>(
       `SELECT clock_in, in_lat, in_lng FROM staff_attendance WHERE date = ? AND staff_id <> ? AND source = 'device' AND in_ip = ? AND in_lat IS NOT NULL`,
@@ -603,7 +628,7 @@ export async function applyTap(
   const zoneId = verdict.inside ? verdict.zoneId : null;
   let status: string;
   if (action === 'check_in') {
-    status = minutes > staffLateCutoffMinutes() ? 'late' : 'present';
+    status = rule.lateAfter != null && minutes > rule.lateAfter ? 'late' : 'present';
     const { academicYearId, academicTermId } = await resolveAcademicPeriodForDate(db, today);
     const hasSubjects = await db.get(
       `SELECT 1 FROM class_subject_assignments WHERE teacher_id = ? AND (academic_term_id = ? OR academic_term_id IS NULL) LIMIT 1`,
@@ -624,7 +649,7 @@ export async function applyTap(
       throw err;
     }
   } else {
-    status = minutes < timeToMinutes(rules.earlyLeaveBefore) ? 'early' : 'on_time';
+    status = rule.earlyBefore != null && minutes < rule.earlyBefore ? 'early' : 'on_time';
     const merged = [...JSON.parse(row!.flags || '[]'), ...flags.map((f) => `out:${f}`)];
     const res = await db.run(
       `UPDATE staff_attendance SET clock_out = ?, out_status = ?, out_device_id = ?, out_lat = ?, out_lng = ?, out_accuracy_m = ?,

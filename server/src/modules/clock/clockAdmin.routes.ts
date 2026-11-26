@@ -9,10 +9,11 @@ import { addDays, dayOfWeekFor, safeClockLabel, schoolDateString, schoolMinutesO
 import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
 import { currentTenant } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
-import { ClockError, clockNow, clockRules, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
+import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 import { buildReport, reportStaff } from './clockReport.js';
+import { loadPlanBook, parseWeekPlan, sameWeek, savePlan, schoolWeek, type DayRule, type PlanBook } from './workPlan.js';
 
 /**
  * School admin side of the staff clock (Tendo -> Staff attendance): zone and rules,
@@ -71,6 +72,7 @@ const RulesBody = z.object({
   selfReplaceDays: z.number().int().min(0).max(365).optional(),
   googleDomains: z.string().max(400).regex(/^[a-z0-9.,\s@-]*$/i, 'List domains like gmail.com, school.rw').optional(),
   schoolNetworks: z.string().max(400).refine((v) => validCidrList(v), 'List IPv4 addresses or ranges like 41.186.10.0/24').optional(),
+  weakLocation: z.enum(['review', 'refuse']).optional(),
   nonSchoolDays: z.enum(['allow_flag', 'refuse']).optional(),
   allowUnassignedStaff: z.boolean().optional(),
   /** Mark setup checklist steps done (merged with the ones already done). */
@@ -99,6 +101,7 @@ router.put('/config', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), asyn
       ['selfReplaceDays', 'STAFF_DEVICE_SELF_REPLACE_DAYS', String],
       ['googleDomains', 'STAFF_CLOCK_GOOGLE_DOMAINS', (v) => String(v).trim()],
       ['schoolNetworks', 'STAFF_CLOCK_SCHOOL_NETWORKS', (v) => String(v).trim()],
+      ['weakLocation', 'STAFF_CLOCK_WEAK_LOCATION', String],
       ['nonSchoolDays', 'STAFF_CLOCK_NON_SCHOOL_DAYS', String],
       ['allowUnassignedStaff', 'STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF', (v) => (v ? '1' : '0')],
     ];
@@ -259,13 +262,16 @@ const FLAG_TEXT: Record<string, string> = {
   impossible_travel: 'Moved impossibly fast since the last tap',
   twin_punch: 'Same spot and time as another check-in',
   clock_skew: 'Device clock is wrong',
-  non_school_day: 'Not a school day',
+  non_school_day: 'Not a working day for them',
   on_school_network: 'On the school network',
+  weak_location: 'Imprecise location on their own network: check they were at school',
   phone_location: 'Used a phone’s location (QR code on a computer)',
 };
 
-function bucketsFor(rows: Array<{ clock_in: string | null }>, opens: string, lateAfter: number) {
-  const ins = rows.map((r) => timeToMinutesOf(r.clock_in)).filter((m): m is number => m != null);
+function bucketsFor(rows: Array<{ clock_in: string | null; status?: string }>, opens: string, lateAfter: number) {
+  // Late is what was recorded for the person (their own hours), not the school's cut-off.
+  const timed = rows.map((r) => ({ m: timeToMinutesOf(r.clock_in), late: r.status === 'late' })).filter((x): x is { m: number; late: boolean } => x.m != null);
+  const ins = timed.map((x) => x.m);
   const lateEnd = lateAfter + 60;
   let start = Math.max(timeToMinutes(opens), Math.min(lateAfter - 120, ...ins.map((m) => Math.floor(m / 15) * 15)));
   start = Math.floor(start / 15) * 15;
@@ -273,8 +279,8 @@ function bucketsFor(rows: Array<{ clock_in: string | null }>, opens: string, lat
   const out: Array<{ from: string; to: string; onTime: number; late: number }> = [];
   for (let m = start; m < Math.min(end, start + 15 * 24); m += 15) {
     const label = (x: number) => `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
-    const inBucket = ins.filter((v) => v >= m && v < m + 15);
-    out.push({ from: label(m), to: label(m + 15), onTime: inBucket.filter((v) => v <= lateAfter).length, late: inBucket.filter((v) => v > lateAfter).length });
+    const inBucket = timed.filter((x) => x.m >= m && x.m < m + 15);
+    out.push({ from: label(m), to: label(m + 15), onTime: inBucket.filter((x) => !x.late).length, late: inBucket.filter((x) => x.late).length });
   }
   return out;
 }
@@ -323,6 +329,10 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : today;
     const rules = clockRules();
     const lateAfter = staffLateCutoffMinutes();
+    // Who is expected today and until when: each person's own week, or the school's rules.
+    const book = await loadPlanBook(db);
+    const holiday = await isHoliday(db, date);
+    const nowMin = schoolMinutesOfDay(new Date(clockNow()));
 
     const records = await db.all<any[]>(`SELECT * FROM staff_attendance WHERE date = ? ORDER BY clock_in`, date);
     const devices = await db.all<any[]>(`SELECT ${DEVICE_COLS} FROM attendance_devices WHERE status IN ('active','pending')`);
@@ -335,10 +345,13 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     for (const r of records) if (!people.has(String(r.staff_id))) people.set(String(r.staff_id), { id: String(r.staff_id), name: r.staff_name, role: roleOf.get(String(r.staff_id)) ?? null });
 
     const recordByUser = new Map(records.map((r) => [String(r.staff_id), r]));
+    const ruleOf = new Map<string, DayRule>([...people.keys()].map((id) => [id, book.dayFor(id, date)]));
+    const expected = (id: string) => !holiday && !!ruleOf.get(id)?.works;
     const rows = [...people.values()].map((p) => {
       const r = recordByUser.get(p.id);
       const d = activeByUser.get(p.id);
       const flags: string[] = r?.flags ? JSON.parse(r.flags) : [];
+      const rule = ruleOf.get(p.id)!;
       return {
         recordId: r?.id ?? null,
         userId: p.id,
@@ -346,7 +359,10 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         role: p.role === 'admin' ? 'Administrator' : p.role === 'teacher' ? 'Teacher' : 'Staff',
         checkIn: safeClockLabel(r?.clock_in),
         checkOut: safeClockLabel(r?.clock_out),
-        status: r ? (r.review_state === 'invalid' ? 'invalid' : r.status) : 'not_in',
+        // Nobody is "not in" on a day they are not expected.
+        status: r ? (r.review_state === 'invalid' ? 'invalid' : r.status) : expected(p.id) ? 'not_in' : 'day_off',
+        expected: expected(p.id),
+        plan: { own: rule.own, works: rule.works, start: rule.start, end: rule.end },
         outStatus: r?.out_status ?? null,
         distance: r?.in_distance_m ?? null,
         source: r?.source ?? null,
@@ -359,7 +375,12 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     rows.sort((a, b) => (a.checkIn ?? '99') .localeCompare(b.checkIn ?? '99') || a.name.localeCompare(b.name));
 
     const valid = records.filter((r) => r.review_state !== 'invalid');
-    const lateMinutes = valid.filter((r) => r.status === 'late').map((r) => timeToMinutesOf(r.clock_in)).filter((m): m is number => m != null).map((m) => m - lateAfter).sort((a, b) => a - b);
+    const lateMinutes = valid.filter((r) => r.status === 'late')
+      .map((r) => { const m = timeToMinutesOf(r.clock_in); const cut = ruleOf.get(String(r.staff_id))?.lateAfter ?? lateAfter; return m == null ? null : m - cut; })
+      .filter((m): m is number => m != null && m > 0).sort((a, b) => a - b);
+    // Counted today: the people expected, plus anyone who came on a day off.
+    const counted = [...people.keys()].filter((id) => expected(id) || (recordByUser.has(id) && recordByUser.get(id).review_state !== 'invalid'));
+    const notIn = [...people.keys()].filter((id) => expected(id) && !valid.some((r) => String(r.staff_id) === id)).length;
     const review = records
       .filter((r) => needsReview(r.flags, r.review_state))
       .map((r) => {
@@ -380,9 +401,11 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const unregistered = [...people.values()].filter((p) => !activeByUser.has(p.id)).map((p) => ({ id: p.id, name: p.name }));
 
     // Missing check-outs: today once the check-out window has opened, and the last 7 days.
-    const outOpen = date !== today || schoolMinutesOfDay(new Date(clockNow())) >= timeToMinutes(rules.earlyLeaveBefore);
+    // Each person's check-out is "missing" once their own end time has passed.
+    const endOf = (id: string) => ruleOf.get(id)?.earlyBefore ?? timeToMinutes(rules.earlyLeaveBefore);
+    const outOpen = date !== today || nowMin >= Math.min(timeToMinutes(rules.earlyLeaveBefore), ...valid.filter((r) => r.clock_in && !r.clock_out).map((r) => endOf(String(r.staff_id))));
     const noCheckoutToday = outOpen
-      ? valid.filter((r) => r.clock_in && !r.clock_out).map((r) => ({ userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed' }))
+      ? valid.filter((r) => r.clock_in && !r.clock_out && (date !== today || nowMin >= endOf(String(r.staff_id)))).map((r) => ({ userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed' }))
       : [];
     const recentNoCheckout = (await db.all<any[]>(
       `SELECT staff_id, staff_name, date, clock_in, out_status FROM staff_attendance
@@ -411,12 +434,15 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         serverNow: new Date(clockNow()).toISOString(),
         rosterSource,
         rules: { lateAfter: rules.lateAfter, earlyLeaveBefore: rules.earlyLeaveBefore, opens: rules.opens, enabled: rules.enabled },
+        ownPlans: book.ownCount(people.keys(), date),
+        holiday,
         kpis: {
-          staff: people.size,
+          staff: counted.length,
           checkedIn: valid.length,
           onTime: valid.filter((r) => r.status === 'present').length,
           late: valid.filter((r) => r.status === 'late').length,
-          notIn: Math.max(0, people.size - valid.length),
+          notIn,
+          dayOff: people.size - counted.length,
           checkedOut: valid.filter((r) => r.clock_out).length,
           earlyLeave: valid.filter((r) => r.out_status === 'early').length,
           needsReview: review.length,
@@ -484,6 +510,7 @@ async function loadReport(req: any) {
     offDays = new Set((await db.all<{ session_date: string }[]>(`SELECT session_date FROM rfid_days_off WHERE session_date >= ? AND session_date <= ?`, loadFrom, calTo)).map((r) => r.session_date));
   } catch { /* no days-off table */ }
   const { roster, rosterSource } = await staffRoster(req, db, 'report');
+  const book = await loadPlanBook(db);
 
   const report = buildReport({
     from, to, calFrom, calTo, today,
@@ -494,8 +521,9 @@ async function loadReport(req: any) {
     records: rows.map((r) => ({ staffId: String(r.staff_id), name: r.staff_name, date: String(r.date), inMinutes: timeToMinutesOf(r.clock_in), late: r.status === 'late' })),
     lateAfter,
     opens: timeToMinutes(clockRules().opens),
+    expects: (id, date) => book.dayFor(id, date).works,
   });
-  return { report, term, rosterSource };
+  return { report: { ...report, ownPlans: book.ownCount(roster.map((p) => p.id), today) }, term, rosterSource };
 }
 
 router.get('/report', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
@@ -547,7 +575,7 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
     try {
       offDays = new Set((await db.all<{ session_date: string }[]>(`SELECT session_date FROM rfid_days_off WHERE session_date >= ? AND session_date <= ?`, from, to)).map((r) => r.session_date));
     } catch { /* no days-off table */ }
-    const weekdays = schoolDays();
+    const book = await loadPlanBook(db, id);
     const byDate = new Map(records.map((r) => [String(r.date), r]));
 
     const user = await db.get<{ name: string; role: string | null }>(`SELECT name, role FROM users WHERE id = ?`, id);
@@ -555,12 +583,14 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
     const rawName = cachedRoster?.name || user?.name || records[records.length - 1]?.staff_name || 'Staff member';
     const name = fullName(...String(rawName).split(/\s+/)) || 'Staff member';
 
-    const out: Array<{ date: string; kind: DayKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean }> = [];
+    const out: Array<{ date: string; kind: DayKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean; start: string | null; end: string | null; extra: boolean }> = [];
     const sum = { schoolDays: 0, attended: 0, onTime: 0, late: 0, absent: 0, noOut: 0, early: 0 };
     const inMinutes: number[] = [];
     for (let d = from; d <= to; d = addDays(d, 1)) {
       const r = byDate.get(d);
-      const schoolDay = weekdays.has(dayOfWeekFor(d)) && !offDays.has(d);
+      // Expected that day: their own week (as it was on that date) or the school's rules.
+      const rule = book.dayFor(id, d);
+      const schoolDay = rule.works && !offDays.has(d);
       let kind: DayKind;
       if (r && r.review_state === 'invalid') kind = 'invalid';
       else if (r && r.clock_in) kind = r.status === 'late' ? 'late' : 'on_time';
@@ -573,9 +603,12 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
       const noOut = !!r?.clock_in && !r?.clock_out && d < today;
       const early = r?.out_status === 'early';
       const minutes = r?.clock_in && r?.clock_out ? Math.max(0, Math.round((Date.parse(r.clock_out) - Date.parse(r.clock_in)) / 60000)) : null;
-      out.push({ date: d, kind, in: inLabel, out: outLabel, early, noOut, minutes, card: r?.source === 'card' });
+      // Came on a day they were not expected: it counts for them, never against.
+      const extra = !schoolDay && (kind === 'on_time' || kind === 'late');
+      out.push({ date: d, kind, in: inLabel, out: outLabel, early, noOut, minutes, card: r?.source === 'card', start: schoolDay ? rule.start : null, end: schoolDay ? rule.end : null, extra });
       if (schoolDay && d >= trackingFrom && d < today) sum.schoolDays += 1;
       else if (schoolDay && d === today && r?.clock_in) sum.schoolDays += 1;
+      else if (extra || (schoolDay && d < trackingFrom && (kind === 'on_time' || kind === 'late'))) sum.schoolDays += 1;
       if (kind === 'on_time' || kind === 'late') {
         sum.attended += 1;
         if (kind === 'on_time') sum.onTime += 1; else sum.late += 1;
@@ -608,6 +641,7 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
         person: { id, name, role: cachedRoster?.role ?? user?.role ?? null },
         from, to, today, trackingFrom,
         rules: { lateAfter: hhmm(lateAfter), earlyLeaveBefore: rules.earlyLeaveBefore },
+        plan: planView(book, id, today),
         days: out,
         summary: {
           ...sum,
@@ -618,6 +652,77 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
           bestStreak: best,
         },
       },
+    });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A person's own working week (workPlan.ts). No plan = the school's rules.
+// ---------------------------------------------------------------------------
+
+function planView(book: PlanBook, id: string, today: string) {
+  const current = book.versionFor(id, today);
+  const next = book.upcoming(id, today);
+  const meta = (v: NonNullable<typeof current>) => ({ effectiveFrom: v.effectiveFrom, note: v.note, updatedByName: v.updatedByName, updatedAt: v.updatedAt });
+  return {
+    own: !!current,
+    days: book.weekFor(id, today),
+    school: schoolWeek(book.school),
+    ...(current ? meta(current) : { effectiveFrom: null, note: null, updatedByName: null, updatedAt: null }),
+    /** a change already saved for a later day */
+    upcoming: next ? { effectiveFrom: next.effectiveFrom, days: next.days, note: next.note } : null,
+    versions: book.history(id).map((v) => ({ effectiveFrom: v.effectiveFrom, own: !!v.days, updatedByName: v.updatedByName, updatedAt: v.updatedAt })).reverse(),
+  };
+}
+
+const PlanBody = z.object({
+  /** the seven days; null = follow the school's rules again */
+  days: z.unknown().nullable(),
+  effectiveFrom: z.string().regex(ISO_DATE, 'Choose the day the hours start.').optional(),
+  note: z.string().max(200, 'Keep the note under 200 characters.').optional(),
+});
+
+router.get('/people/:id/plan', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL', 'STAFF_ATTENDANCE_ZONES_MANAGE'), async (req: any, res) => {
+  try {
+    const id = String(req.params.id || '').slice(0, 64);
+    const today = schoolDateString(new Date(clockNow()));
+    return res.json({ success: true, data: planView(await loadPlanBook(getDb(), id), id, today) });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+router.put('/people/:id/plan', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), async (req: any, res) => {
+  try {
+    const b = PlanBody.parse(req.body ?? {});
+    const db = getDb();
+    const id = String(req.params.id || '').slice(0, 64);
+    if (!id) throw new ClockError(400, 'INVALID', 'Choose a staff member.');
+    const today = schoolDateString(new Date(clockNow()));
+    const from = b.effectiveFrom ?? today;
+    if (from < addDays(today, -370) || from > addDays(today, 370)) throw new ClockError(400, 'INVALID', 'Choose a start day within a year of today.');
+
+    const before = await loadPlanBook(db, id);
+    let days = null as ReturnType<typeof schoolWeek> | null;
+    if (b.days !== null) {
+      const parsed = parseWeekPlan(b.days);
+      if ('error' in parsed) throw new ClockError(400, 'INVALID', parsed.error);
+      // The same week as the school's rules is not an own plan.
+      days = sameWeek(parsed.days, schoolWeek(before.school)) ? null : parsed.days;
+    }
+    const actor = actorOf(req);
+    const { rejudged } = await savePlan(db, { userId: id, effectiveFrom: from, days, note: b.note, by: actor, nowIso: new Date(clockNow()).toISOString() });
+    const after = await loadPlanBook(db, id);
+    const person = (await db.get<{ name: string }>(`SELECT name FROM users WHERE id = ?`, id))?.name ?? id;
+    await recordAudit(db, actor, days ? 'STAFF_CLOCK_PLAN_SAVED' : 'STAFF_CLOCK_PLAN_REMOVED', 'staff_work_plan', null,
+      { staff: person, staffId: id, effectiveFrom: from, days, note: b.note, rejudged }, { previousValue: before.weekFor(id, from), newValue: after.weekFor(id, from) });
+    const when = from === today ? 'from today' : `from ${from}`;
+    return res.json({
+      success: true,
+      message: days ? `Own hours saved, ${when}` : `Back to the school's hours, ${when}`,
+      data: { plan: planView(after, id, today), rejudged },
     });
   } catch (err) {
     return fail(res, err);
@@ -732,15 +837,17 @@ router.get('/export', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (r
     const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || '')) ? String(req.query.from) : today;
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')) ? String(req.query.to) : from;
     const rows = await getDb().all<any[]>(`SELECT * FROM staff_attendance WHERE date BETWEEN ? AND ? ORDER BY date, staff_name`, from, to);
+    const book = await loadPlanBook(getDb());
+    const hoursOf = (r: any) => { const d = book.dayFor(String(r.staff_id), String(r.date)); return d.works ? `${d.start}-${d.end}${d.own ? ' (own)' : ''}` : d.own ? 'Day off (own)' : ''; };
     const esc = (v: unknown) => {
       const s = v == null ? '' : String(v);
       return /[",\n]/.test(s) || /^[=+\-@]/.test(s) ? `"${s.replace(/"/g, '""').replace(/^([=+\-@])/, "'$1")}"` : s;
     };
-    const header = ['Date', 'Staff', 'Check-in', 'Status', 'Check-out', 'Check-out status', 'Distance (m)', 'Source', 'Review', 'Flags'];
+    const header = ['Date', 'Staff', 'Check-in', 'Status', 'Check-out', 'Check-out status', 'Distance (m)', 'Source', 'Review', 'Flags', 'Expected hours'];
     const lines = rows.map((r) => [
       r.date, r.staff_name, safeClockLabel(r.clock_in) ?? '', r.status, safeClockLabel(r.clock_out) ?? '',
       r.out_status ?? '', r.in_distance_m != null ? Math.round(r.in_distance_m) : '', r.source ?? '', r.review_state ?? '',
-      (r.flags ? JSON.parse(r.flags) : []).join(' '),
+      (r.flags ? JSON.parse(r.flags) : []).join(' '), hoursOf(r),
     ].map(esc).join(','));
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="staff-attendance-${from}${to !== from ? `-to-${to}` : ''}.csv"`);

@@ -6,7 +6,10 @@ import { addDays, dayOfWeekFor, weekStartFor } from '../../shared/schoolTime.js'
  * rows and the roster, this turns them into numbers.
  *
  * Rules shared with the day overview and a person's history:
- *  - a school day is a configured weekday that is not a day off;
+ *  - a school day is a day somebody is expected: a working day of the school's rules
+ *    or of a person's own week (workPlan.ts), and not a day off for the school;
+ *  - each day counts the people expected that day, plus anyone who came on a day
+ *    they were not expected (they get the credit, the rate never passes 100%);
  *  - days before the school's first device/card check-in are 'untracked', never absent;
  *  - a check-in an administrator marked invalid does not count;
  *  - today counts the people who are in, and "not in yet" is not an absence.
@@ -39,6 +42,8 @@ export interface ReportInput {
   records: ReportRecord[];
   lateAfter: number;
   opens: number;
+  /** the person's week says they work on this date's weekday (default: the school's weekdays) */
+  expects?: (userId: string, date: string) => boolean;
 }
 
 export interface ReportDay {
@@ -98,10 +103,13 @@ const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
 
 export function groupTests(schoolDays: number): Array<{ key: ReportGroupKey; label: string; rule: string; test: (p: ReportPerson) => boolean }> {
   const r = groupRules(schoolDays);
+  // The wording uses the school's day count; each person is measured against their
+  // own expected days, so someone who works two days a week is judged on those.
+  const mine = (p: ReportPerson) => (p.schoolDays > 0 && p.schoolDays < schoolDays ? groupRules(p.schoolDays) : r);
   return [
-    { key: 'conversation', label: 'Need a conversation', rule: `Absent ${days(r.conversationAbsent)} or more, or late ${days(r.conversationLate)} or more`, test: (p) => p.absent >= r.conversationAbsent || p.late >= r.conversationLate },
-    { key: 'often_late', label: 'Often late', rule: `Late on ${days(r.oftenLate)} or more`, test: (p) => p.late >= r.oftenLate },
-    { key: 'rarely_absent', label: 'Rarely absent', rule: r.rarelyAbsent === 0 ? 'Never absent in this period' : `Absent ${days(r.rarelyAbsent)} or fewer`, test: (p) => p.schoolDays > 0 && p.absent <= r.rarelyAbsent },
+    { key: 'conversation', label: 'Need a conversation', rule: `Absent ${days(r.conversationAbsent)} or more, or late ${days(r.conversationLate)} or more`, test: (p) => p.absent >= mine(p).conversationAbsent || p.late >= mine(p).conversationLate },
+    { key: 'often_late', label: 'Often late', rule: `Late on ${days(r.oftenLate)} or more`, test: (p) => p.late >= mine(p).oftenLate },
+    { key: 'rarely_absent', label: 'Rarely absent', rule: r.rarelyAbsent === 0 ? 'Never absent in this period' : `Absent ${days(r.rarelyAbsent)} or fewer`, test: (p) => p.schoolDays > 0 && p.absent <= mine(p).rarelyAbsent },
     { key: 'on_time', label: 'On time 90% of days', rule: 'On time at least nine days in ten they came', test: (p) => p.attended > 0 && (p.punctuality ?? 0) >= 90 },
   ];
 }
@@ -118,13 +126,32 @@ export function buildReport(input: ReportInput) {
   const byDate = new Map<string, ReportRecord[]>();
   for (const r of input.records) byDate.set(r.date, [...(byDate.get(r.date) ?? []), r]);
 
-  const describe = (date: string): ReportDay => {
-    const kind = dayKind(date, input);
-    const recs = kind === 'school' ? (byDate.get(date) ?? []).filter((r) => people.has(r.staffId)) : [];
-    const late = recs.filter((r) => r.late).length;
-    const onTime = recs.length - late;
-    return { date, kind, onTime, late, absent: kind === 'school' ? Math.max(0, staff - recs.length) : 0, staff: kind === 'school' ? staff : 0, today: date === today };
+  const expects = input.expects ?? ((_id: string, date: string) => input.weekdays.has(dayOfWeekFor(date)));
+  const ids = [...people.keys()];
+  /** Who counts on a day: the people expected, plus the ones who came anyway. */
+  const dayCache = new Map<string, { day: ReportDay; counted: Set<string> }>();
+  const look = (date: string): { day: ReportDay; counted: Set<string> } => {
+    const hit = dayCache.get(date);
+    if (hit) return hit;
+    const blank = (kind: ReportDayKind) => ({ day: { date, kind, onTime: 0, late: 0, absent: 0, staff: 0, today: date === today }, counted: new Set<string>() });
+    let out: { day: ReportDay; counted: Set<string> };
+    const expected = date > today || input.offDays.has(date) ? [] : ids.filter((id) => expects(id, date));
+    // With nobody on the list yet, the school's own weekdays still shape the calendar.
+    const open = expected.length > 0 || (ids.length === 0 && !input.offDays.has(date) && input.weekdays.has(dayOfWeekFor(date)));
+    if (date > today) out = blank('future');
+    else if (!open) out = blank('off');
+    else if (date < input.trackingFrom) out = blank('untracked');
+    else {
+      const counted = new Set(expected);
+      const recs = (byDate.get(date) ?? []).filter((r) => people.has(r.staffId));
+      for (const r of recs) counted.add(r.staffId);
+      const late = recs.filter((r) => r.late).length;
+      out = { day: { date, kind: 'school', onTime: recs.length - late, late, absent: Math.max(0, counted.size - recs.length), staff: counted.size, today: date === today }, counted };
+    }
+    dayCache.set(date, out);
+    return out;
   };
+  const describe = (date: string): ReportDay => look(date).day;
 
   const calendar: ReportDay[] = [];
   for (let d = calFrom; d <= calTo; d = addDays(d, 1)) calendar.push(describe(d));
@@ -158,10 +185,10 @@ export function buildReport(input: ReportInput) {
     return { start, rate: s.rate, late: s.late, prevRate: sum(prev).rate };
   });
 
-  const weekdays = [...input.weekdays].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((dow) => ({ dow, rate: sum(inPeriod.filter((d) => dayOfWeekFor(d.date) === dow)).rate }));
+  const weekdays = [...new Set([...input.weekdays, ...inPeriod.map((d) => dayOfWeekFor(d.date))])].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((dow) => ({ dow, rate: sum(inPeriod.filter((d) => dayOfWeekFor(d.date) === dow)).rate }));
 
   // When staff arrive: every check-in of the period, per 15 minutes.
-  const ins = input.records.filter((r) => r.date >= from && r.date <= to && r.inMinutes != null && people.has(r.staffId)).map((r) => ({ m: r.inMinutes as number, late: r.late }));
+  const ins = input.records.filter((r) => r.date >= from && r.date <= to && r.inMinutes != null && people.has(r.staffId) && look(r.date).day.kind === 'school').map((r) => ({ m: r.inMinutes as number, late: r.late }));
   const arrivals: Array<{ from: string; to: string; onTime: number; late: number }> = [];
   if (ins.length) {
     const floor15 = (m: number) => Math.floor(m / 15) * 15;
@@ -177,8 +204,9 @@ export function buildReport(input: ReportInput) {
   const counted = inPeriod.filter((d) => !d.today).map((d) => d.date);
   const todayIn = new Set((byDate.get(today) ?? []).map((r) => r.staffId));
   const persons: ReportPerson[] = [...people.entries()].map(([userId, name]) => {
-    const mine = input.records.filter((r) => r.staffId === userId && r.date >= from && r.date <= to && dayKind(r.date, input) === 'school');
-    const schoolDays = counted.length + (inPeriod.some((d) => d.today) && todayIn.has(userId) ? 1 : 0);
+    const mine = input.records.filter((r) => r.staffId === userId && r.date >= from && r.date <= to && look(r.date).day.kind === 'school');
+    // Their own days: the ones they were expected on (or came anyway), today only once they are in.
+    const schoolDays = counted.filter((d) => look(d).counted.has(userId)).length + (inPeriod.some((d) => d.today) && todayIn.has(userId) ? 1 : 0);
     const attended = mine.length;
     const late = mine.filter((r) => r.late).length;
     return {

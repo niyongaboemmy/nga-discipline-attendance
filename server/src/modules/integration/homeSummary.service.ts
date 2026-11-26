@@ -1,4 +1,5 @@
 import type { Database } from 'sqlite';
+import { loadPlanBook } from '../clock/workPlan.js';
 import { config } from '../../config.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
 import { accessMode, accessScope, decideAny, requestSnapshot, studentTarget } from '../../access/policy.js';
@@ -1176,6 +1177,9 @@ async function ownClockInMissing(ctx: Ctx): Promise<AttentionItem[]> {
   if (ctx.date !== ctx.today || ctx.nowMin < timeToMinutes(HOMEROOM_START_TIME())) return [];
   if (!(await holds(ctx, ['STAFF_ATTENDANCE_CLOCK']))) return [];
   if (!(await ctx.schoolDay())) return [];
+  // Their own week may make today a day off, or start later than the school does.
+  const rule = (await loadPlanBook(ctx.db, ctx.userId)).dayFor(ctx.userId, ctx.today);
+  if (rule.own && (!rule.works || (rule.lateAfter != null && ctx.nowMin < rule.lateAfter))) return [];
   const row = await ctx.db.get(
     'SELECT 1 AS n FROM staff_attendance WHERE staff_id = ? AND date = ?',
     ctx.userId, ctx.today
