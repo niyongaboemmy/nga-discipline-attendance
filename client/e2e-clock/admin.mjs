@@ -258,6 +258,7 @@ async function run(browser, vp) {
   // The setup step links straight to the rules: the Rules drawer opens over the map.
   await page.goto(`${BASE}/staff/clock/zone#zone-rules`);
   await expectText(page, 'Check-in rules', `${tag} zone rules drawer`);
+  await expectText(page, 'Edge tolerance', `${tag} edge tolerance rule`);
   await page.waitForTimeout(1500);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: zone page scrolls sideways`);
   if (vp.name === 'desktop') {
@@ -310,12 +311,40 @@ async function run(browser, vp) {
   await page.waitForTimeout(300);
   if (await page.locator('.zc-row', { hasText: 'Area 3' }).count()) fail(`${tag}: area not removed`);
   await expectText(page, 'Unsaved changes', `${tag} save bar dirty`);
+
+  // Outline: Main campus becomes 8 corners on its circle, then is traced as the 4 walls.
+  await page.locator('.zc-row', { hasText: 'Main campus' }).click();
+  await page.getByTestId('shape-outline').click();
+  await expectText(page, '8 corners', `${tag} outline from circle`);
+  if ((await page.locator('.zc-vertex').count()) !== 8) fail(`${tag}: expected 8 draggable corners, got ${await page.locator('.zc-vertex').count()}`);
+  if ((await page.locator('.zc-mid').count()) !== 8) fail(`${tag}: expected 8 add-corner handles`);
+  await page.getByTestId('trace-walls').click();
+  await expectText(page, 'Click each corner of the school walls', `${tag} trace banner`);
+  const mb = await page.locator('.sc-map-el').boundingBox();
+  const fy = vp.name === 'phone' ? 0.42 : 0.5;
+  for (const [fx, dy] of [[0.5, -0.08], [0.72, -0.08], [0.72, 0.1], [0.5, 0.1]]) {
+    await page.mouse.click(mb.x + mb.width * fx, mb.y + mb.height * (fy + dy));
+    await page.waitForTimeout(120);
+  }
+  await expectText(page, '4 corners · click the first one or Done', `${tag} trace count`);
+  await shot('04f-zone-trace');
+  await page.getByTestId('trace-banner').getByRole('button', { name: 'Done' }).click();
+  await expectText(page, 'Outline drawn', `${tag} outline done`);
+  if ((await page.locator('.zc-vertex').count()) !== 4) fail(`${tag}: traced outline should have 4 corners`);
+  await page.waitForTimeout(400);
+  await shot('04g-zone-outline');
+  const saved = page.waitForRequest((r) => /\/api\/staff\/clock\/zones\/1$/.test(r.url()) && r.method() === 'PUT');
+  await page.locator('.zc-save').getByRole('button', { name: 'Save' }).click();
+  const body = (await saved).postDataJSON();
+  if (body.kind !== 'polygon' || !Array.isArray(body.polygon) || body.polygon.length !== 4) fail(`${tag}: outline not saved as 4 corners (${JSON.stringify(body)})`);
+  if (Math.abs(body.polygon[0][0]) < Math.abs(body.polygon[0][1])) fail(`${tag}: corners not sent as [lng, lat]`);
+  await expectText(page, 'Saved', `${tag} outline saved`);
+
   // Share drawer: the staff link.
   await page.getByRole('button', { name: 'Share', exact: true }).click();
   await expectText(page, 'tendo.amashuri.com/c/nga', `${tag} share drawer`);
   await page.screenshot({ path: path.join(OUT, `${tag}-04e-zone-share.png`) });
-  await page.locator('.zc-save').getByRole('button', { name: 'Discard' }).click();
-  await expectText(page, 'All saved', `${tag} discarded`);
+  await expectText(page, 'All saved', `${tag} nothing left unsaved`);
 
   // The old clock card is gone; the staff link is shown instead.
   await page.goto(`${BASE}/staff/attendance`);

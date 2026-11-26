@@ -26,7 +26,21 @@ export interface ClockZone {
   center_lat: number | null;
   center_lng: number | null;
   radius_m: number | null;
+  /** an outline zone: GeoJSON Polygon text, corners as [lng, lat] */
+  polygon_geojson?: string | null;
   active: number;
+}
+
+/** An outline zone's [lng, lat] corners, or null. */
+export function zoneCorners(z: Pick<ClockZone, 'kind' | 'polygon_geojson'>): Array<[number, number]> | null {
+  if (z.kind !== 'polygon' || !z.polygon_geojson) return null;
+  try {
+    const g = JSON.parse(z.polygon_geojson);
+    const ring = g?.type === 'Polygon' ? g.coordinates?.[0] : null;
+    return Array.isArray(ring) && ring.length >= 3 ? ring : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface ClockConfig {
@@ -119,8 +133,8 @@ export const staffClockApi = {
   history: (id: string, days = 365) => data(apiGet<PersonHistory>(`/api/staff/clock/people/${encodeURIComponent(id)}/history?days=${days}`)),
   config: () => data(apiGet<ClockConfig>('/api/staff/clock/config')),
   saveRules: (rules: Partial<ClockRules>) => data(apiPut<{ rules: ClockRules }>('/api/staff/clock/config', rules)),
-  createZone: (z: { name: string; lat: number; lng: number; radius: number; active?: boolean }) => data(apiPost<ClockZone>('/api/staff/clock/zones', z)),
-  updateZone: (id: number, z: Partial<{ name: string; lat: number; lng: number; radius: number; active: boolean }>) =>
+  createZone: (z: { name: string; kind?: 'circle' | 'polygon'; lat: number; lng: number; radius?: number; polygon?: Array<[number, number]>; active?: boolean }) => data(apiPost<ClockZone>('/api/staff/clock/zones', z)),
+  updateZone: (id: number, z: Partial<{ name: string; kind: 'circle' | 'polygon'; lat: number; lng: number; radius: number; polygon: Array<[number, number]>; active: boolean }>) =>
     apiPut<ClockZone>(`/api/staff/clock/zones/${id}`, z),
   deleteZone: (id: number) => apiDelete(`/api/staff/clock/zones/${id}`),
   overview: (date?: string) => data(apiGet<Overview>(`/api/staff/clock/overview${date ? `?date=${date}` : ''}`)),

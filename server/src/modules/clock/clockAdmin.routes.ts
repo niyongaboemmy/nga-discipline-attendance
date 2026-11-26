@@ -10,7 +10,7 @@ import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettin
 import { currentTenant } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
 import { ClockError, clockNow, clockRules, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
-import { validCidrList } from './geofence.js';
+import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 
 /**
@@ -122,10 +122,13 @@ const ZoneBody = z
     lat: z.number().min(-90).max(90).optional(),
     lng: z.number().min(-180).max(180).optional(),
     radius: z.number().int().min(50, 'The radius must be at least 50 m.').max(500, 'The radius must be 500 m or less.').optional(),
-    polygon: z.array(z.tuple([z.number(), z.number()])).min(3).max(200).optional(),
+    /** [lng, lat] corners (GeoJSON order), 3 to 200, the outline of the school's walls */
+    polygon: z.array(z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90)])).min(3, 'An outline needs at least 3 corners.').max(200).optional(),
     active: z.boolean().default(true),
   })
-  .refine((z0) => (z0.kind === 'circle' ? z0.lat !== undefined && z0.lng !== undefined && z0.radius !== undefined : !!z0.polygon), 'Place the zone on the map first.');
+  .refine((z0) => (z0.kind === 'circle' ? z0.lat !== undefined && z0.lng !== undefined && z0.radius !== undefined : !!z0.polygon), 'Place the zone on the map first.')
+  // An outline is a school, not a district: every corner within 3 km of its first one.
+  .refine((z0) => !z0.polygon || z0.polygon.every(([lng, lat]) => haversine({ lat, lng }, { lat: z0.polygon![0][1], lng: z0.polygon![0][0] }) <= 3000), 'The outline is too big. Trace the school grounds only.');
 
 router.post('/zones', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), async (req: any, res) => {
   try {
@@ -133,7 +136,7 @@ router.post('/zones', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), asyn
     const db = getDb();
     const r = await db.run(
       `INSERT INTO attendance_zones (name, kind, center_lat, center_lng, radius_m, polygon_geojson, active, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      b.name, b.kind, b.lat ?? null, b.lng ?? null, b.radius ?? null, b.polygon ? JSON.stringify({ type: 'Polygon', coordinates: [b.polygon] }) : null,
+      b.name, b.kind, b.lat ?? null, b.lng ?? null, b.kind === 'polygon' ? null : b.radius ?? null, b.polygon ? JSON.stringify({ type: 'Polygon', coordinates: [b.polygon] }) : null,
       b.active ? 1 : 0, actorOf(req).id, new Date(clockNow()).toISOString()
     );
     const zone = await db.get(`SELECT * FROM attendance_zones WHERE id = ?`, r.lastID);
@@ -155,7 +158,7 @@ router.put('/zones/:id', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), a
     });
     await db.run(
       `UPDATE attendance_zones SET name = ?, kind = ?, center_lat = ?, center_lng = ?, radius_m = ?, polygon_geojson = ?, active = ?, updated_by = ?, updated_at = ? WHERE id = ?`,
-      b.name, b.kind, b.lat ?? null, b.lng ?? null, b.radius ?? null,
+      b.name, b.kind, b.lat ?? null, b.lng ?? null, b.kind === 'polygon' ? null : b.radius ?? null,
       b.polygon ? JSON.stringify({ type: 'Polygon', coordinates: [b.polygon] }) : b.kind === 'polygon' ? before.polygon_geojson : null,
       b.active ? 1 : 0, actorOf(req).id, new Date(clockNow()).toISOString(), before.id
     );
@@ -386,7 +389,7 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const zones = await loadZones(db, true);
     const health = {
       google: !!config.googleClientId,
-      zones: zones.filter((z: any) => z.center_lat != null).length,
+      zones: zones.filter((z: any) => z.center_lat != null || (z.kind === 'polygon' && z.polygon_geojson)).length,
       enabled: !!rules.enabled,
       tested: (rules.setupDone ?? []).includes('tested'),
       shared: (rules.setupDone ?? []).includes('shared'),

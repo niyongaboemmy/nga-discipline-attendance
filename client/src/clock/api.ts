@@ -21,10 +21,12 @@ export class OfflineError extends ClockApiError {
 export interface Zone {
   id: number;
   name: string;
-  kind: string;
+  kind: 'circle' | 'polygon' | string;
   lat: number | null;
   lng: number | null;
   radius: number | null;
+  /** an outline zone's [lng, lat] corners */
+  polygon?: Array<[number, number]> | null;
 }
 
 export interface Bootstrap {
@@ -36,7 +38,7 @@ export interface Bootstrap {
   serverNow: string;
   schoolDate: string;
   timezone: string;
-  rules: { opens: string; lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; maxAccuracy: number; requireZone: boolean };
+  rules: { allowance?: number; opens: string; lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; maxAccuracy: number; requireZone: boolean };
   zones: Zone[];
 }
 

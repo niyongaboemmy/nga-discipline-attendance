@@ -8,7 +8,7 @@ import { DashboardLayout } from '../../components/Layout/DashboardLayout';
 import { useToast } from '../../context/ToastContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { ApiError } from '../../api/client';
-import { staffClockApi, initialsOf, type ClockConfig, type ClockRules, type Overview } from '../../api/staffClock';
+import { staffClockApi, initialsOf, zoneCorners, type ClockConfig, type ClockRules, type Overview } from '../../api/staffClock';
 import { sampleLocation, GeoError } from '../../clock/geo';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { StaffClockZone } from './StaffClockZone';
@@ -145,7 +145,7 @@ export const StaffClockGuide: React.FC = () => {
     setTest(null);
     try {
       const { best } = await sampleLocation({ maxMs: 10000 });
-      const zones = cfg.zones.filter((z) => z.active && z.center_lat != null).map((z) => ({ name: z.name, lat: z.center_lat!, lng: z.center_lng!, radius: z.radius_m ?? 0 }));
+      const zones = cfg.zones.filter((z) => z.active).map((z) => ({ name: z.name, lat: z.center_lat, lng: z.center_lng, radius: z.radius_m, kind: z.kind, polygon: zoneCorners(z) }));
       const outcome = evaluateTest(best, zones, { maxAccuracy: cfg.rules.maxAccuracy, allowance: cfg.rules.allowance ?? 50, computer: isComputer() });
       setTest(outcome);
       if (outcome.ok) await mark('tested');
@@ -159,7 +159,7 @@ export const StaffClockGuide: React.FC = () => {
   /** A reading from the paired phone: a real GPS test, judged like a check-in. */
   const judgeFix = async (fix: Fix, fromPhone: boolean) => {
     if (!cfg) return;
-    const zones = cfg.zones.filter((z) => z.active && z.center_lat != null).map((z) => ({ name: z.name, lat: z.center_lat!, lng: z.center_lng!, radius: z.radius_m ?? 0 }));
+    const zones = cfg.zones.filter((z) => z.active).map((z) => ({ name: z.name, lat: z.center_lat, lng: z.center_lng, radius: z.radius_m, kind: z.kind, polygon: zoneCorners(z) }));
     const outcome = evaluateTest(fix, zones, { maxAccuracy: cfg.rules.maxAccuracy, allowance: cfg.rules.allowance ?? 50, computer: !fromPhone && isComputer() });
     setTest(fromPhone ? { ...outcome, text: `From your phone: ${outcome.text}` } : outcome);
     if (outcome.ok) await mark('tested');
@@ -326,7 +326,7 @@ export const StaffClockGuide: React.FC = () => {
                   <div className="sc-guide-body">
                     <p>When it is on, staff can register and check in from the link. The old check-in button on the Tendo Staff Attendance page stops working, so everyone uses their phone (or a QR card).</p>
                     <div className="sc-guide-summary">
-                      <div><small>Zones</small><b>{cfg.zones.filter((z) => z.active).map((z) => `${z.name} (${z.radius_m} m)`).join(', ') || 'None yet'}</b></div>
+                      <div><small>Zones</small><b>{cfg.zones.filter((z) => z.active).map((z) => `${z.name} (${z.kind === 'polygon' ? 'outline' : `${z.radius_m} m`})`).join(', ') || 'None yet'}</b></div>
                       <div><small>Late after</small><b>{cfg.rules.lateAfter}</b></div>
                       <div><small>Early leave before</small><b>{cfg.rules.earlyLeaveBefore}</b></div>
                     </div>
