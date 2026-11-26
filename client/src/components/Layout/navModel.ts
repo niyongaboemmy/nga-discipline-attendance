@@ -1,4 +1,5 @@
 import {
+  DoorOpen,
   Award,
   BarChart3,
   BookOpen,
@@ -86,6 +87,7 @@ export const NAV_AREAS: NavArea[] = [
             roles: STAFF,
             anyPermission: ['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL', 'STAFF_DEVICES_MANAGE'],
           },
+          { label: 'Gate View', path: '/staff/clock/gate', icon: DoorOpen, roles: STAFF, anyPermission: ['STAFF_ATTENDANCE_VIEW_ALL'] },
           { label: 'Scan Staff Card', path: '/staff/clock/scan', icon: ScanLine, roles: STAFF, anyPermission: ['STAFF_CLOCK_SCAN'] },
         ],
       },

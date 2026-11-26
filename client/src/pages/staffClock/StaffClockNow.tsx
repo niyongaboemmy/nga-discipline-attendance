@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { ArrowUpRight, BellRing, CalendarOff, Clock, DoorOpen, Hourglass, TimerOff, UserCheck, UserX, Users } from 'lucide-react';
 import type { Overview } from '../../api/staffClock';
 
@@ -35,9 +36,13 @@ export const NowBoard: React.FC<{ overview: Overview; onOpen: (g: NowGroup) => v
             <ArrowUpRight size={18} />
           </button>
         </div>
-        <button type="button" className="now-expected" onClick={() => onOpen('expected')} data-now="expected">
-          <Users size={16} /><span><b className="sc-num">{n.expectedToday}</b> expected today</span><Clock size={14} />
-        </button>
+        <div className="now-head-actions">
+          <button type="button" className="now-expected" onClick={() => onOpen('expected')} data-now="expected">
+            <Users size={16} /><span><b className="sc-num">{n.expectedToday}</b> expected today</span><Clock size={14} />
+          </button>
+          {/* Standing at the gate: the same minute as one live screen. */}
+          <Link to="/staff/clock/gate" className="sc-btn sc-btn-primary now-gate" data-testid="open-gate"><DoorOpen size={18} />Gate view</Link>
+        </div>
       </div>
       {!quiet && (
         <div className="now-bar" role="img" aria-label={`${n.here} here, ${n.notHere} not here yet, ${n.leftEarly} left early, of ${n.shouldBeHere} who should be here now`}>

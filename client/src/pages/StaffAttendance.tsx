@@ -9,7 +9,7 @@ import { useToast } from '../context/ToastContext';
 import { SkeletonTable } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
-import { Copy, ExternalLink, Search, Settings2, Smartphone } from 'lucide-react';
+import { Copy, DoorOpen, ExternalLink, Search, Settings2, Smartphone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 
@@ -92,9 +92,14 @@ export const StaffAttendance: React.FC = () => {
           <h1 className="page-title">Staff Attendance</h1>
           <p className="page-subtitle">{canViewAll ? 'Review all staff check-ins and check-outs.' : 'Your check-in history. Check in and out with the staff attendance link on your own phone or tablet.'}</p>
         </div>
-        {can('STAFF_ATTENDANCE_ZONES_MANAGE') && (
-          <Link className="btn btn-secondary" style={{ borderRadius: 999 }} to="/staff/clock/zone"><Settings2 size={16} /> Staff check-in settings</Link>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {can('STAFF_ATTENDANCE_VIEW_ALL') && (
+            <Link className="btn btn-primary" style={{ borderRadius: 999 }} to="/staff/clock/gate" data-testid="open-gate"><DoorOpen size={16} /> Gate view</Link>
+          )}
+          {can('STAFF_ATTENDANCE_ZONES_MANAGE') && (
+            <Link className="btn btn-secondary" style={{ borderRadius: 999 }} to="/staff/clock/zone"><Settings2 size={16} /> Staff check-in settings</Link>
+          )}
+        </div>
       </div>
 
       <ClockHomeCard />

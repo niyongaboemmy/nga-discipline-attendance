@@ -37,6 +37,7 @@
 
     { "key": "tendo.rfid_cards", "label": "Attendance cards", "module": "Attendance", "patterns": ["/attendance/cards", "/attendance/cards/:id"] },
     { "key": "tendo.staff_clock", "label": "Staff attendance dashboard", "module": "Staff", "patterns": ["/staff/clock"] },
+    { "key": "tendo.staff_clock_gate", "label": "Staff attendance: gate view", "module": "Staff", "patterns": ["/staff/clock/gate"] },
     { "key": "tendo.staff_clock_people", "label": "Staff attendance: staff", "module": "Staff", "patterns": ["/staff/clock/people"] },
     { "key": "tendo.staff_clock_setup", "label": "Staff attendance: setup guide", "module": "Staff", "patterns": ["/staff/clock/setup"] },
     { "key": "tendo.staff_clock_zone", "label": "Staff attendance: zone & settings", "module": "Staff", "patterns": ["/staff/clock/zone"] },

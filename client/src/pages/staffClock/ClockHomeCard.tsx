@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useToast } from '../../context/ToastContext';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, Clock, ExternalLink, KeyRound, LogIn, LogOut, MapPin, Power, UserX, Copy } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarClock, CheckCircle2, Clock, DoorOpen, ExternalLink, KeyRound, LogIn, LogOut, MapPin, Power, UserX, Copy } from 'lucide-react';
 import '../../styles/staffClock.css';
 import { apiGet } from '../../api/client';
 import { staffClockApi, type Overview } from '../../api/staffClock';
@@ -80,6 +80,11 @@ const AdminCard: React.FC<{ canSetup: boolean }> = ({ canSetup }) => {
           <span className={missed ? 'warn' : ''}><CalendarClock size={16} /><b>{missed}</b>missed · 7 days</span>
         </div>
         <ArrowRight size={18} className="sc-attn-go" />
+      </Link>
+      <Link to="/staff/clock/gate" className="sc-home-gate" data-testid="home-gate">
+        <span className="sc-home-gate-ico"><DoorOpen size={18} /></span>
+        <span className="sc-home-gate-text"><b>Gate view</b><small>Live: who is in, who is still expected, remind them</small></span>
+        <ArrowRight size={18} />
       </Link>
     </section>
   );

@@ -3,11 +3,12 @@ import { NavLink } from 'react-router-dom';
 import { usePermissions } from '../../hooks/usePermissions';
 import '../../styles/staffClock.css';
 
-/** Title + the staff clock's own tabs (Dashboard · School zone · Phones & cards · Scan a card). */
+/** Title + the staff clock's own tabs (Dashboard · Gate view · School zone · Phones & cards · Scan a card). */
 export const StaffClockHeader: React.FC<{ title: string; lead: string; actions?: React.ReactNode; pending?: number }> = ({ title, lead, actions, pending }) => {
   const { can } = usePermissions();
   const tabs = [
     { to: '/staff/clock', label: 'Dashboard', show: can('STAFF_ATTENDANCE_VIEW_ALL'), end: true },
+    { to: '/staff/clock/gate', label: 'Gate view', show: can('STAFF_ATTENDANCE_VIEW_ALL'), live: true },
     { to: '/staff/clock/people', label: 'Staff', show: can('STAFF_ATTENDANCE_VIEW_ALL') },
     { to: '/staff/clock/setup', label: 'Setup guide', show: can('STAFF_ATTENDANCE_ZONES_MANAGE') },
     { to: '/staff/clock/zone', label: 'Zone & settings', show: can(['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL']) },
@@ -20,6 +21,7 @@ export const StaffClockHeader: React.FC<{ title: string; lead: string; actions?:
         <nav className="sc-tabs" aria-label="Staff clock">
           {tabs.map((t) => (
             <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => `sc-tab${isActive ? ' active' : ''}`}>
+              {t.live && <i className="sc-tab-live" aria-hidden />}
               {t.label}
               {!!t.count && <span className="sc-tab-count">{t.count}</span>}
             </NavLink>
