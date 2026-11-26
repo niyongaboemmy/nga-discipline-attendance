@@ -999,6 +999,122 @@ describe('the installed app (Add to Home Screen) and signing out', () => {
   });
 });
 
+/**
+ * Asked for by the school (2026-11-26): prove, in one readable scenario, that
+ *   1. a person with their own plan follows it,
+ *   2. a person without one follows the school's default rules,
+ *   3. "my day off" holds even on a day that counts for everyone else
+ *      (and "my working day" holds on a day that is off for everyone else).
+ * Week used: Mon 5 – Sun 11 April 2027. School rules: Mon–Fri, late after 08:30, early before 16:00.
+ */
+describe('own plan versus the school default, and "my day off"', () => {
+  const week = (over: Record<string, { works: boolean; start?: string; end?: string }>) =>
+    Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, { start: '08:00', end: '17:00', ...(over[d] ?? { works: false }) }]));
+  const overview = async () => (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+  const me = async (d: FakeDevice) => (await request(app).get('/api/clock/nga/me').set('X-Clock-Device', d.token!)).body.data;
+  const rowOf = (ov: any, id: string) => ov.rows.find((r: any) => r.userId === id);
+
+  it('follows each rule, on the phone, in the office lists, in history, in reports and in reminders', async () => {
+    // Amina has her OWN plan: Tuesday 10:00–14:00 and Saturday 09:00–12:00. Wednesday is HER day off.
+    // Bosco has NO plan: the school's default rules apply to him.
+    misPerson(160, 'Amina Own', 'amina.own@gmail.com');
+    misPerson(161, 'Bosco Default', 'bosco.default@gmail.com');
+    const amina = await newDevice();
+    const bosco = await newDevice();
+    // The school has used check-in since March, so every day of this week is a tracked day.
+    await db.run(`INSERT OR IGNORE INTO staff_attendance (staff_id, staff_name, date, clock_in, status, source) VALUES ('899', 'Earlier Person', '2027-03-01', '2027-03-01T05:30:00.000Z', 'present', 'device')`);
+    now = kigali('06:00', '2027-04-05'); // Monday
+    await register('nga', 'amina.own@gmail.com', amina);
+    await register('nga', 'bosco.default@gmail.com', bosco);
+    const saved = await request(app).put('/api/staff/clock/people/160/plan').set(authHeader(adminToken))
+      .send({ effectiveFrom: '2027-04-05', days: week({ 2: { works: true, start: '10:00', end: '14:00' }, 6: { works: true, start: '09:00', end: '12:00' } }) });
+    expect(saved.status).toBe(200);
+    const sent: string[] = [];
+    __setPushSender(async (sub, payload) => { sent.push(`${sub.endpoint.slice(-5)}:${payload.title}`); return 'ok'; });
+    const push = (d: FakeDevice, n: string) => request(app).post('/api/clock/nga/push').set('X-Clock-Device', d.token!)
+      .send({ subscription: { endpoint: `https://fcm.googleapis.com/fcm/send/own-${n}`, keys: { p256dh: 'p'.repeat(87), auth: 'a'.repeat(22) } }, lang: 'en' });
+    await push(amina, 'amina');
+    await push(bosco, 'bosco');
+    const remind = async (hhmm: string, date: string) => { now = kigali(hhmm, date); sent.length = 0; await runReminderTick({ list: async () => [primaryTenantCtx()] } as any); return [...sent].sort(); };
+
+    // ── Rule 2: no plan = the school's default rules ─────────────────────────────────────────────
+    const boscoPlan = (await request(app).get('/api/staff/clock/people/161/plan').set(authHeader(adminToken))).body.data;
+    expect(boscoPlan.own).toBe(false);
+    expect(boscoPlan.days).toEqual(boscoPlan.school); // exactly the school's week
+    expect(boscoPlan.days['3']).toEqual({ works: true, start: '08:30', end: '16:00' });
+    expect(boscoPlan.days['6'].works).toBe(false);
+    now = kigali('07:00', '2027-04-06'); // Tuesday
+    expect((await me(bosco)).rules).toMatchObject({ lateAfter: '08:30', earlyLeaveBefore: '16:00', own: false });
+    expect((await me(bosco)).week.map((d: any) => d.date)).toEqual(['2027-04-05', '2027-04-06', '2027-04-07', '2027-04-08', '2027-04-09']);
+
+    // ── Rule 1: an own plan is followed ──────────────────────────────────────────────────────────
+    expect((await me(amina)).rules).toMatchObject({ lateAfter: '10:00', earlyLeaveBefore: '14:00', own: true });
+    expect((await me(amina)).week.map((d: any) => d.date)).toEqual(['2027-04-06', '2027-04-10']); // her Tuesday and Saturday only
+    // Tuesday 09:40: the same minute is LATE for Bosco (school 08:30) and ON TIME for Amina (her 10:00).
+    now = kigali('09:40', '2027-04-06');
+    expect((await tap('nga', bosco, INSIDE)).body.data).toMatchObject({ action: 'check_in', status: 'late' });
+    expect((await tap('nga', amina, INSIDE)).body.data).toMatchObject({ action: 'check_in', status: 'present' });
+    // Tuesday 14:10: leaving is EARLY for Bosco (school 16:00) and ON TIME for Amina (her 14:00).
+    now = kigali('14:10', '2027-04-06');
+    expect((await tap('nga', bosco, INSIDE)).body.data).toMatchObject({ action: 'check_out', status: 'early' });
+    expect((await tap('nga', amina, INSIDE)).body.data).toMatchObject({ action: 'check_out', status: 'on_time' });
+
+    // ── Rule 3: Wednesday is Amina's day off, although it counts for everyone else ───────────────
+    now = kigali('10:30', '2027-04-07');
+    // Her phone knows it is her day off: closed, with her next working day.
+    expect(await me(amina)).toMatchObject({ dayOff: true, dayOffClosed: true, next: 'closed', nextDay: { date: '2027-04-10', start: '09:00' } });
+    const refused = await tap('nga', amina, INSIDE);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ code: 'NOT_SCHOOL_DAY', message: expect.stringContaining('day off') });
+    // Bosco, on the school's rules, is expected and may check in (here: late).
+    expect(await me(bosco)).toMatchObject({ dayOff: false, dayOffClosed: false });
+    // The office sees: Amina "day off" (not absent, not "not in"); Bosco "not in yet", should be here now.
+    let ov = await overview();
+    expect(rowOf(ov, '160')).toMatchObject({ status: 'day_off', expected: false, moment: 'day_off', plan: { own: true, works: false } });
+    expect(rowOf(ov, '161')).toMatchObject({ status: 'not_in', expected: true, moment: 'due_now', plan: { own: false, works: true, start: '08:30', end: '16:00' } });
+    expect(ov.rows.filter((r: any) => r.status === 'not_in').map((r: any) => r.userId)).not.toContain('160');
+    // No reminder goes to Amina on her day off; Bosco's default-rule reminders still go out.
+    expect(await remind('08:15', '2027-04-08')).toEqual(['bosco:Check in soon']); // Thursday: also her day off
+    expect(await remind('09:45', '2027-04-08')).toEqual([]);
+
+    // ── And the reverse: Saturday is a working day for Amina only ────────────────────────────────
+    expect(await remind('08:45', '2027-04-10')).toEqual(['amina:Check in soon']); // 15 min before HER 09:00
+    now = kigali('08:55', '2027-04-10');
+    expect(await me(amina)).toMatchObject({ dayOff: false, rules: { lateAfter: '09:00', earlyLeaveBefore: '12:00', own: true } });
+    expect(await me(bosco)).toMatchObject({ dayOff: true, dayOffClosed: true, nextDay: { date: '2027-04-12', start: '08:30' } });
+    const sat = await tap('nga', amina, INSIDE);
+    expect(sat.body.data).toMatchObject({ action: 'check_in', status: 'present' });
+    expect(sat.body.data.flags).not.toContain('non_school_day');
+    expect((await tap('nga', bosco, INSIDE)).body).toMatchObject({ code: 'NOT_SCHOOL_DAY' });
+    ov = await overview();
+    expect(rowOf(ov, '160')).toMatchObject({ status: 'present', expected: true });
+    expect(rowOf(ov, '161')).toMatchObject({ status: 'day_off', expected: false });
+
+    // ── The week afterwards, in history and reports ──────────────────────────────────────────────
+    now = kigali('18:00', '2027-04-11'); // Sunday evening
+    const ha = (await request(app).get('/api/staff/clock/people/160/history?days=7').set(authHeader(adminToken))).body.data;
+    expect(ha.days.map((d: any) => `${d.date.slice(8)}:${d.kind}`)).toEqual(['05:off', '06:on_time', '07:off', '08:off', '09:off', '10:on_time', '11:off']);
+    expect(ha.summary).toMatchObject({ schoolDays: 2, attended: 2, absent: 0, late: 0, rate: 100 }); // never absent on HER days off
+    const hb = (await request(app).get('/api/staff/clock/people/161/history?days=7').set(authHeader(adminToken))).body.data;
+    expect(hb.days.map((d: any) => `${d.date.slice(8)}:${d.kind}`)).toEqual(['05:absent', '06:late', '07:absent', '08:absent', '09:absent', '10:off', '11:off']);
+    expect(hb.summary).toMatchObject({ schoolDays: 5, attended: 1, absent: 4, late: 1 }); // the school's five days
+    const people = (await request(app).get('/api/staff/clock/report/staff?from=2027-04-05&to=2027-04-11').set(authHeader(adminToken))).body.data.people;
+    expect(people.find((p: any) => p.userId === '160')).toBeUndefined(); // nothing late or absent to report
+    expect(people.find((p: any) => p.userId === '161')).toMatchObject({ schoolDays: 5, attended: 1, late: 1, absent: 4 });
+    const rep = (await request(app).get('/api/staff/clock/report?from=2027-04-05&to=2027-04-11').set(authHeader(adminToken))).body.data;
+    expect(rep.days.find((d: any) => d.date === '2027-04-10').kind).toBe('school'); // a day because SHE is expected
+    expect(rep.days.find((d: any) => d.date === '2027-04-11').kind).toBe('off'); // nobody is expected
+
+    // ── Taking the plan away: back to the school's default rules ─────────────────────────────────
+    const back = await request(app).put('/api/staff/clock/people/160/plan').set(authHeader(adminToken)).send({ days: null, effectiveFrom: '2027-04-12' });
+    expect(back.status).toBe(200);
+    now = kigali('07:00', '2027-04-14'); // the next Wednesday
+    expect(await me(amina)).toMatchObject({ dayOff: false, rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00', own: false } });
+    expect((await request(app).get('/api/staff/clock/people/160/plan').set(authHeader(adminToken))).body.data.own).toBe(false);
+    __setPushSender(null);
+  });
+});
+
 describe('another school, another timezone', () => {
   it('a UTC-5 school decides today and lateness in its own zone', async () => {
     __setTenants([primaryTenantCtx(), { tid: 7, slug: 'nyc', name: 'NYC School', status: 'ACTIVE', isPrimary: false, timezone: 'America/New_York', pkg: 'max' }]);
