@@ -944,17 +944,19 @@ describe('the installed app (Add to Home Screen) and signing out', () => {
     await register('nga', 'home@gmail.com', safari);
 
     // The icon starts at this school, never at a bare /c/.
-    const man = await request(app).get('/api/clock/nga/manifest.webmanifest');
+    const man = await request(app).get('/api/clock/nga/manifest');
+    // (the old address still answers, for pages opened before this release)
+    expect((await request(app).get('/api/clock/nga/manifest.webmanifest')).status).toBe(200);
     expect(man.headers['content-type']).toContain('application/manifest+json');
     expect(JSON.parse(man.text)).toMatchObject({ id: '/c/nga', start_url: '/c/nga', scope: '/c/', display: 'standalone', name: expect.stringContaining('Check-in') });
-    expect((await request(app).get('/api/clock/nope-school/manifest.webmanifest')).status).toBe(404);
+    expect((await request(app).get('/api/clock/nope-school/manifest')).status).toBe(404);
 
     // The signed-in page gets a code; it rides in the icon's start address.
     const ho = await request(app).post('/api/clock/nga/handoff').set('X-Clock-Device', safari.token!);
     expect(ho.status).toBe(200);
     const code = ho.body.data.code;
-    expect(JSON.parse((await request(app).get(`/api/clock/nga/manifest.webmanifest?h=${code}`)).text).start_url).toBe(`/c/nga?h=${code}`);
-    expect(JSON.parse((await request(app).get('/api/clock/nga/manifest.webmanifest?h=<script>')).text).start_url).toBe('/c/nga');
+    expect(JSON.parse((await request(app).get(`/api/clock/nga/manifest?h=${code}`)).text).start_url).toBe(`/c/nga?h=${code}`);
+    expect(JSON.parse((await request(app).get('/api/clock/nga/manifest?h=<script>')).text).start_url).toBe('/c/nga');
     expect((await request(app).post('/api/clock/nga/handoff').send({})).status).toBe(401);
 
     // The installed app (empty storage, a new key) trades the code once: same person, no Google, no approval.

@@ -129,7 +129,7 @@ function mockServer(opts = {}) {
       }
       return route.fulfill(ok({ month, today: '2026-11-24', min: '2025-11', max: '2027-05', days, summary: sum }));
     }
-    if (p === '/manifest.webmanifest') return route.fulfill({ status: 200, contentType: 'application/manifest+json', body: JSON.stringify({ id: '/c/nga', start_url: u.searchParams.get('h') ? `/c/nga?h=${u.searchParams.get('h')}` : '/c/nga', scope: '/c/', display: 'standalone', name: 'New Generation Academy · Check-in', short_name: 'Check-in', icons: [] }) });
+    if (p === '/manifest') return route.fulfill({ status: 200, contentType: 'application/manifest+json', body: JSON.stringify({ id: '/c/nga', start_url: u.searchParams.get('h') ? `/c/nga?h=${u.searchParams.get('h')}` : '/c/nga', scope: '/c/', display: 'standalone', name: 'New Generation Academy · Check-in', short_name: 'Check-in', icons: [] }) });
     if (p === '/handoff') return route.fulfill(ok({ code: 'HANDOFFCODE_abcdefghijklmnop12345', expiresIn: 900 }));
     if (p === '/handoff/claim') {
       if (body.code !== 'HANDOFFCODE_abcdefghijklmnop12345' || !body.publicKeyJwk) return route.fulfill(err(410, 'HANDOFF_EXPIRED', 'expired'));
@@ -521,8 +521,13 @@ async function installedFlow(browser, theme) {
   // 1. In the browser: the install manifest is this school's, and carries a sign-in code once signed in.
   const a = await newPage(browser, vp, theme, { server });
   await a.page.goto(`${BASE}/c/nga`);
+  // Something is on screen before the app's script runs: the loading mark is part of the page itself.
+  {
+    const raw = await (await fetch(`${BASE}/c/nga`)).text();
+    if (!/id="clock-root"><div data-ck-boot/.test(raw) || !raw.includes('Opening…')) fail(`${tag}: the page has no instant loading mark`);
+  }
   const href0 = await a.page.locator('#ck-manifest').getAttribute('href');
-  if (href0 !== '/api/clock/nga/manifest.webmanifest') fail(`${tag}: the install manifest is not this school's (${href0})`);
+  if (href0 !== '/api/clock/nga/manifest') fail(`${tag}: the install manifest is not this school's (${href0})`);
   await a.page.getByTestId('gis').click();
   await a.page.getByRole('button', { name: /Yes, this is my/ }).click();
   const allow = a.page.getByRole('button', { name: 'Allow location' });

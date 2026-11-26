@@ -320,7 +320,7 @@ export function ClockApp() {
     const refresh = async () => {
       try {
         const { code } = await clockApi.handoff(slug, token);
-        if (live) link?.setAttribute('href', `/api/clock/${slug}/manifest.webmanifest?h=${code}`);
+        if (live) link?.setAttribute('href', `/api/clock/${slug}/manifest?h=${code}`);
       } catch {
         /* the plain manifest still opens this school */
       }
@@ -330,7 +330,7 @@ export function ClockApp() {
     return () => {
       live = false;
       window.clearInterval(id);
-      link?.setAttribute('href', `/api/clock/${slug}/manifest.webmanifest`);
+      link?.setAttribute('href', `/api/clock/${slug}/manifest`);
     };
   }, [view, token, slug]);
 

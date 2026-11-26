@@ -117,6 +117,28 @@ self.addEventListener("fetch", (event) => {
   // offline. Every page is the same single-page app, so any successful page
   // load refreshes the offline copy.
   const shellKey = /^\/c(\/|$)/.test(url.pathname) ? "/clock.html" : "/";
+  if (shellKey === "/clock.html") {
+    // The staff check-in page (often a Home Screen app on a slow connection): open from
+    // the saved copy at once and refresh that copy in the background, so the next launch
+    // has the newest release. Its files are in the assets cache; if one is missing the
+    // page reloads itself cleanly (see clock.html).
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(VERSION);
+        const saved = await cache.match(shellKey);
+        const fresh = fetch(req, { cache: "no-cache" }).then((res) => {
+          if (res.ok && (res.headers.get("content-type") || "").includes("text/html")) cache.put(shellKey, res.clone());
+          return res;
+        });
+        if (saved) {
+          event.waitUntil(fresh.catch(() => null));
+          return saved;
+        }
+        return fresh.catch(() => Response.error());
+      })(),
+    );
+    return;
+  }
   event.respondWith(
     fetch(req, { cache: "no-cache" })
       .then((res) => {
