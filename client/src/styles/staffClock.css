@@ -403,8 +403,9 @@ html:has(.sc-savebar) { scroll-padding-top: calc(var(--navbar-height, 64px) + 16
 .sc-attn-item { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px 0 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); text-decoration: none; font: inherit; cursor: pointer; white-space: nowrap; transition: border-color .15s; }
 .sc-attn-item:hover { border-color: var(--primary); }
 .sc-attn-ico { width: 32px; height: 32px; border-radius: 999px; display: grid; place-items: center; flex: none; }
-.sc-attn-red .sc-attn-ico { background: var(--danger-light); color: var(--danger); }
-.sc-attn-amber .sc-attn-ico { background: var(--status-late-bg); color: var(--status-late); }
+.sc-attn-red .sc-attn-ico, .sc-attn-ico.sc-attn-red { background: var(--danger-light); color: var(--danger); }
+.sc-attn-amber .sc-attn-ico, .sc-attn-ico.sc-attn-amber { background: var(--status-late-bg); color: var(--status-late); }
+.sc-attn-ico.sc-attn-blue { background: var(--primary-light); color: var(--primary-text); }
 .sc-attn-text { display: inline-flex; align-items: baseline; gap: 5px; font-size: 14px; font-weight: 600; line-height: 1; }
 .sc-attn-text b { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sc-attn-go { color: var(--text-tertiary); flex: none; }
