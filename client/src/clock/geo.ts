@@ -97,15 +97,68 @@ export interface ZoneHint {
   outsideBy: number;
 }
 
+/** A school area: a circle (centre + radius) or an outline of [lng, lat] corners. */
+export interface ZoneShape {
+  lat: number | null;
+  lng: number | null;
+  radius: number | null;
+  kind?: string;
+  polygon?: Array<[number, number]> | null;
+}
+
+/** Ray casting on [lng, lat] corners. */
+export function insideOutline(p: { lat: number; lng: number }, ring: Array<[number, number]>): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > p.lat !== yj > p.lat && p.lng < ((xj - xi) * (p.lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Metres from a point to the nearest wall of an outline (same maths as the server). */
+export function outlineEdgeDistance(p: { lat: number; lng: number }, ring: Array<[number, number]>): number {
+  const kx = (Math.PI / 180) * R * Math.cos(rad(p.lat));
+  const ky = (Math.PI / 180) * R;
+  let best = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const ax = (ring[i][0] - p.lng) * kx, ay = (ring[i][1] - p.lat) * ky;
+    const b = ring[(i + 1) % ring.length];
+    const bx = (b[0] - p.lng) * kx, by = (b[1] - p.lat) * ky;
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
+    best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return best;
+}
+
+/**
+ * How far a reading is from an area: `distance` from the centre (circle) or the
+ * nearest wall (outline, 0 inside); `outsideBy` beyond the edge after the tolerance
+ * (the phone's own error, capped by the school's edge tolerance). Null: no shape.
+ */
+export function zoneGap(fix: Fix, z: ZoneShape, allowance: number): { distance: number; outsideBy: number; edge: number } | null {
+  const credit = Math.min(fix.accuracy, allowance);
+  if (z.kind === 'polygon' && z.polygon && z.polygon.length >= 3) {
+    const within = insideOutline(fix, z.polygon);
+    const d = within ? 0 : outlineEdgeDistance(fix, z.polygon);
+    return { distance: d, outsideBy: within ? 0 : Math.max(0, d - credit), edge: within ? 0 : d };
+  }
+  if (z.lat == null || z.lng == null || !z.radius) return null;
+  const d = distanceM(fix, { lat: z.lat, lng: z.lng });
+  return { distance: d, outsideBy: Math.max(0, d - (z.radius + credit)), edge: Math.max(0, d - z.radius) };
+}
+
 /** The same rule as the server (only for the hint chip; the server decides). */
-export function zoneHint(fix: Fix, zones: Array<{ lat: number | null; lng: number | null; radius: number | null }>, rules: { maxAccuracy: number }, allowance = 50): ZoneHint | null {
+export function zoneHint(fix: Fix, zones: ZoneShape[], rules: { maxAccuracy: number; allowance?: number }, allowance = rules.allowance ?? 50): ZoneHint | null {
   let best: ZoneHint | null = null;
   for (const z of zones) {
-    if (z.lat == null || z.lng == null || !z.radius) continue;
-    const d = distanceM(fix, { lat: z.lat, lng: z.lng });
-    const outsideBy = Math.max(0, d - (z.radius + Math.min(fix.accuracy, allowance)));
-    if (!best || outsideBy < best.outsideBy || (outsideBy === best.outsideBy && d < best.distance)) {
-      best = { inside: outsideBy === 0 && fix.accuracy <= rules.maxAccuracy, preciseEnough: fix.accuracy <= rules.maxAccuracy, distance: d, outsideBy };
+    const g = zoneGap(fix, z, allowance);
+    if (!g) continue;
+    if (!best || g.outsideBy < best.outsideBy || (g.outsideBy === best.outsideBy && g.distance < best.distance)) {
+      best = { inside: g.outsideBy === 0 && fix.accuracy <= rules.maxAccuracy, preciseEnough: fix.accuracy <= rules.maxAccuracy, distance: g.distance, outsideBy: g.outsideBy };
     }
   }
   return best;

@@ -8,6 +8,7 @@ import { resolvePermissions } from '../../middleware/auth.js';
 import { domainAllowed, GoogleTokenError, verifyGoogleCredential } from './google.js';
 import { IdentityUnavailable, resolveStaffIdentity } from './identity.js';
 import { addPairReading, pairingExists } from './pairing.js';
+import { polygonFromZone } from './geofence.js';
 import { createPhoneTap, previewPhoneTap, readPhoneTap, submitPhoneTap } from './phoneTap.js';
 import {
   challengeFor,
@@ -99,7 +100,8 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
     const db = getDb();
     const rules = clockRules();
     const zones = (await loadZones(db, true)).map((z) => ({
-      id: z.id, name: z.name, kind: z.kind, lat: z.center_lat, lng: z.center_lng, radius: z.radius_m,
+      id: z.id, name: z.name, kind: z.kind, lat: z.center_lat, lng: z.center_lng, radius: z.kind === 'polygon' ? null : z.radius_m,
+      polygon: z.kind === 'polygon' ? polygonFromZone(z) : null,
     }));
     const now = new Date(clockNow());
     // The school's logo from Amashuri (cached); never hold the page up for it.
@@ -116,6 +118,7 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
         schoolDate: schoolDateString(now),
         timezone: tenant.timezone,
         rules: {
+          allowance: rules.allowance,
           opens: rules.opens,
           lateAfter: rules.lateAfter,
           earlyLeaveBefore: rules.earlyLeaveBefore,

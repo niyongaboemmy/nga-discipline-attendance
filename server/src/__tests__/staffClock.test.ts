@@ -13,7 +13,7 @@ import { __setClockNow } from '../modules/clock/clock.service.js';
 import { __resetNonces, punchMessage } from '../modules/clock/deviceAuth.js';
 import { __resetClockRateLimits } from '../modules/clock/clock.routes.js';
 import { __resetPhoneTaps, phoneTapMessage } from '../modules/clock/phoneTap.js';
-import { haversine, judge, onSchoolNetwork, plausibilityFlags } from '../modules/clock/geofence.js';
+import { haversine, judge, onSchoolNetwork, plausibilityFlags, edgeDistance } from '../modules/clock/geofence.js';
 
 /**
  * Staff attendance clock (STAFF_ATTENDANCE_CLOCK_PLAN.md): device registration with
@@ -131,6 +131,28 @@ describe('geofence (pure)', () => {
     const vague = judge({ ...INSIDE, accuracy: 240 }, zone, { maxAccuracy: 100, allowance: 50 });
     expect(vague.preciseEnough).toBe(false);
     expect(vague.inside).toBe(false);
+  });
+
+  it('judges an outline by its walls: inside, within the edge tolerance, and outside', () => {
+    // A 100 m x 60 m compound around CENTER ([lng, lat] corners).
+    const dx = 50 / (111_320 * Math.cos((CENTER.lat * Math.PI) / 180));
+    const dy = 30 / 111_195;
+    const ring: Array<[number, number]> = [[CENTER.lng - dx, CENTER.lat - dy], [CENTER.lng + dx, CENTER.lat - dy], [CENTER.lng + dx, CENTER.lat + dy], [CENTER.lng - dx, CENTER.lat + dy]];
+    const zone = [{ id: 9, name: 'Compound', kind: 'polygon' as const, center_lat: CENTER.lat, center_lng: CENTER.lng, radius_m: null, polygon_geojson: JSON.stringify({ type: 'Polygon', coordinates: [ring] }), active: 1 }];
+    const opts = { maxAccuracy: 100, allowance: 15 };
+    expect(judge({ ...CENTER, accuracy: 10 }, zone, opts)).toMatchObject({ inside: true, distance: 0, zoneName: 'Compound' });
+    // 10 m north of the north wall, 12 m precision: within the 15 m tolerance.
+    const near = { lat: CENTER.lat + (30 + 10) / 111_195, lng: CENTER.lng, accuracy: 12 };
+    expect(Math.round(edgeDistance(near, ring))).toBe(10);
+    expect(judge(near, zone, opts).inside).toBe(true);
+    // The street 40 m past the wall: refused, 25 m beyond the tolerance (a circle of the
+    // same size would have let it in).
+    const street = { lat: CENTER.lat + (30 + 40) / 111_195, lng: CENTER.lng, accuracy: 20 };
+    const out = judge(street, zone, opts);
+    expect(out).toMatchObject({ inside: false, distance: 40 });
+    expect(out.outsideBy).toBeCloseTo(25, 1);
+    // The tolerance never exceeds the phone's own error: 10 m out with 4 m precision is out.
+    expect(judge({ ...near, accuracy: 4 }, zone, opts).inside).toBe(false);
   });
 
   it('flags readings that look made up and knows school networks', () => {
@@ -352,6 +374,26 @@ describe('the school admin side', () => {
     const edited = await request(app).put(`/api/staff/clock/zones/${id}`).set(authHeader(adminToken)).send({ radius: 90, name: 'Sports ground and parking area near the market road' });
     expect(edited.body.data).toMatchObject({ radius_m: 90 });
     expect((await request(app).delete(`/api/staff/clock/zones/${id}`).set(authHeader(adminToken))).status).toBe(200);
+  });
+
+  it('saves an outline zone (corners, no radius), refuses a giant one, and the public page sends the corners', async () => {
+    const far = { lat: -1.9, lng: 30.2 };
+    const corners = [[far.lng, far.lat], [far.lng + 0.001, far.lat], [far.lng + 0.001, far.lat + 0.0008], [far.lng, far.lat + 0.0008]];
+    const made = await request(app).post('/api/staff/clock/zones').set(authHeader(adminToken)).send({ name: 'Annex', kind: 'polygon', polygon: corners, lat: far.lat + 0.0004, lng: far.lng + 0.0005, radius: 150 });
+    expect(made.status).toBe(201);
+    expect(made.body.data).toMatchObject({ kind: 'polygon', radius_m: null });
+    expect(JSON.parse(made.body.data.polygon_geojson).coordinates[0]).toHaveLength(4);
+    expect((await request(app).post('/api/staff/clock/zones').set(authHeader(adminToken)).send({ name: 'Two', kind: 'polygon', polygon: corners.slice(0, 2) })).status).toBe(400);
+    expect((await request(app).post('/api/staff/clock/zones').set(authHeader(adminToken)).send({ name: 'Huge', kind: 'polygon', polygon: [[30, -1.9], [30.1, -1.9], [30.1, -1.8]] })).status).toBe(400);
+    const boot = await request(app).get('/api/clock/nga/bootstrap');
+    const annex = boot.body.data.zones.find((z: any) => z.name === 'Annex');
+    expect(annex).toMatchObject({ kind: 'polygon', radius: null });
+    expect(annex.polygon).toHaveLength(4);
+    expect(boot.body.data.rules.allowance).toBe(50);
+    // Back to a circle: corners dropped.
+    const back = await request(app).put(`/api/staff/clock/zones/${made.body.data.id}`).set(authHeader(adminToken)).send({ kind: 'circle', radius: 120 });
+    expect(back.body.data).toMatchObject({ kind: 'circle', radius_m: 120, polygon_geojson: null });
+    expect((await request(app).delete(`/api/staff/clock/zones/${made.body.data.id}`).set(authHeader(adminToken))).status).toBe(200);
   });
 
   it('builds the day overview: KPIs, arrivals, rows, unusual check-ins, phones', async () => {

@@ -738,3 +738,25 @@ button.sc-item.sc-item-pick:hover { background: var(--bg-hover); }
   .zc-drawer { top: 62px; right: 10px; left: 10px; width: auto; max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) { .zc-row-draft, .zc-found, .zc-drawer { animation: none; } }
+
+/* Outline areas: shape switch, corners, "+" between corners, tracing */
+.zc-shape { flex: 1; display: flex; padding: 3px; border-radius: 999px; background: var(--bg-subtle); border: 1px solid var(--border); }
+.zc-shape button { flex: 1; height: 30px; border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); font: 600 13px var(--font-body, inherit); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
+.zc-shape button[aria-pressed='true'] { background: var(--primary); color: #fff; }
+.zc-shape button:disabled { cursor: default; }
+.zc-outline-info { flex: 1; min-width: 0; font-size: 13px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zc-outline-info b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.zc-help { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; color: var(--text-tertiary); padding-left: 62px; }
+.zc-key { display: inline-flex; align-items: center; justify-content: center; height: 20px; padding: 0 7px; border-radius: 999px; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text-secondary); font-weight: 600; }
+.zc-key-plus { width: 20px; padding: 0; color: var(--primary); }
+.zc-meta { display: inline-flex; align-items: center; gap: 4px; }
+.zc-vertex { width: 16px; height: 16px; box-sizing: border-box; border-radius: 999px; background: #fff; border: 3px solid var(--primary); cursor: grab; transition: transform .1s ease; }
+.zc-vertex:hover { transform: scale(1.25); }
+.zc-vertex-close { width: 22px; height: 22px; background: var(--primary); border-color: #fff; cursor: pointer; animation: zc-ping 1.4s ease-out infinite; }
+.zc-mid { width: 18px; height: 18px; box-sizing: border-box; border-radius: 999px; background: var(--bg-card); border: 1.5px solid var(--primary); color: var(--primary); font: 700 13px/15px var(--font-body, inherit); text-align: center; cursor: copy; opacity: .75; transition: opacity .12s ease, transform .12s ease; }
+.zc-mid:hover { opacity: 1; transform: scale(1.2); }
+.zc-banner-trace { padding-right: 4px; }
+.zc-banner-trace button:disabled { opacity: .45; cursor: default; }
+.zc-banner-trace button { display: inline-flex; align-items: center; gap: 4px; }
+.zc-banner-done { background: #fff !important; color: var(--primary) !important; }
+@media (prefers-reduced-motion: reduce) { .zc-vertex-close { animation: none; } }

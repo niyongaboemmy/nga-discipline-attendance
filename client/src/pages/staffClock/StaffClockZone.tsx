@@ -2,13 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertTriangle, Check, Clock, Copy, Crosshair, ListFilter, Link2, MapPin, Maximize2, Minus, Plus, Printer, QrCode, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Check, Circle, Clock, Copy, Crosshair, Hexagon, ListFilter, Link2, MapPin, Maximize2, Minus, PenLine, Plus, Printer, QrCode, Trash2, Undo2, X } from 'lucide-react';
 import { DashboardLayout } from '../../components/Layout/DashboardLayout';
 import { ErrorState } from '../../components/common/ErrorState';
 import { useToast } from '../../context/ToastContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { ApiError } from '../../api/client';
-import { staffClockApi, type ClockConfig, type ClockRules, type ClockZone } from '../../api/staffClock';
+import { staffClockApi, zoneCorners, type ClockConfig, type ClockRules, type ClockZone } from '../../api/staffClock';
 import { distanceM, sampleLocation, GeoError } from '../../clock/geo';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { announceClockChange } from './clockEvents';
@@ -45,9 +45,53 @@ const COUNTRY_BY_TZ: Record<string, string> = {
 
 interface PlaceHit { name: string; detail: string; lat: number; lng: number }
 
-interface Draft { id: number | null; name: string; lat: number; lng: number; radius: number; active: boolean }
+type LL = [number, number];
 
-const toDraft = (z: ClockZone): Draft => ({ id: z.id, name: z.name, lat: z.center_lat ?? KIGALI[0], lng: z.center_lng ?? KIGALI[1], radius: z.radius_m ?? 150, active: !!z.active });
+/** An area being edited. `pts`: an outline's corners as [lat, lng] (Leaflet order). */
+interface Draft { id: number | null; name: string; kind: 'circle' | 'polygon'; lat: number; lng: number; radius: number; pts: LL[]; active: boolean }
+
+const centroid = (pts: LL[]): LL => [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length];
+
+const toDraft = (z: ClockZone): Draft => {
+  const corners = zoneCorners(z);
+  const pts: LL[] = corners ? corners.map(([lng, lat]) => [lat, lng]) : [];
+  const c = pts.length ? centroid(pts) : null;
+  return {
+    id: z.id, name: z.name, kind: pts.length ? 'polygon' : 'circle',
+    lat: c ? c[0] : z.center_lat ?? KIGALI[0], lng: c ? c[1] : z.center_lng ?? KIGALI[1],
+    radius: z.radius_m ?? 150, pts, active: !!z.active,
+  };
+};
+
+/** Metres per screen pixel at a latitude and zoom (Web Mercator). */
+const metresPerPx = (lat: number, zoom: number) => (156543.03392 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
+
+/** An outline's area in m² (shoelace in a local flat frame). */
+function areaM2(pts: LL[]): number {
+  if (pts.length < 3) return 0;
+  const [lat0, lng0] = pts[0];
+  const kx = 111_320 * Math.cos((lat0 * Math.PI) / 180);
+  const xy = pts.map(([lat, lng]) => [(lng - lng0) * kx, (lat - lat0) * 111_320]);
+  let a = 0;
+  for (let i = 0; i < xy.length; i++) {
+    const [x1, y1] = xy[i];
+    const [x2, y2] = xy[(i + 1) % xy.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(a) / 2;
+}
+const fmtArea = (m2: number) => (m2 >= 10_000 ? `${(m2 / 10_000).toFixed(1)} ha` : `${Math.round(m2 / 10) * 10} m²`);
+
+/** A starting outline from a circle: 8 corners on its edge, ready to drag onto the walls. */
+function octagon(lat: number, lng: number, m: number): LL[] {
+  return ring(lat, lng, m * 0.9, 8).map(([a, b]) => [a, b]);
+}
+
+/** The area's bounds, roomy enough to see around it. */
+function boundsOf(z: Draft, pad = 2.6): L.LatLngBounds {
+  if (z.kind === 'polygon' && z.pts.length >= 3) return L.latLngBounds(z.pts).pad(0.35);
+  return L.latLng(z.lat, z.lng).toBounds(z.radius * pad);
+}
 
 function eastOf(lat: number, lng: number, m: number): [number, number] {
   return [lat, lng + m / (111_320 * Math.cos((lat * Math.PI) / 180))];
@@ -67,6 +111,7 @@ function ring(lat: number, lng: number, m: number, n = 72): L.LatLngTuple[] {
 
 const clampR = (r: number) => Math.max(MIN_R, Math.min(MAX_R, Math.round(r / 10) * 10));
 const nextName = (zs: Draft[]) => (zs.length ? `Area ${zs.length + 1}` : 'Main campus');
+const shapeLabel = (z: Draft) => (z.kind === 'polygon' ? 'Outline' : `${z.radius} m`);
 
 export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> = ({ embedded }) => {
   const toast = useToast();
@@ -89,6 +134,9 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
   const [hits, setHits] = useState<PlaceHit[] | null>(null);
   const [found, setFound] = useState<PlaceHit | null>(null);
   const [adding, setAdding] = useState(false);
+  /** tracing the selected area's walls: the corners clicked so far */
+  const [trace, setTrace] = useState<LL[] | null>(null);
+  const [zoom, setZoom] = useState(17);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [drawer, setDrawer] = useState<null | 'rules' | 'share'>(null);
@@ -106,7 +154,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
   const meCircle = useRef<L.Circle | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   // The map's click handler is created once: it reads the latest state through refs.
-  const live = useRef({ adding: false, canEdit: false });
+  const live = useRef({ adding: false, canEdit: false, tracing: false });
   const addAtRef = useRef<(lat: number, lng: number) => void>(() => undefined);
   const canEditRef = useRef(canEdit);
   useEffect(() => { canEditRef.current = canEdit; }, [canEdit]);
@@ -129,12 +177,12 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
   }, []);
   useEffect(() => { void Promise.resolve().then(load); }, [load]);
 
-  useEffect(() => { live.current = { adding, canEdit }; }, [adding, canEdit]);
+  useEffect(() => { live.current = { adding, canEdit, tracing: trace != null }; }, [adding, canEdit, trace]);
 
   /** Add an area at a point and select it (adding mode or the first area). */
   const addAt = useCallback((lat: number, lng: number, label?: string) => {
     setZones((zs) => {
-      const next = [...zs, { id: null, name: label ? label.slice(0, 60) : nextName(zs), lat, lng, radius: 150, active: true }];
+      const next: Draft[] = [...zs, { id: null, name: label ? label.slice(0, 60) : nextName(zs), kind: 'circle', lat, lng, radius: 150, pts: [], active: true }];
       setSel(next.length - 1);
       return next;
     });
@@ -166,8 +214,11 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     shade.current = L.layerGroup().addTo(m);
     layer.current = L.layerGroup().addTo(m);
     m.on('click', (e: L.LeafletMouseEvent) => {
-      if (live.current.canEdit && live.current.adding) addAtRef.current(e.latlng.lat, e.latlng.lng);
+      if (!live.current.canEdit) return;
+      if (live.current.tracing) setTrace((t) => (t ? [...t, [e.latlng.lat, e.latlng.lng]] : t));
+      else if (live.current.adding) addAtRef.current(e.latlng.lat, e.latlng.lng);
     });
+    m.on('zoomend', () => setZoom(m.getZoom()));
     map.current = m;
     const ro = new ResizeObserver(() => m.invalidateSize());
     if (mapEl.current) ro.observe(mapEl.current);
@@ -188,16 +239,23 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     map.current.attributionControl = L.control.attribution({ prefix: false }).addAttribution(t.attribution).addTo(map.current);
   }, [style, cfg]);
 
-  // The crosshair cursor while adding.
+  // The crosshair cursor while adding or tracing; Escape leaves, Enter finishes a trace.
+  const tracing = trace != null;
+  const finishTraceRef = useRef<() => void>(() => undefined);
   useEffect(() => {
-    mapEl.current?.classList.toggle('zc-adding', adding);
-    if (!adding) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAdding(false); };
+    mapEl.current?.classList.toggle('zc-adding', adding || tracing);
+    if (!adding && !tracing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setAdding(false); setTrace(null); }
+      if (e.key === 'Enter' && tracing) finishTraceRef.current();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [adding]);
+  }, [adding, tracing]);
 
-  // Draw the areas, the selected one with its draggable centre and edge, and the spotlight.
+  // Draw the areas (circles and outlines), the selected one's handles, its edge
+  // tolerance band, the spotlight around it, and a trace in progress.
+  const tolerance = rules?.allowance ?? 50;
   useEffect(() => {
     const m = map.current;
     const g = layer.current;
@@ -208,33 +266,104 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     const blue = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim() || '#2563eb';
     const tone = style === 'satellite' ? '#93c5fd' : blue;
     const z0 = zones[sel];
-    if (z0 && !adding) {
+    const commit = (i: number, p: Partial<Draft>) => {
+      setZones((zs) => zs.map((x, j) => (j === i ? { ...x, ...p } : x)));
+      setDirty(true);
+      setTest(null);
+    };
+    if (z0 && !adding && !tracing) {
       // Everything but the selected area, dimmed.
-      L.polygon([[[85, -179.99], [85, 179.99], [-85, 179.99], [-85, -179.99]], ring(z0.lat, z0.lng, z0.radius)], {
+      const hole = z0.kind === 'polygon' && z0.pts.length >= 3 ? z0.pts : ring(z0.lat, z0.lng, z0.radius);
+      L.polygon([[[85, -179.99], [85, 179.99], [-85, 179.99], [-85, -179.99]], hole], {
         stroke: false, fillColor: '#030712', fillOpacity: style === 'satellite' ? 0.45 : 0.32, interactive: false,
       }).addTo(s);
     }
+    const label = (z: Draft) => `${z.name || 'Untitled'} · ${z.kind === 'polygon' ? fmtArea(areaM2(z.pts)) : `${z.radius} m`}`;
     zones.forEach((z, i) => {
-      const selected = i === sel && !adding;
+      const selected = i === sel && !adding && !tracing;
       const hot = i === hover;
-      const circle = L.circle([z.lat, z.lng], {
-        radius: z.radius, color: z.active ? tone : '#9ca3af', weight: selected ? 3.5 : hot ? 3 : 2, dashArray: selected ? undefined : '6 6',
+      const style0 = {
+        color: z.active ? tone : '#9ca3af', weight: selected ? 3.5 : hot ? 3 : 2, dashArray: selected ? undefined : '6 6',
         fillColor: tone, fillOpacity: selected ? 0 : hot ? 0.2 : z.active ? 0.08 : 0.02, opacity: z.active || selected ? 1 : 0.7,
-      }).addTo(g);
-      circle.on('click', (e: L.LeafletMouseEvent) => { L.DomEvent.stopPropagation(e); if (!live.current.adding) { setSel(i); setConfirmRemove(false); } });
-      circle.on('mouseover', () => setHover(i));
-      circle.on('mouseout', () => setHover((h) => (h === i ? null : h)));
+      };
+      const isOutline = z.kind === 'polygon' && z.pts.length >= 3;
+      // Edge tolerance: the band just outside the edge where a phone's error is forgiven.
+      let band: L.Polygon | L.Circle | null = null;
+      if (selected && tolerance > 0) {
+        band = isOutline
+          ? L.polygon(z.pts, { stroke: true, fill: false, color: tone, opacity: 0.22, weight: Math.max(2, (tolerance / metresPerPx(z.lat, zoom)) * 2), lineJoin: 'round', interactive: false }).addTo(g)
+          : L.circle([z.lat, z.lng], { radius: z.radius + tolerance, stroke: true, color: tone, weight: 1, dashArray: '2 6', opacity: 0.6, fill: false, interactive: false }).addTo(g);
+      }
+      const shape: L.Polygon | L.Circle = isOutline ? L.polygon(z.pts, style0).addTo(g) : L.circle([z.lat, z.lng], { radius: z.radius, ...style0 }).addTo(g);
+      shape.on('click', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        // Adding or tracing: a click on an existing area still places the point there.
+        if (live.current.tracing) setTrace((t) => (t ? [...t, [e.latlng.lat, e.latlng.lng]] : t));
+        else if (live.current.adding) addAtRef.current(e.latlng.lat, e.latlng.lng);
+        else { setSel(i); setConfirmRemove(false); }
+      });
+      shape.on('mouseover', () => setHover(i));
+      shape.on('mouseout', () => setHover((h) => (h === i ? null : h)));
       if (!selected) {
-        circle.bindTooltip(`${z.name || 'Untitled'} · ${z.radius} m`, { direction: 'center', className: 'zc-tip', sticky: true });
+        shape.bindTooltip(label(z), { direction: 'center', className: 'zc-tip', sticky: true });
         return;
       }
-      const pin = L.marker([z.lat, z.lng], {
+      const centre = isOutline ? centroid(z.pts) : ([z.lat, z.lng] as LL);
+      const pin = L.marker(centre, {
         draggable: canEdit,
         icon: L.divIcon({ className: '', html: `<svg class="sc-pin" viewBox="0 0 24 24"><path fill="${blue}" d="M12 22s-7-6.4-7-12a7 7 0 0 1 14 0c0 5.6-7 12-7 12z"/><circle cx="12" cy="10" r="2.6" fill="#fff"/></svg>`, iconSize: [34, 34], iconAnchor: [17, 32] }),
         keyboard: true,
-        title: 'Area centre: drag to move',
+        title: isOutline ? 'Drag to move the whole outline' : 'Area centre: drag to move',
       }).addTo(g);
-      pin.bindTooltip(`${z.name || 'Untitled'} · ${z.radius} m`, { permanent: true, direction: 'top', offset: [0, -30], className: 'sc-pin-label' });
+      pin.bindTooltip(label(z), { permanent: true, direction: 'top', offset: [0, -30], className: 'sc-pin-label' });
+
+      if (isOutline) {
+        // Drag the pin: the whole outline moves with it.
+        let start: L.LatLng | null = null;
+        const shifted = (ll: L.LatLng): LL[] => (start ? z.pts.map(([a, b]) => [a + ll.lat - start!.lat, b + ll.lng - start!.lng]) : z.pts);
+        pin.on('dragstart', (e: L.LeafletEvent) => { start = (e.target as L.Marker).getLatLng(); s.clearLayers(); });
+        pin.on('drag', (e: L.LeafletEvent) => { const p = shifted((e.target as L.Marker).getLatLng()); (shape as L.Polygon).setLatLngs(p); band?.remove(); });
+        pin.on('dragend', (e: L.LeafletEvent) => { const p = shifted((e.target as L.Marker).getLatLng()); const c = centroid(p); commit(i, { pts: p, lat: c[0], lng: c[1] }); });
+        if (!canEdit) return;
+        // Corners: drag to move, right-click (or double-click) to remove.
+        z.pts.forEach((pt, k) => {
+          const v = L.marker(pt, { draggable: true, icon: L.divIcon({ className: '', html: '<div class="zc-vertex"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }), title: 'Drag this corner · right-click to remove' }).addTo(g);
+          v.on('drag', (e: L.LeafletEvent) => {
+            const ll = (e.target as L.Marker).getLatLng();
+            const p = z.pts.map((q, j) => (j === k ? ([ll.lat, ll.lng] as LL) : q));
+            (shape as L.Polygon).setLatLngs(p);
+            band?.remove();
+            s.clearLayers();
+          });
+          v.on('dragend', (e: L.LeafletEvent) => {
+            const ll = (e.target as L.Marker).getLatLng();
+            const p = z.pts.map((q, j) => (j === k ? ([ll.lat, ll.lng] as LL) : q));
+            const c = centroid(p);
+            commit(i, { pts: p, lat: c[0], lng: c[1] });
+          });
+          const drop = (e: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(e);
+            L.DomEvent.preventDefault(e as unknown as Event);
+            if (z.pts.length <= 3) { toast.info('An outline needs 3 corners', 'Drag this corner instead, or switch to a circle.'); return; }
+            const p = z.pts.filter((_, j) => j !== k);
+            const c = centroid(p);
+            commit(i, { pts: p, lat: c[0], lng: c[1] });
+          };
+          v.on('contextmenu', drop);
+          v.on('dblclick', drop);
+          // Between this corner and the next: a "+" to add a corner there.
+          const nx = z.pts[(k + 1) % z.pts.length];
+          const mid: LL = [(pt[0] + nx[0]) / 2, (pt[1] + nx[1]) / 2];
+          const add = L.marker(mid, { icon: L.divIcon({ className: '', html: '<div class="zc-mid">+</div>', iconSize: [18, 18], iconAnchor: [9, 9] }), title: 'Add a corner here' }).addTo(g);
+          add.on('click', (e: L.LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(e);
+            const p = [...z.pts.slice(0, k + 1), mid, ...z.pts.slice(k + 1)];
+            commit(i, { pts: p });
+          });
+        });
+        return;
+      }
+
       const edge = L.marker(eastOf(z.lat, z.lng, z.radius), {
         draggable: canEdit,
         icon: L.divIcon({ className: '', html: '<div class="sc-handle"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
@@ -242,37 +371,45 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
       }).addTo(g);
       pin.on('drag', (e: L.LeafletEvent) => {
         const ll = (e.target as L.Marker).getLatLng();
-        circle.setLatLng(ll);
+        (shape as L.Circle).setLatLng(ll);
         edge.setLatLng(eastOf(ll.lat, ll.lng, z.radius));
+        band?.remove();
         s.clearLayers();
       });
       pin.on('dragend', (e: L.LeafletEvent) => {
         const ll = (e.target as L.Marker).getLatLng();
-        setZones((zs) => zs.map((x, j) => (j === i ? { ...x, lat: ll.lat, lng: ll.lng } : x)));
-        setDirty(true);
-        setTest(null);
+        commit(i, { lat: ll.lat, lng: ll.lng });
       });
       edge.on('drag', (e: L.LeafletEvent) => {
         const r = Math.max(MIN_R, Math.min(MAX_R, Math.round(distanceM({ lat: z.lat, lng: z.lng }, (e.target as L.Marker).getLatLng()))));
-        circle.setRadius(r);
+        (shape as L.Circle).setRadius(r);
         pin.setTooltipContent(`${z.name || 'Untitled'} · ${r} m`);
+        band?.remove();
         s.clearLayers();
       });
       edge.on('dragend', (e: L.LeafletEvent) => {
-        const r = clampR(distanceM({ lat: z.lat, lng: z.lng }, (e.target as L.Marker).getLatLng()));
-        setZones((zs) => zs.map((x, j) => (j === i ? { ...x, radius: r } : x)));
-        setDirty(true);
-        setTest(null);
+        commit(i, { radius: clampR(distanceM({ lat: z.lat, lng: z.lng }, (e.target as L.Marker).getLatLng())) });
       });
     });
-  }, [zones, sel, hover, style, canEdit, adding]);
+
+    // A trace in progress: the walls clicked so far; the first corner closes it.
+    if (trace) {
+      if (trace.length > 1) L.polyline(trace, { color: tone, weight: 3, dashArray: '6 6', interactive: false }).addTo(g);
+      if (trace.length > 2) L.polygon(trace, { stroke: false, fillColor: tone, fillOpacity: 0.12, interactive: false }).addTo(g);
+      trace.forEach((pt, k) => {
+        const first = k === 0 && trace.length >= 3;
+        const mk = L.marker(pt, { icon: L.divIcon({ className: '', html: `<div class="zc-vertex${first ? ' zc-vertex-close' : ''}"></div>`, iconSize: first ? [22, 22] : [16, 16], iconAnchor: first ? [11, 11] : [8, 8] }), title: first ? 'Click to close the outline' : `Corner ${k + 1}` }).addTo(g);
+        if (first) mk.on('click', (e: L.LeafletMouseEvent) => { L.DomEvent.stopPropagation(e); finishTraceRef.current(); });
+      });
+    }
+  }, [zones, sel, hover, style, canEdit, adding, tracing, trace, zoom, tolerance, toast]);
 
   /** Show an area whole, clear of the list on the left. */
   const flyTo = useCallback((z: Draft) => {
     const m = map.current;
     if (!m) return;
     const narrow = (mapEl.current?.clientWidth ?? 1000) < 760;
-    m.flyToBounds(L.latLng(z.lat, z.lng).toBounds(z.radius * 2.6), {
+    m.flyToBounds(boundsOf(z), {
       paddingTopLeft: narrow ? [20, 80] : [embedded ? 330 : 360, 90],
       paddingBottomRight: narrow ? [20, 300] : [drawer ? 400 : 60, 60],
       maxZoom: 18, duration: 0.6,
@@ -282,7 +419,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
   const fitAll = () => {
     const m = map.current;
     if (!m || !zones.length) return;
-    const b = L.latLngBounds(zones.map((z) => L.latLng(z.lat, z.lng).toBounds(z.radius * 2.2)).flatMap((x) => [x.getNorthWest(), x.getSouthEast()]));
+    const b = L.latLngBounds(zones.map((z) => boundsOf(z, 2.2)).flatMap((x) => [x.getNorthWest(), x.getSouthEast()]));
     m.flyToBounds(b, { paddingTopLeft: [embedded ? 330 : 360, 90], paddingBottomRight: [60, 60], maxZoom: 18, duration: 0.6 });
   };
 
@@ -316,7 +453,10 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     if (z.id == null) return 'New';
     const o = original.get(z.id);
     if (!o) return null;
-    return o.name !== z.name || o.radius !== z.radius || o.active !== z.active || Math.abs(o.lat - z.lat) > 1e-7 || Math.abs(o.lng - z.lng) > 1e-7 ? 'Edited' : null;
+    const moved = o.kind !== z.kind || (z.kind === 'polygon'
+      ? JSON.stringify(o.pts.map((p) => p.map((n) => n.toFixed(7)))) !== JSON.stringify(z.pts.map((p) => p.map((n) => n.toFixed(7))))
+      : o.radius !== z.radius || Math.abs(o.lat - z.lat) > 1e-7 || Math.abs(o.lng - z.lng) > 1e-7);
+    return o.name !== z.name || o.active !== z.active || moved ? 'Edited' : null;
   };
   const shown = zones.map((z, i) => ({ z, i })).filter(({ z }) => !filter.trim() || z.name.toLowerCase().includes(filter.trim().toLowerCase()));
 
@@ -341,6 +481,48 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     window.setTimeout(() => searchInput.current?.focus(), 50);
   };
 
+  /** What the server stores: a circle's centre + radius, or an outline's [lng, lat] corners (+ centre). */
+  const zonePayload = (z: Draft) => {
+    const base = { name: z.name.trim(), active: z.active };
+    if (z.kind === 'polygon' && z.pts.length >= 3) {
+      const c = centroid(z.pts);
+      return { ...base, kind: 'polygon' as const, lat: c[0], lng: c[1], polygon: z.pts.map(([lat, lng]) => [lng, lat] as [number, number]) };
+    }
+    return { ...base, kind: 'circle' as const, lat: z.lat, lng: z.lng, radius: z.radius };
+  };
+
+  /** Circle ⇄ outline. An outline starts as 8 corners on the circle's edge, ready to drag onto the walls. */
+  const setShape = (kind: 'circle' | 'polygon') => {
+    if (!current || current.kind === kind) return;
+    if (kind === 'polygon') {
+      const pts = current.pts.length >= 3 ? current.pts : octagon(current.lat, current.lng, current.radius);
+      patch({ kind, pts });
+      toast.info('Outline', 'Drag the corners onto the school walls, or press Trace walls and click each corner.');
+    } else {
+      const c = current.pts.length ? centroid(current.pts) : ([current.lat, current.lng] as LL);
+      const r = current.pts.length ? clampR(Math.max(...current.pts.map((p) => distanceM({ lat: c[0], lng: c[1] }, { lat: p[0], lng: p[1] })))) : current.radius;
+      patch({ kind, lat: c[0], lng: c[1], radius: r });
+    }
+    setTest(null);
+  };
+
+  const startTrace = () => {
+    setAdding(false);
+    setFound(null);
+    setTrace([]);
+    if (current) map.current?.flyToBounds(boundsOf(current, 2), { paddingTopLeft: [embedded ? 330 : 360, 90], paddingBottomRight: [60, 60], maxZoom: 19, duration: 0.5 });
+  };
+  const finishTrace = () => {
+    if (!trace) return;
+    if (trace.length < 3) { toast.info('Keep going', 'Click at least 3 corners of the school walls.'); return; }
+    const c = centroid(trace);
+    patch({ kind: 'polygon', pts: trace, lat: c[0], lng: c[1] });
+    setTrace(null);
+    setTest(null);
+    toast.success('Outline drawn', `${trace.length} corners · ${fmtArea(areaM2(trace))}. Drag any corner to adjust, then Save.`);
+  };
+  useEffect(() => { finishTraceRef.current = finishTrace; });
+
   const save = async (enable?: boolean) => {
     if (!rules || !cfg) return;
     setSaving(true);
@@ -349,16 +531,16 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
       for (const z of zones) {
         if (!z.name.trim()) throw new ApiError('Give every area a name.', 400);
         if (z.id == null) {
-          const created = await staffClockApi.createZone({ name: z.name.trim(), lat: z.lat, lng: z.lng, radius: z.radius, active: z.active });
+          const created = await staffClockApi.createZone(zonePayload(z));
           keep.add(created.id);
         } else {
-          await staffClockApi.updateZone(z.id, { name: z.name.trim(), lat: z.lat, lng: z.lng, radius: z.radius, active: z.active });
+          await staffClockApi.updateZone(z.id, zonePayload(z));
           keep.add(z.id);
         }
       }
       for (const z of cfg.zones) if (z.kind === 'circle' && !keep.has(z.id)) await staffClockApi.deleteZone(z.id);
-      const { allowance: _a, autoCloseAt: _b, ...editable } = rules;
-      void _a; void _b;
+      const { autoCloseAt: _b, ...editable } = rules;
+      void _b;
       await staffClockApi.saveRules({ ...editable, enabled: enable ?? rules.enabled });
       announceClockChange();
       embedded?.onSaved?.();
@@ -382,7 +564,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
 
   const judge = (fix: { lat: number; lng: number; accuracy: number; ts: number }, fromPhone: boolean) => {
     showMe(fix);
-    const outcome = evaluateTest(fix, zones.filter((x) => x.active).map((z) => ({ name: z.name, lat: z.lat, lng: z.lng, radius: z.radius })), {
+    const outcome = evaluateTest(fix, zones.filter((x) => x.active).map((z) => ({ name: z.name, lat: z.lat, lng: z.lng, radius: z.radius, kind: z.kind, polygon: z.kind === 'polygon' ? z.pts.map(([a, b]) => [b, a] as [number, number]) : null })), {
       maxAccuracy: rules?.maxAccuracy ?? 100, allowance: rules?.allowance ?? 50, computer: !fromPhone && isComputer(),
     });
     setTest(fromPhone ? { ...outcome, text: `From your phone: ${outcome.text}` } : outcome);
@@ -494,6 +676,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     ['earlyLeaveBefore', 'Early leave before', 'Check-out earlier than this is early', 'time'],
     ['minShiftMinutes', 'Check-out opens after', 'Minutes after check-in', 'number', 'min'],
     ['maxAccuracy', 'Location precision', 'Vaguer readings are refused', 'number', 'm'],
+    ['allowance', 'Edge tolerance', 'A phone this close outside the edge still counts (its own error, up to this)', 'number', 'm'],
     ['selfReplaceDays', 'New phone approval', 'A second phone within this many days needs approval', 'number', 'days'],
   ];
 
@@ -529,7 +712,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
               <span className="zc-num">{i + 1}</span>
               <span className="zc-name" title={z.name}>{z.name || 'Untitled'}</span>
               {t && <span className={`zc-tag${t === 'New' ? ' new' : ''}`}>{t}</span>}
-              <span className="zc-meta">{z.radius} m</span>
+              <span className="zc-meta">{z.kind === 'polygon' && <Hexagon size={12} />}{shapeLabel(z)}</span>
               <i className={`zc-dot${z.active ? ' on' : ''}`} title={z.active ? 'Active' : 'Off'} />
             </button>
           );
@@ -544,15 +727,35 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
             <input className="zc-input" value={current.name} maxLength={60} disabled={!canEdit} onChange={(e) => patch({ name: e.target.value })} aria-label="Area name" />
           </div>
           <div className="zc-field">
-            <span>Radius</span>
-            <div className="zc-radius">
-              <button className="zc-step" disabled={!canEdit || current.radius <= MIN_R} onClick={() => patch({ radius: clampR(current.radius - 10) })} aria-label="10 m smaller"><Minus size={15} /></button>
-              <input type="range" className="sc-range" min={MIN_R} max={MAX_R} step={10} value={current.radius} disabled={!canEdit} onChange={(e) => patch({ radius: Number(e.target.value) })} aria-label="Radius in metres" />
-              <button className="zc-step" disabled={!canEdit || current.radius >= MAX_R} onClick={() => patch({ radius: clampR(current.radius + 10) })} aria-label="10 m larger"><Plus size={15} /></button>
-              <b>{current.radius} m</b>
+            <span>Shape</span>
+            <div className="zc-shape" role="group" aria-label="Area shape">
+              <button aria-pressed={current.kind === 'circle'} disabled={!canEdit} onClick={() => setShape('circle')}><Circle size={14} /> Circle</button>
+              <button aria-pressed={current.kind === 'polygon'} disabled={!canEdit} onClick={() => setShape('polygon')} data-testid="shape-outline"><Hexagon size={14} /> Outline</button>
             </div>
           </div>
-          {current.radius < 100 && <div className="zc-hint"><AlertTriangle size={14} />Under 100 m may refuse staff indoors</div>}
+          {current.kind === 'circle' ? (
+            <>
+              <div className="zc-field">
+                <span>Radius</span>
+                <div className="zc-radius">
+                  <button className="zc-step" disabled={!canEdit || current.radius <= MIN_R} onClick={() => patch({ radius: clampR(current.radius - 10) })} aria-label="10 m smaller"><Minus size={15} /></button>
+                  <input type="range" className="sc-range" min={MIN_R} max={MAX_R} step={10} value={current.radius} disabled={!canEdit} onChange={(e) => patch({ radius: Number(e.target.value) })} aria-label="Radius in metres" />
+                  <button className="zc-step" disabled={!canEdit || current.radius >= MAX_R} onClick={() => patch({ radius: clampR(current.radius + 10) })} aria-label="10 m larger"><Plus size={15} /></button>
+                  <b>{current.radius} m</b>
+                </div>
+              </div>
+              {current.radius < 100 && <div className="zc-hint"><AlertTriangle size={14} />Under 100 m may refuse staff indoors</div>}
+            </>
+          ) : (
+            <>
+              <div className="zc-field">
+                <span>Walls</span>
+                <span className="zc-outline-info" title={fmtArea(areaM2(current.pts))}><b>{current.pts.length}</b> corners</span>
+                {canEdit && <button className="sc-btn sc-btn-sm" onClick={startTrace} data-testid="trace-walls"><PenLine size={14} /> Trace walls</button>}
+              </div>
+              {canEdit && <div className="zc-help"><span className="zc-key">drag</span> a corner · <span className="zc-key zc-key-plus">+</span> adds one · <span className="zc-key">right-click</span> removes</div>}
+            </>
+          )}
           <div className="zc-field">
             <span>Active</span>
             <span className="zc-coords" title="Centre">{current.lat.toFixed(5)}, {current.lng.toFixed(5)}</span>
@@ -644,6 +847,15 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
                     <small className="sc-clip">{h.detail}</small>
                   </button>
                 ))}
+              </div>
+            )}
+            {tracing && trace && (
+              <div className="zc-banner zc-banner-trace" role="status" data-testid="trace-banner">
+                <PenLine size={15} />
+                <span>{trace.length === 0 ? 'Click each corner of the school walls' : trace.length < 3 ? `${trace.length} corner${trace.length > 1 ? 's' : ''} · keep clicking` : `${trace.length} corners · click the first one or Done`}</span>
+                <button onClick={() => setTrace((t) => (t && t.length ? t.slice(0, -1) : t))} disabled={!trace.length} aria-label="Undo last corner"><Undo2 size={13} /></button>
+                <button onClick={finishTrace} disabled={trace.length < 3} className="zc-banner-done">Done</button>
+                <button onClick={() => setTrace(null)}>Cancel</button>
               </div>
             )}
             {adding && (

@@ -63,9 +63,29 @@ function polygonRing(z: Zone): Array<[number, number]> | null {
   }
 }
 
-/** Distance from a point to a polygon's nearest vertex/centroid -- only used for the "you are X m away" hint. */
-function polygonDistance(p: { lat: number; lng: number }, ring: Array<[number, number]>): number {
-  return Math.min(...ring.map(([lng, lat]) => haversine(p, { lat, lng })));
+/**
+ * Metres from a point to the nearest edge of a polygon ([lng, lat] ring): each wall
+ * is a segment in a flat local frame around the point (exact enough for a school).
+ */
+export function edgeDistance(p: { lat: number; lng: number }, ring: Array<[number, number]>): number {
+  const kx = (Math.PI / 180) * R * Math.cos(rad(p.lat));
+  const ky = (Math.PI / 180) * R;
+  const pts = ring.map(([lng, lat]) => [(lng - p.lng) * kx, (lat - p.lat) * ky] as const);
+  let best = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[(i + 1) % pts.length];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
+    best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return best;
+}
+
+export function polygonFromZone(z: Pick<Zone, 'polygon_geojson'>): Array<[number, number]> | null {
+  return polygonRing(z as Zone);
 }
 
 export interface ZoneVerdict {
@@ -74,7 +94,7 @@ export interface ZoneVerdict {
   preciseEnough: boolean;
   zoneId: number | null;
   zoneName: string | null;
-  /** metres from the nearest zone's centre (circle) or edge vertex (polygon) */
+  /** metres from the nearest zone's centre (circle), or from its nearest wall (outline; 0 inside) */
   distance: number | null;
   /** metres outside the nearest zone's edge, 0 when inside */
   outsideBy: number;
@@ -89,10 +109,13 @@ export function judge(fix: Fix, zones: Zone[], opts: { maxAccuracy: number; allo
     if (z.kind === 'polygon') {
       const ring = polygonRing(z);
       if (!ring) continue;
-      const d = polygonDistance(fix, ring);
-      const inside = insidePolygon(fix, ring);
-      const outsideBy = inside ? 0 : Math.max(0, d - credit);
-      if (outsideBy < best.outsideBy) best = { inside: inside && preciseEnough, preciseEnough, zoneId: z.id, zoneName: z.name, distance: Math.round(d), outsideBy };
+      // Inside the walls, or within the edge tolerance of one (the phone's own error, capped).
+      const within = insidePolygon(fix, ring);
+      const d = within ? 0 : edgeDistance(fix, ring);
+      const outsideBy = within ? 0 : Math.max(0, d - credit);
+      if (outsideBy < best.outsideBy || (outsideBy === best.outsideBy && (best.distance ?? Infinity) > d)) {
+        best = { inside: outsideBy === 0 && preciseEnough, preciseEnough, zoneId: z.id, zoneName: z.name, distance: Math.round(d), outsideBy };
+      }
       continue;
     }
     if (z.center_lat == null || z.center_lng == null || !z.radius_m) continue;
