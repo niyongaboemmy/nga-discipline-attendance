@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
-import { Printer, QrCode, Search, X } from 'lucide-react';
+import { Check, Minus, Printer, QrCode, Search, Smartphone, X } from 'lucide-react';
 import { DashboardLayout } from '../../components/Layout/DashboardLayout';
 import { ErrorState } from '../../components/common/ErrorState';
 import { useToast } from '../../context/ToastContext';
@@ -181,19 +181,43 @@ export const StaffClockDevices: React.FC = () => {
             <button className="sc-btn sc-btn-sm" onClick={() => setPicked(new Set(staff.filter((s) => !s.hasPhone).map((s) => s.id)))}>Select everyone without a phone</button>
             {!!picked.size && <button className="sc-btn sc-btn-sm" onClick={() => setPicked(new Set())}>Clear</button>}
           </div>
-          {!devices ? <div className="sc-skel" style={{ height: 120, marginTop: 12 }} /> : (
-            <div className="sc-checks">
-              {pickList.map((s) => (
-                <label key={s.id} className="sc-check" title={s.name}>
-                  <input type="checkbox" checked={picked.has(s.id)} onChange={(e) => setPicked((p) => { const n = new Set(p); if (e.target.checked) n.add(s.id); else n.delete(s.id); return n; })} />
-                  <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                    <b className="sc-clip" style={{ fontSize: 14 }}>{s.name}</b>
-                    <small className="sc-muted">{s.hasPhone ? 'Has a phone' : 'No phone'}{cardOf.has(s.id) ? ' · has a card' : ''}</small>
-                  </span>
+          {!devices ? (
+            <div className="sc-picks" aria-busy="true">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="sc-pick"><span className="sc-skel" style={{ width: 22, height: 22, borderRadius: 999 }} /><span className="sc-skel" style={{ width: 36, height: 36, borderRadius: 999 }} /><span className="sc-skel" style={{ height: 12, width: `${40 + i * 7}%` }} /></div>)}</div>
+          ) : (() => {
+            const shownPicked = pickList.filter((s) => picked.has(s.id)).length;
+            const all = pickList.length > 0 && shownPicked === pickList.length;
+            const some = shownPicked > 0 && !all;
+            const toggle = (id: string, on: boolean) => setPicked((p) => { const n = new Set(p); if (on) n.add(id); else n.delete(id); return n; });
+            return (
+              <>
+                <label className={`sc-pick sc-pick-all${all || some ? ' is-on' : ''}`}>
+                  <input type="checkbox" className="sr-only" checked={all} ref={(el) => { if (el) el.indeterminate = some; }}
+                    onChange={() => setPicked((p) => { const n = new Set(p); pickList.forEach((s) => (all ? n.delete(s.id) : n.add(s.id))); return n; })} />
+                  <span className="sc-tick" aria-hidden>{all ? <Check size={14} strokeWidth={3} /> : some ? <Minus size={14} strokeWidth={3} /> : null}</span>
+                  <b>{all ? 'All selected' : some ? `${shownPicked} selected` : 'Select all'}</b>
+                  <span className="sc-muted">{pickList.length} shown</span>
                 </label>
-              ))}
-            </div>
-          )}
+                <div className="sc-picks" role="group" aria-label="Staff for QR cards">
+                  {pickList.map((s) => {
+                    const on = picked.has(s.id);
+                    return (
+                      <label key={s.id} className={`sc-pick${on ? ' is-on' : ''}`} title={s.name}>
+                        <input type="checkbox" className="sr-only" checked={on} onChange={(e) => toggle(s.id, e.target.checked)} />
+                        <span className="sc-tick" aria-hidden>{on && <Check size={14} strokeWidth={3} />}</span>
+                        <span className="sc-avatar sc-pick-avatar">{initialsOf(s.name)}</span>
+                        <span className="sc-pick-name"><b className="sc-clip">{s.name}</b></span>
+                        <span className="sc-pick-tags">
+                          <span className={`sc-mini${s.hasPhone ? ' is-ok' : ''}`} title={s.hasPhone ? 'Has a phone' : 'No phone'}><Smartphone size={13} />{s.hasPhone ? 'Phone' : 'No phone'}</span>
+                          {cardOf.has(s.id) && <span className="sc-mini is-card" title="Has a card"><QrCode size={13} />Card</span>}
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {pickList.length === 0 && <div className="sc-empty">No staff match this search.</div>}
+                </div>
+              </>
+            );
+          })()}
           {cards.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <div className="sc-muted" style={{ fontSize: 13, fontWeight: 600 }}>Cards in use ({cards.length})</div>

@@ -423,6 +423,17 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     ['selfReplaceDays', 'New phone within', 'Days that need your approval', 'number'],
   ];
 
+  const saveBar = cfg && rules && canEdit && (
+          <div className={`sc-savebar${dirty ? ' dirty' : ''}${embedded ? ' sc-savebar-inline' : ''}`} role="region" aria-label="Save">
+            <span className="sc-savebar-text">
+              <i aria-hidden="true" />
+              {dirty ? 'Unsaved changes' : 'All changes saved'}
+            </span>
+            <button className="sc-btn sc-btn-sm" disabled={!dirty || saving} onClick={() => void load()}>Discard</button>
+            <button className="sc-btn sc-btn-primary" disabled={!dirty || saving} onClick={() => void save()}>{saving && <Spinner />}{embedded ? 'Save zone' : 'Save changes'}</button>
+          </div>
+        );
+
   const content = (
       <div className={embedded ? 'sc-page sc-page-embedded' : 'sc-page'}>
         {!embedded && <StaffClockHeader
@@ -440,26 +451,11 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
           ) : undefined}
         />}
         {error && <ErrorState message={error} onRetry={() => void load()} />}
-        {!embedded && <StaffClockSetup place="zone" />}
-        {!embedded && cfg && (
-          <div className="sc-card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
-            <div style={{ flex: '1 1 280px', minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-tertiary)' }}>Staff check-in link for {cfg.school.name}</div>
-              <a href={cfg.link.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 17, fontWeight: 700, color: 'var(--primary-text)', overflowWrap: 'anywhere' }}>{cfg.link.display}</a>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2 }}>{rules?.enabled ? 'Open: staff can register and check in.' : 'Ready, but closed until you add a zone and turn the clock on.'}</div>
-            </div>
-            <button className="sc-btn sc-btn-soft sc-btn-sm" onClick={() => void copyLink()}><Copy size={14} /> Copy</button>
-            <Link className="sc-btn sc-btn-sm" to="/staff/clock/poster"><Printer size={15} /> Poster</Link>
-          </div>
-        )}
-        {!embedded && cfg && !cfg.googleConfigured && (
-          <div className="sc-notice"><b>Google sign-in is not set up on this server.</b><p>Staff cannot register their phones until GOOGLE_CLIENT_ID is set for Tendo and its address is added to the Google sign-in client.</p></div>
-        )}
 
         {!cfg && !error ? (
-          <div className="sc-zone-layout"><div className="sc-skel sc-zone-map" /><div className="sc-skel" style={{ height: 680, borderRadius: 24 }} /></div>
+          <div className={`sc-zone-layout${embedded ? '' : ' sc-zone-split'}`}><div className="sc-skel sc-zone-map" /><div className="sc-zone-panel">{[110, 96, 220, 360].map((h, i) => <div key={i} className="sc-skel" style={{ height: h, borderRadius: 24 }} />)}</div></div>
         ) : cfg && rules && (
-          <div className="sc-zone-layout">
+          <div className={`sc-zone-layout${embedded ? '' : ' sc-zone-split'}`}>
             <section className="sc-map sc-zone-map" aria-label="Map" id="zone-map">
               <div ref={mapEl} className="sc-map-el" />
               {tilesLoading && <span className="sc-map-loading" role="status"><Spinner /> Loading map…</span>}
@@ -494,6 +490,22 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
             </section>
 
             <aside className="sc-zone-panel">
+              {!embedded && <StaffClockSetup place="zone" />}
+              {!embedded && cfg && (
+                <div className="sc-card" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
+                  <div style={{ flex: '1 1 280px', minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-tertiary)' }}>Staff check-in link for {cfg.school.name}</div>
+                    <a href={cfg.link.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 17, fontWeight: 700, color: 'var(--primary-text)', overflowWrap: 'anywhere' }}>{cfg.link.display}</a>
+                    <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2 }}>{rules?.enabled ? 'Open: staff can register and check in.' : 'Ready, but closed until you add a zone and turn the clock on.'}</div>
+                  </div>
+                  <button className="sc-btn sc-btn-soft sc-btn-sm" onClick={() => void copyLink()}><Copy size={14} /> Copy</button>
+                  <Link className="sc-btn sc-btn-sm" to="/staff/clock/poster"><Printer size={15} /> Poster</Link>
+                  {can('STAFF_DEVICES_MANAGE') && <Link className="sc-btn sc-btn-sm" to="/staff/clock/devices">QR cards</Link>}
+                </div>
+              )}
+              {!embedded && cfg && !cfg.googleConfigured && (
+                <div className="sc-notice"><b>Google sign-in is not set up on this server.</b><p>Staff cannot register their phones until GOOGLE_CLIENT_ID is set for Tendo and its address is added to the Google sign-in client.</p></div>
+              )}
               <section className="sc-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <h2>Zones</h2>
@@ -566,28 +578,11 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
                 </div>
               </section>}
 
-              {!embedded && <section className="sc-card">
-                <h2>Staff link</h2>
-                <p className="sc-card-sub">Share it once. Staff register their phone or tablet from it.</p>
-                <div className="sc-link"><span className="sc-clip">{cfg.link.display}</span><button className="sc-btn sc-btn-soft sc-btn-sm" onClick={() => void copyLink()}><Copy size={14} /> Copy</button></div>
-                <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <Link className="sc-btn sc-btn-sm" to="/staff/clock/poster"><Printer size={15} /> Print poster</Link>
-                  {can('STAFF_DEVICES_MANAGE') && <Link className="sc-btn sc-btn-sm" to="/staff/clock/devices">Staff QR cards</Link>}
-                </div>
-              </section>}
+              {!embedded && saveBar}
             </aside>
           </div>
         )}
-        {cfg && rules && canEdit && (
-          <div className={`sc-savebar${dirty ? ' dirty' : ''}${embedded ? ' sc-savebar-inline' : ''}`} role="region" aria-label="Save">
-            <span className="sc-savebar-text">
-              <i aria-hidden="true" />
-              {dirty ? 'Unsaved changes' : 'All changes saved'}
-            </span>
-            <button className="sc-btn sc-btn-sm" disabled={!dirty || saving} onClick={() => void load()}>Discard</button>
-            <button className="sc-btn sc-btn-primary" disabled={!dirty || saving} onClick={() => void save()}>{saving && <Spinner />}{embedded ? 'Save zone' : 'Save changes'}</button>
-          </div>
-        )}
+        {embedded && saveBar}
       </div>
   );
   return embedded ? content : <DashboardLayout>{content}</DashboardLayout>;
