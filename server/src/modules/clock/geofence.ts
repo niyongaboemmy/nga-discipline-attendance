@@ -118,7 +118,8 @@ export type ClockFlag =
   | 'twin_punch'
   | 'clock_skew'
   | 'non_school_day'
-  | 'on_school_network';
+  | 'on_school_network'
+  | 'phone_location';
 
 export function plausibilityFlags(input: {
   fix: Fix;

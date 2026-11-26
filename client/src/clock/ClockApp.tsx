@@ -3,6 +3,7 @@ import { clockApi, ClockApiError, OfflineError, type Bootstrap, type DayState, t
 import { askPersistentStorage, deviceInfo, ensureKeys, forgetDevice, installUuid, isTabletDevice, loadDevice, ngaDeviceId, saveToken, signMessage, supportsDeviceKeys } from './device';
 import { formatDistance, GeoError, permissionState, sampleLocation, zoneHint, type Fix, type ZoneHint } from './geo';
 import { renderGoogleButton } from './google';
+import { PhoneTap } from './PhoneTap';
 import { detectLang, makeT, type Lang, type T } from './i18n';
 import {
   IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconIn, IconKeyboard, IconMail, IconOut, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
@@ -96,6 +97,8 @@ export function ClockApp() {
   const [tipHidden, setTipHidden] = useState(() => localStorage.getItem('tendo.clock.tipHidden') === '1');
   const [justRegistered, setJustRegistered] = useState(false);
   const [howSeen, setHowSeen] = useState(() => localStorage.getItem('tendo.clock.howSeen') === '1');
+  /** the phone QR panel: null = automatic (open on a computer whose location fails), true/false = the person chose */
+  const [phoneChoice, setPhoneChoice] = useState<boolean | null>(null);
   const googleSlot = useRef<HTMLDivElement>(null);
   /** The latest bootstrap for callbacks created before it arrived (first load). */
   const bootRef = useRef<Bootstrap | null>(null);
@@ -424,6 +427,28 @@ export function ClockApp() {
     }
   };
 
+  const onPhoneDone = useCallback(
+    async (result: Omit<PunchResult, 'state'>, state: DayState | null) => {
+      if (!slug || !token) return;
+      const day = state ?? (await clockApi.me(slug, token).catch(() => null));
+      if (day) {
+        setMe((m) => (m ? { ...m, ...day } : m));
+        adoptServerTime(day.serverNow);
+      }
+      setPhoneChoice(null);
+      setGeoMode('ok');
+      if (result.action === 'check_in' && day) {
+        setSuccess({ ...result, state: day });
+        setView('success');
+        flash(t('savedIn', { time: result.at }));
+      } else {
+        flash(result.action === 'check_in' ? t('savedIn', { time: result.at }) : t('savedOut', { time: result.at }));
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slug, token, t]
+  );
+
   const installApp = async () => {
     if (installEvt) {
       installEvt.prompt();
@@ -438,6 +463,12 @@ export function ClockApp() {
   };
 
   // ---------------------------------------------------------------- render
+  // "Use my phone": a computer has no GPS; a phone whose reading fails can lend another phone's.
+  const canTap = !!me && (me.next === 'check_in' || (me.next === 'check_out' && !me.checkoutOpensAt));
+  const computer = me?.device.formFactor === 'desktop';
+  const struggling = geoMode === 'vague' || geoMode === 'failed' || geoMode === 'outside';
+  const offerPhone = canTap && !busy && !offline && (computer || struggling);
+  const phoneOpen = offerPhone && (phoneChoice ?? (computer && struggling));
   const shared = { t, deviceWord, tablet };
   const school = boot?.school.name ?? '';
   const initials = schoolInitials(school);
@@ -588,6 +619,12 @@ export function ClockApp() {
 
       {view === 'daily' && me && boot && (
         <Daily
+          phoneOffer={offerPhone && !phoneOpen}
+          onPhone={() => setPhoneChoice(true)}
+          onPhoneHide={() => setPhoneChoice(false)}
+          phonePanel={phoneOpen && slug && token ? (
+            <PhoneTap slug={slug} token={token} t={t} next={me.next === 'check_out' ? 'check_out' : 'check_in'} onDone={(r, st) => void onPhoneDone(r, st)} onDeviceError={handleDeviceError} />
+          ) : null}
           {...shared}
           me={me}
           school={school}
@@ -875,6 +912,11 @@ interface DailyProps {
   onInstall: () => void;
   onHelp: () => void;
   onTap: () => void;
+  /** a computer, or a phone whose location fails: offer "Use my phone" */
+  phoneOffer: boolean;
+  phonePanel: React.ReactNode;
+  onPhone: () => void;
+  onPhoneHide: () => void;
 }
 
 function Daily(p: DailyProps) {
@@ -905,10 +947,16 @@ function Daily(p: DailyProps) {
           <div className="ck-chip-row">
             <span className={`ck-chip ck-chip-${v.chipTone}`}><i /><span className="ck-wrap">{v.chip}</span></span>
           </div>
-          <p className="ck-helper">{v.helper}</p>
+          <p className="ck-helper">{p.phonePanel || (p.phoneOffer && me.device.formFactor === 'desktop') ? t('usePhoneHint') : v.helper}</p>
         </section>
 
-        <section className="ck-action">
+        <section className={`ck-action${p.phonePanel ? ' ck-action-phone' : ''}`}>
+          {p.phonePanel ? (
+            <>
+              {p.phonePanel}
+              <button className="ck-link-btn" onClick={p.onPhoneHide}>{t('hide')}</button>
+            </>
+          ) : (<>
           <div className={`ck-ring${v.style === 'grey' ? ' ck-ring-grey' : ''}`}>
             {v.pulse && <div className="ck-pulse" />}
             <button
@@ -927,7 +975,15 @@ function Daily(p: DailyProps) {
               <span className="ck-big-sub">{v.sub}</span>
             </button>
           </div>
-          <span className="ck-rule">{t('oneCheck')}</span>
+          {p.phoneOffer ? (
+            <button className="ck-phone-offer" onClick={p.onPhone} data-testid="use-phone">
+              <span className="ck-phone-offer-icon"><IconQr size={20} /></span>
+              <span className="ck-phone-offer-text"><b>{t('usePhone')}</b><small>{t('usePhoneHint')}</small></span>
+            </button>
+          ) : (
+            <span className="ck-rule">{t('oneCheck')}</span>
+          )}
+          </>)}
         </section>
       </div>
 

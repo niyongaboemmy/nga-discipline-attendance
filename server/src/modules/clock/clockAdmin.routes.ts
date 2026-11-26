@@ -257,6 +257,7 @@ const FLAG_TEXT: Record<string, string> = {
   clock_skew: 'Device clock is wrong',
   non_school_day: 'Not a school day',
   on_school_network: 'On the school network',
+  phone_location: 'Used a phone’s location (QR code on a computer)',
 };
 
 function bucketsFor(rows: Array<{ clock_in: string | null }>, opens: string, lateAfter: number) {

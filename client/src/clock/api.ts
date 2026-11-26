@@ -125,10 +125,27 @@ async function call<T>(slug: string, path: string, init: RequestInit & { token?:
   return body.data as T;
 }
 
+export interface PhoneTapStatus {
+  state: 'waiting' | 'locating' | 'done' | 'failed';
+  expiresIn: number;
+  result: Omit<PunchResult, 'state'> | null;
+  error: { code: string; message: string; data: Record<string, unknown> } | null;
+  dayState: DayState | null;
+}
+
 export const clockApi = {
   bootstrap: (slug: string) => call<Bootstrap>(slug, '/bootstrap'),
   register: (slug: string, payload: Record<string, unknown>) => call<RegisterPreview | Registered>(slug, '/register', { method: 'POST', body: JSON.stringify(payload) }),
   me: (slug: string, token: string) => call<Me>(slug, '/me', { token }),
   challenge: (slug: string, token: string) => call<{ nonce: string; expiresIn: number; serverNow: string }>(slug, '/challenge', { method: 'POST', token, body: '{}' }),
   punch: (slug: string, token: string, payload: Record<string, unknown>) => call<PunchResult>(slug, '/punch', { method: 'POST', token, body: JSON.stringify(payload) }),
+  /** Computer: a 2-minute code a phone scans to lend its location to this tap. */
+  phoneTap: (slug: string, token: string, payload: { nonce: string; signature: string }) =>
+    call<{ code: string; url: string; expiresIn: number }>(slug, '/phone-tap', { method: 'POST', token, body: JSON.stringify(payload) }),
+  phoneTapStatus: (slug: string, token: string, code: string) => call<PhoneTapStatus>(slug, `/phone-tap/${encodeURIComponent(code)}`, { token }),
+  /** Phone (no sign-in): whose tap the code is for, then send the location. */
+  tapPreview: (slug: string, code: string) =>
+    call<{ school: { name: string; slug: string }; firstName: string; next: DayState['next']; expiresIn: number }>(slug, `/tap/${encodeURIComponent(code)}`),
+  tapSend: (slug: string, code: string, payload: Record<string, unknown>) =>
+    call<Omit<PunchResult, 'state'>>(slug, `/tap/${encodeURIComponent(code)}`, { method: 'POST', body: JSON.stringify(payload) }),
 };
