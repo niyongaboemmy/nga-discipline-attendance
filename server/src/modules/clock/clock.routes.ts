@@ -10,8 +10,10 @@ import { IdentityUnavailable, resolveStaffIdentity } from './identity.js';
 import { addPairReading, pairingExists } from './pairing.js';
 import { polygonFromZone } from './geofence.js';
 import { createPhoneTap, previewPhoneTap, readPhoneTap, submitPhoneTap } from './phoneTap.js';
+import { hasSubscription, parseSubscription, removeSubscription, saveSubscription, sendTest, vapidKeys } from './reminders.js';
 import {
   challengeFor,
+  claimCheckout,
   ClockError,
   clockNow,
   clockReady,
@@ -127,8 +129,12 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
           requireZone: rules.requireZone,
           // A weaker reading still counts (flagged for review) up to this many metres; 0 = never.
           weakMaxAccuracy: rules.weakLocation === 'review' ? rules.weakMaxAccuracy : 0,
+          /** minutes before a person's start / end that their phone reminds them; 0 = off */
+          remindMinutes: rules.remindMinutes,
         },
         zones,
+        /** Web Push key for check-in / check-out reminders (null: reminders are off) */
+        pushKey: rules.remindMinutes > 0 ? vapidKeys()?.publicKey ?? null : null,
       },
     });
   } catch (err) {
@@ -322,10 +328,55 @@ router.get('/me', async (req: Request, res: Response) => {
         person: personView(device.user_name, user?.role === 'admin' ? 'Administrator' : user?.role === 'teacher' ? 'Teacher' : 'Staff'),
         email: device.google_email,
         device: { status: device.status, label: device.label, formFactor: device.form_factor, registeredAt: device.registered_at },
+        reminders: { on: await hasSubscription(db, device.id) },
         // `rules` (today's times for this person) comes with the state.
         ...(await personState(db, device)),
       },
     });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** This phone asks for check-in / check-out reminders (its Web Push subscription). */
+router.post('/push', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req));
+    if (limited(`push:${tenant.tid}:${device.id}`, 10, 600_000)) throw new ClockError(429, 'RATE_LIMITED', 'Too many tries. Wait a little.');
+    if (clockRules().remindMinutes <= 0 || !vapidKeys()) throw new ClockError(403, 'REMINDERS_OFF', 'Your school has not turned reminders on.');
+    const sub = parseSubscription(req.body?.subscription);
+    if (!sub) throw new ClockError(400, 'INVALID', 'This browser could not set up notifications.');
+    await saveSubscription(db, device, sub, String(req.body?.lang || 'en'));
+    let tested = false;
+    if (req.body?.test) tested = await sendTest(db, device, tenant.slug).catch(() => false);
+    return res.json({ success: true, data: { on: true, tested } });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+router.delete('/push', async (req: Request, res: Response) => {
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req), { allowPending: true });
+    await removeSubscription(db, device.id);
+    return res.json({ success: true, data: { on: false } });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** A day left without a check-out: the person says when they left; the office confirms. */
+router.post('/missed-checkout', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req));
+    if (limited(`mc:${tenant.tid}:${device.id}`, 10, 600_000)) throw new ClockError(429, 'RATE_LIMITED', 'Too many tries. Wait a little.');
+    await claimCheckout(db, device, req.body ?? {}, { ip: ipOf(req), userAgent: req.get('User-Agent') || null });
+    return res.json({ success: true, data: { ...(await personState(db, device)) } });
   } catch (err) {
     return send(res, err);
   }

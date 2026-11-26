@@ -70,7 +70,7 @@ export const Ring: React.FC<{ value: number; total: number; size?: number; label
   );
 };
 
-export interface SheetPerson { id: string; name: string; meta?: string; tag?: string; group?: string; personId?: string }
+export interface SheetPerson { id: string; name: string; meta?: string; tag?: string; group?: string; personId?: string; /** the day this row is about */ date?: string }
 
 /** Side sheet listing people (not in, no check-out ...), with "Copy names". */
 export const ListSheet: React.FC<{ title: string; subtitle?: string; people: SheetPerson[]; empty: string; onClose: () => void; onPick?: (p: SheetPerson) => void }> = ({ title, subtitle, people, empty, onClose, onPick }) => {

@@ -1041,3 +1041,11 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
   .sp-actions { margin-left: 0; width: 100%; }
   .sp-actions .sc-btn { flex: 1; justify-content: center; }
 }
+
+/* History window: a forgotten check-out, fixed by the office */
+.sh-fixout { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--bg-subtle); }
+.sh-fixout b { font-size: 14px; }
+.sh-fixout small { font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
+.sh-fixout-row { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.sh-fixout-row .sp-time { flex: 1; background: var(--bg-card); }
+.sh-fixout-row .sc-btn { height: 38px; flex: none; }

@@ -13,6 +13,8 @@ import { __setClockNow } from '../modules/clock/clock.service.js';
 import { __resetNonces, punchMessage } from '../modules/clock/deviceAuth.js';
 import { __resetClockRateLimits } from '../modules/clock/clock.routes.js';
 import { __resetPhoneTaps, phoneTapMessage } from '../modules/clock/phoneTap.js';
+import { __setPushSender, dueReminders, type PushPayload } from '../modules/clock/reminders.js';
+import { runReminderTick } from '../modules/clock/clock.scheduler.js';
 import { haversine, judge, onSchoolNetwork, plausibilityFlags, edgeDistance } from '../modules/clock/geofence.js';
 
 /**
@@ -753,6 +755,110 @@ describe("a person's own working week", () => {
     expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone.token!)).body.data.rules).toMatchObject({ lateAfter: '08:30', own: false });
     const audit = await db.get(`SELECT COUNT(*) AS n FROM audit_log WHERE action LIKE 'STAFF_CLOCK_PLAN_%'`).catch(() => null);
     if (audit) expect(audit.n).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('reminders and forgotten check-outs', () => {
+  const rule: import('../modules/clock/workPlan.js').DayRule = { works: true, lateAfter: 510, earlyBefore: 960, start: '08:30', end: '16:00', own: false };
+
+  it('knows which reminder is due from the person\'s own day', () => {
+    const at = (nowMin: number, checkedIn = false, checkedOut = false, r = rule, lead = 15) => dueReminders({ nowMin, rule: r, lead, checkedIn, checkedOut });
+    expect(at(494)).toEqual([]);
+    expect(at(495)).toEqual(['in_soon']); // 08:15
+    expect(at(510)).toEqual(['in_now']); // 08:30, still not in
+    expect(at(556)).toEqual([]); // too late to be useful
+    expect(at(500, true)).toEqual([]); // already in
+    expect(at(945, true)).toEqual(['out_soon']); // 15:45
+    expect(at(990, true)).toEqual(['out_late']); // 16:30, still in
+    expect(at(990, true, true)).toEqual([]);
+    expect(at(945)).toEqual([]); // never came: no check-out reminder
+    expect(at(495, false, false, rule, 0)).toEqual([]); // the school turned reminders off
+    expect(at(495, false, false, { ...rule, works: false, lateAfter: null, earlyBefore: null })).toEqual([]); // day off
+  });
+
+  it('sends each reminder once, at the times of the person\'s own hours, and stops when the tap is done', async () => {
+    const sent: Array<PushPayload & { endpoint: string }> = [];
+    __setPushSender(async (sub, payload) => { sent.push({ ...payload, endpoint: sub.endpoint }); return 'ok'; });
+    const tick = async (hhmm: string, date: string) => { now = kigali(hhmm, date); sent.length = 0; await runReminderTick({ list: async () => [primaryTenantCtx()] } as any); return sent.map((x) => x.title); };
+
+    misPerson(140, 'Remind Me', 'remind@gmail.com');
+    misPerson(141, 'Own Hours', 'ownhours@gmail.com');
+    const phone = await newDevice();
+    const phone2 = await newDevice();
+    now = kigali('06:00', '2027-02-02'); // Tuesday
+    await register('nga', 'remind@gmail.com', phone);
+    await register('nga', 'ownhours@gmail.com', phone2);
+    const boot = (await request(app).get('/api/clock/nga/bootstrap')).body.data;
+    expect(boot.pushKey).toEqual(expect.any(String));
+    expect(boot.rules.remindMinutes).toBe(15);
+
+    const subscribe = (d: FakeDevice, n: number, extra: Record<string, unknown> = {}) => request(app).post('/api/clock/nga/push').set('X-Clock-Device', d.token!)
+      .send({ subscription: { endpoint: `https://fcm.googleapis.com/fcm/send/dev${n}`, keys: { p256dh: 'p'.repeat(87), auth: 'a'.repeat(22) } }, lang: 'en', ...extra });
+    // Only real push services, and only a registered device.
+    expect((await request(app).post('/api/clock/nga/push').set('X-Clock-Device', phone.token!).send({ subscription: { endpoint: 'https://evil.example/x', keys: { p256dh: 'p'.repeat(87), auth: 'a'.repeat(22) } } })).status).toBe(400);
+    expect((await request(app).post('/api/clock/nga/push').send({})).status).toBe(401);
+    const on = await subscribe(phone, 1, { test: true });
+    expect(on.body.data).toEqual({ on: true, tested: true });
+    expect(sent.pop()).toMatchObject({ title: 'Reminders are on', url: '/c/nga' });
+    await subscribe(phone2, 2);
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone.token!)).body.data.reminders).toEqual({ on: true });
+    // Person 141 works 10:00-14:00 on Tuesdays.
+    const week = Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, d === '2' ? { works: true, start: '10:00', end: '14:00' } : { works: false, start: '08:00', end: '17:00' }]));
+    expect((await request(app).put('/api/staff/clock/people/141/plan').set(authHeader(adminToken)).send({ days: week })).status).toBe(200);
+
+    expect(await tick('08:10', '2027-02-02')).toEqual([]);
+    expect(await tick('08:15', '2027-02-02')).toEqual(['Check in soon']); // school hours: 08:30
+    expect(sent[0]).toMatchObject({ endpoint: 'https://fcm.googleapis.com/fcm/send/dev1', body: expect.stringContaining('08:30'), url: '/c/nga', tag: 'clock-in' });
+    expect(await tick('08:16', '2027-02-02')).toEqual([]); // once
+    expect(await tick('08:30', '2027-02-02')).toEqual(['You have not checked in']);
+    expect((await tap('nga', phone, INSIDE)).status).toBe(200);
+    expect(await tick('09:45', '2027-02-02')).toEqual(['Check in soon']); // own hours: 10:00
+    expect(sent[0]).toMatchObject({ endpoint: 'https://fcm.googleapis.com/fcm/send/dev2', body: expect.stringContaining('10:00') });
+    expect((await tap('nga', phone2, INSIDE)).status).toBe(200);
+    expect(await tick('10:00', '2027-02-02')).toEqual([]); // checked in: no nudge
+    expect(await tick('13:45', '2027-02-02')).toEqual(['Remember to check out']); // own end 14:00
+    expect(await tick('14:30', '2027-02-02')).toEqual(['You have not checked out']);
+    expect(await tick('15:45', '2027-02-02')).toEqual(['Remember to check out']); // school end 16:00
+    now = kigali('16:05', '2027-02-02');
+    expect((await tap('nga', phone, INSIDE)).body.data.action).toBe('check_out');
+    expect(await tick('16:30', '2027-02-02')).toEqual([]); // 140 is out; 141 was already reminded
+
+    // Wednesday: 141's day off. A dropped subscription is forgotten. A school can turn reminders off.
+    __setPushSender(async (sub, payload) => { sent.push({ ...payload, endpoint: sub.endpoint }); return 'gone'; });
+    expect(await tick('08:15', '2027-02-03')).toEqual(['Check in soon']);
+    expect(await db.get(`SELECT 1 FROM staff_clock_push WHERE endpoint LIKE '%dev1'`)).toBeUndefined();
+    expect(await tick('09:45', '2027-02-03')).toEqual([]);
+    await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ remindMinutes: 0 });
+    expect((await request(app).get('/api/clock/nga/bootstrap')).body.data.pushKey).toBeNull();
+    expect((await subscribe(phone, 1)).body.code).toBe('REMINDERS_OFF');
+    await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ remindMinutes: 15 });
+    expect((await request(app).delete('/api/clock/nga/push').set('X-Clock-Device', phone2.token!)).body.data).toEqual({ on: false });
+    __setPushSender(null);
+
+    // 141 never checked out on Tuesday. On Wednesday their page asks when they left.
+    now = kigali('09:00', '2027-02-03');
+    const me = (await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone2.token!)).body.data;
+    expect(me.missedOut).toEqual({ date: '2027-02-02', checkIn: '09:45' });
+    const claim = (body: unknown) => request(app).post('/api/clock/nga/missed-checkout').set('X-Clock-Device', phone2.token!).send(body as any);
+    expect((await claim({ date: '2027-02-02', time: '09:00' })).status).toBe(400); // before the check-in
+    expect((await claim({ date: '2027-02-03', time: '14:00' })).status).toBe(400); // not today
+    const claimed = await claim({ date: '2027-02-02', time: '14:10' });
+    expect(claimed.status).toBe(200);
+    expect(claimed.body.data.missedOut).toBeNull();
+    // The claim alone changes nothing: the office sees it and saves the time.
+    const before = await db.get(`SELECT id, clock_out, out_claim FROM staff_attendance WHERE staff_id = '141' AND date = '2027-02-02'`);
+    expect(before).toMatchObject({ clock_out: null, out_claim: '14:10' });
+    const ov = (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+    expect(ov.missing.recentNoCheckout).toEqual(expect.arrayContaining([expect.objectContaining({ userId: '141', recordId: before.id, claim: '14:10' })]));
+    const setOut = (id: number, body: unknown, token = adminToken) => request(app).post(`/api/staff/clock/attendance/${id}/checkout`).set(authHeader(token)).send(body as any);
+    const { token: teacher } = await createTestUser(db, { id: '957', name: 'T8', email: 't8@x', roleLevel: 'TEACHER' });
+    expect((await setOut(before.id, { time: '14:10' }, teacher)).status).toBe(403);
+    expect((await setOut(before.id, { time: '09:00' })).status).toBe(400);
+    const saved = await setOut(before.id, { time: '14:10', note: 'Confirmed with the gate book' });
+    expect(saved.body).toMatchObject({ success: true, message: 'Check-out saved: 14:10', data: { outStatus: 'on_time' } }); // their end is 14:00
+    expect((await setOut(before.id, { time: '15:00' })).status).toBe(409);
+    const h = (await request(app).get('/api/staff/clock/people/141/history?days=7').set(authHeader(adminToken))).body.data;
+    expect(h.days.find((d: any) => d.date === '2027-02-02')).toMatchObject({ out: '14:10', noOut: false, manualOut: true, minutes: 265 });
   });
 });
 

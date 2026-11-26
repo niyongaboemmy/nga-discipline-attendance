@@ -17,6 +17,8 @@ export interface ClockRules {
   /** off the school network with an imprecise reading: accept it for review, or refuse it */
   weakLocation?: 'review' | 'refuse';
   weakMaxAccuracy?: number;
+  /** minutes before a person's own start / end that their phone reminds them; 0 = off */
+  remindMinutes?: number;
   nonSchoolDays: 'allow_flag' | 'refuse';
   allowUnassignedStaff: boolean;
   setupDone?: string[];
@@ -108,7 +110,9 @@ export interface Overview {
   health?: { google: boolean; zones: number; enabled: boolean; tested: boolean; shared: boolean; unregistered: number; staff: number };
 }
 
-export interface MissingCheckout { userId: string; name: string; date: string; checkIn: string | null; autoClosed: boolean }
+export interface MissingCheckout { userId: string; name: string; date: string; checkIn: string | null; autoClosed: boolean; recordId?: number;
+  /** the time the person says they left (HH:MM), waiting for the office to confirm */
+  claim?: string | null }
 
 export interface IssuedCard {
   userId: string;
@@ -136,6 +140,11 @@ export interface HistoryDay {
   start?: string | null; end?: string | null;
   /** came on a day they were not expected */
   extra?: boolean;
+  recordId?: number | null;
+  /** forgot to check out: the time the person says they left */
+  claim?: string | null;
+  /** the check-out time was entered by the office */
+  manualOut?: boolean;
 }
 
 export interface DayPlan { works: boolean; start: string; end: string }
@@ -195,6 +204,8 @@ export const staffClockApi = {
   documentBrand: () => data(apiGet<{ name: string; logo: string | null }>('/api/staff/clock/document-brand')),
   report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
   reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),
+  /** The office records when someone left on a day they forgot to check out. */
+  setCheckout: (recordId: number, time: string, note?: string) => apiPost<{ outStatus: string }>(`/api/staff/clock/attendance/${recordId}/checkout`, { time, note }),
   /** Save a person's own week from a day on (days null: the school's hours again). */
   savePlan: (id: string, body: { days: WeekPlan | null; effectiveFrom?: string; note?: string }) =>
     apiPut<{ plan: StaffPlan; rejudged: number }>(`/api/staff/clock/people/${encodeURIComponent(id)}/plan`, body),

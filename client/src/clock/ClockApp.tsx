@@ -4,6 +4,7 @@ import { askPersistentStorage, deviceInfo, ensureKeys, forgetDevice, installUuid
 import { formatDistance, GeoError, permissionState, sampleLocation, weakButPlausible, zoneHint, type Fix, type ZoneHint } from './geo';
 import { renderGoogleButton } from './google';
 import { PhoneTap } from './PhoneTap';
+import { MissedCheckout, Reminders } from './Extras';
 import { detectLang, makeT, type Lang, type T } from './i18n';
 import {
   IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconIn, IconKeyboard, IconMail, IconOut, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
@@ -654,6 +655,15 @@ export function ClockApp() {
           clockText={clockText}
           dateText={dateText}
           place={place}
+          extras={
+            <>
+              {me.missedOut && slug && token && <MissedCheckout t={t} slug={slug} token={token} locale={locale} missed={me.missedOut} flash={flash} onState={(st) => setMe((m) => (m ? { ...m, ...st } : m))} />}
+              {boot?.pushKey && !computer && slug && token && (
+                <Reminders t={t} lang={lang} slug={slug} token={token} pushKey={boot.pushKey} minutes={boot.rules.remindMinutes ?? 15} me={me} flash={flash}
+                  onChange={(on) => setMe((m) => (m ? { ...m, reminders: { on } } : m))} />
+              )}
+            </>
+          }
           geoMode={geoMode}
           seeking={seeking}
           weak={weak}
@@ -921,6 +931,8 @@ interface DailyProps {
   clockText: string;
   dateText: string;
   place: string;
+  /** cards above the week: a forgotten check-out, the reminders switch */
+  extras?: React.ReactNode;
   geoMode: GeoMode;
   seeking: number | null;
   weak: boolean;
@@ -1033,6 +1045,8 @@ function Daily(p: DailyProps) {
           <button onClick={p.onInstall}>{t('add')}</button>
         </div>
       )}
+
+      {p.extras}
 
       <div className="ck-week">
         <div className="ck-week-head"><b>{t('thisWeek')}</b><span>{t('daysOf', { done, total: me.week.length })}</span></div>

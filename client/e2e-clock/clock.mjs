@@ -68,6 +68,7 @@ function mockServer(opts = {}) {
   const day = () => ({
     serverNow: st.now, schoolDate: '2026-11-24', timezone: 'Africa/Kigali', schoolDay: true,
     next: st.checkOut ? 'done' : st.checkIn ? 'check_out' : 'check_in', checkoutOpensAt: null, opensAt: '05:00',
+    missedOut: opts.missed && !st.claimed ? { date: '2026-11-23', checkIn: '07:35' } : null,
     today: st.checkIn ? { checkIn: st.checkIn, checkOut: st.checkOut, status: 'present', outStatus: st.checkOut ? 'on_time' : null, minutesAtSchool: st.checkOut ? 508 : 0 } : null,
     week: [
       { date: '2026-11-23', isToday: false, future: false, checkIn: opts.fresh ? null : '07:35', checkOut: opts.fresh ? null : '16:05', status: opts.fresh ? null : 'present' },
@@ -87,7 +88,7 @@ function mockServer(opts = {}) {
     if (p === '/bootstrap') {
       return route.fulfill(ok({ school: { name: 'New Generation Academy', slug: 'nga', logoUrl: 'https://mis.example/logo.svg' }, open: true, googleClientId: 'test.apps.googleusercontent.com', serverNow: st.now, schoolDate: '2026-11-24', timezone: 'Africa/Kigali', profileUrl: 'https://mis.example/profile#staff-attendance',
         rules: { opens: '05:00', lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60, maxAccuracy: 100, requireZone: true, weakMaxAccuracy: opts.weak ? 500 : 0 },
-        zones: [{ id: 1, name: 'Main campus', kind: 'circle', lat: SCHOOL.lat, lng: SCHOOL.lng, radius: 150 }] }));
+        zones: [{ id: 1, name: 'Main campus', kind: 'circle', lat: SCHOOL.lat, lng: SCHOOL.lng, radius: 150 }], pushKey: opts.push ? 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U' : null }));
     }
     if (p === '/register') {
       if (opts.noAccount) return route.fulfill(err(404, 'NO_ACCOUNT', 'No staff account', { email: 'grace.phone@gmail.com' }));
@@ -101,6 +102,7 @@ function mockServer(opts = {}) {
         device: { status: st.deviceStatus, label: opts.formFactor === 'desktop' ? 'MacBook · Chrome' : 'Samsung A15 · Chrome', formFactor: opts.formFactor || 'phone', registeredAt: '2026-11-24T05:40:00.000Z' },
         rules: opts.own ? { lateAfter: '10:00', earlyLeaveBefore: '14:00', minShiftMinutes: 60, own: true } : { lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60 } }));
     }
+    if (p === '/missed-checkout') { st.claimed = body.time; return route.fulfill(ok(day())); }
     if (p === '/challenge') return route.fulfill(ok({ nonce: 'n' + Math.random().toString(36).slice(2), expiresIn: 60, serverNow: st.now }));
     if (p === '/punch') {
       const d = Math.abs(body.position.lat - SCHOOL.lat) * 111195;
@@ -377,6 +379,36 @@ async function weakGpsFlow(browser, theme) {
   await ctx.close();
 }
 
+/** Yesterday has no check-out: the page asks when the person left; and it offers reminders. */
+async function extrasFlow(browser, theme) {
+  const tag = `extras-${theme}`;
+  const vp = VIEWPORTS[0];
+  const server = mockServer({ missed: true, push: true });
+  const { ctx, page } = await newPage(browser, vp, theme, { server });
+  // Headless Chromium starts with notifications denied (the card would say "blocked").
+  await ctx.grantPermissions(['geolocation', 'notifications']);
+  await page.goto(`${BASE}/c/nga`);
+  await page.getByTestId('gis').click();
+  await page.getByRole('button', { name: /Yes, this is my/ }).click();
+  const allow = page.getByRole('button', { name: 'Allow location' });
+  if (await allow.isVisible().catch(() => false)) await allow.click();
+  await expectText(page, 'You did not check out', `${tag} missed check-out card`);
+  await expectText(page, 'Remind me', `${tag} reminders card`);
+  await expectText(page, '15 minutes before', `${tag} reminders lead`);
+  const card = page.getByTestId('missed-out');
+  await card.getByLabel('What time did you leave?').fill('07:00');
+  await expectText(page, 'Enter a time after 07:35', `${tag} time before the check-in refused`);
+  if (!(await card.getByRole('button', { name: 'Send' }).isDisabled())) fail(`${tag}: Send is enabled with a time before the check-in`);
+  await card.getByLabel('What time did you leave?').fill('16:20');
+  await page.waitForTimeout(200);
+  if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: extras scroll sideways`);
+  await shot(page, `${tag}-40-missed-and-reminders`);
+  await card.getByRole('button', { name: 'Send' }).click();
+  await expectText(page, 'Your school will confirm the time', `${tag} claim sent`);
+  if (await page.getByTestId('missed-out').count()) fail(`${tag}: the missed check-out card is still shown after sending`);
+  await ctx.close();
+}
+
 async function main() {
   const preview = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], { stdio: 'ignore' });
   try {
@@ -388,7 +420,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 250));
     }
     const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
-    for (const vp of VIEWPORTS) {
+    for (const vp of process.env.ONLY_EXTRAS ? [] : VIEWPORTS) {
       for (const theme of ['light', 'dark']) {
         await fullFlow(browser, vp, theme);
         await edgeStates(browser, vp, theme);
@@ -396,6 +428,8 @@ async function main() {
       await longName(browser, vp);
       console.log(`ok ${vp.name}`);
     }
+    for (const theme of ['light', 'dark']) await extrasFlow(browser, theme);
+    console.log('ok missed check-out + reminders card');
     for (const theme of ['light', 'dark']) await weakGpsFlow(browser, theme);
     console.log('ok own network, weak GPS');
     for (const theme of ['light', 'dark']) await phoneTapFlow(browser, theme);

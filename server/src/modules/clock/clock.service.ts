@@ -1,6 +1,6 @@
 import type { Database } from 'sqlite';
 import { randomBytes } from 'crypto';
-import { addDays, dayOfWeekFor, schoolDateString, schoolMinutesOfDay, timeToMinutes, weekStartFor, schoolClockLabel, safeClockLabel } from '../../shared/schoolTime.js';
+import { addDays, dayOfWeekFor, schoolDateString, schoolLocalToUtc, schoolMinutesOfDay, timeToMinutes, weekStartFor, schoolClockLabel, safeClockLabel } from '../../shared/schoolTime.js';
 import { schoolDays, schoolSetting, schoolTimezone, numberSetting, staffLateCutoffMinutes } from '../../tenancy/settings.js';
 import { resolveAcademicPeriodForDate } from '../../utils/academicPeriod.js';
 import { cleanJwk, consumeNonce, hashDeviceToken, issueNonce, jwkThumbprint, newDeviceToken, punchMessage, verifyDeviceSignature, type EcJwk } from './deviceAuth.js';
@@ -49,6 +49,8 @@ export interface ClockRules {
   /** off the school network with an imprecise reading: accept for review, or refuse */
   weakLocation: 'review' | 'refuse';
   weakMaxAccuracy: number;
+  /** minutes before a person's start / end that their phone reminds them; 0 = off */
+  remindMinutes: number;
   nonSchoolDays: 'allow_flag' | 'refuse';
   allowUnassignedStaff: boolean;
   retentionDays: number;
@@ -74,6 +76,7 @@ export function clockRules(): ClockRules {
     schoolNetworks: schoolSetting('STAFF_CLOCK_SCHOOL_NETWORKS'),
     weakLocation: schoolSetting('STAFF_CLOCK_WEAK_LOCATION') === 'refuse' ? 'refuse' : 'review',
     weakMaxAccuracy: numberSetting('STAFF_CLOCK_WEAK_MAX_ACCURACY_M'),
+    remindMinutes: Math.max(0, numberSetting('STAFF_CLOCK_REMIND_MINUTES') || 0),
     nonSchoolDays: schoolSetting('STAFF_CLOCK_NON_SCHOOL_DAYS') === 'refuse' ? 'refuse' : 'allow_flag',
     allowUnassignedStaff: schoolSetting('STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF') !== '0',
     retentionDays: numberSetting('STAFF_CLOCK_RETENTION_DAYS'),
@@ -423,7 +426,14 @@ export async function personState(db: Database, device: DeviceRow) {
   }
 
   const label = (value: string | null) => safeClockLabel(value);
+  // A recent day left without a check-out that the person has not explained yet.
+  const missed = await db.get<StaffDayRow & { out_claim: string | null }>(
+    `SELECT * FROM staff_attendance WHERE staff_id = ? AND date < ? AND date >= ? AND clock_in IS NOT NULL AND clock_out IS NULL
+        AND out_claim IS NULL AND COALESCE(review_state,'') <> 'invalid' ORDER BY date DESC LIMIT 1`,
+    device.user_id, today, addDays(today, -14)
+  );
   return {
+    missedOut: missed ? { date: missed.date, checkIn: label(missed.clock_in) } : null,
     serverNow: now.toISOString(),
     schoolDate: today,
     timezone: schoolTimezone(),
@@ -666,6 +676,53 @@ export async function applyTap(
     ip: t.ip, userAgent: t.userAgent, clientTime: t.clientTime, flags,
   });
   return { action, at: schoolClockLabel(now), status, distance, zone: verdict.inside ? verdict.zoneName : null, flags };
+}
+
+// ---------------------------------------------------------------------------
+// A forgotten check-out
+// ---------------------------------------------------------------------------
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** The person says when they left on a day they forgot to check out. The office confirms it. */
+export async function claimCheckout(db: Database, device: DeviceRow, body: { date?: unknown; time?: unknown }, ctx: { ip: string | null; userAgent: string | null }): Promise<void> {
+  const date = String(body.date ?? '');
+  const time = String(body.time ?? '');
+  const today = schoolDateString(new Date(clockNow()));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date >= today || date < addDays(today, -14)) throw new ClockError(400, 'INVALID', 'That day can no longer be changed here. Ask the office.');
+  if (!HHMM.test(time)) throw new ClockError(400, 'INVALID', 'Enter the time like 16:30.');
+  const row = await db.get<StaffDayRow>(`SELECT * FROM staff_attendance WHERE staff_id = ? AND date = ?`, device.user_id, date);
+  if (!row || !row.clock_in) throw new ClockError(404, 'NOT_FOUND', 'There is no check-in on that day.');
+  if (row.clock_out) throw new ClockError(409, 'ALREADY_DONE', 'That day already has a check-out.');
+  const inLabel = safeClockLabel(row.clock_in);
+  if (inLabel && timeToMinutes(time) <= timeToMinutes(inLabel)) throw new ClockError(400, 'INVALID', `You checked in at ${inLabel}. Enter a later time.`);
+  await db.run(`UPDATE staff_attendance SET out_claim = ?, out_claim_at = ? WHERE id = ? AND clock_out IS NULL`, time, new Date(clockNow()).toISOString(), row.id);
+  await logEvent(db, { kind: 'out_claim', reason: `${date} ${time}`, userId: device.user_id, deviceId: device.id, ip: ctx.ip, userAgent: ctx.userAgent });
+}
+
+/**
+ * The office records the check-out time of a day left open (the person forgot):
+ * early / on time is judged by that person's hours on that day; the record says
+ * it was entered by hand.
+ */
+export async function setManualCheckout(db: Database, recordId: number, time: string, by: string): Promise<{ row: any; outStatus: string }> {
+  if (!HHMM.test(time)) throw new ClockError(400, 'INVALID', 'Enter the time like 16:30.');
+  const row = await db.get<any>(`SELECT * FROM staff_attendance WHERE id = ?`, recordId);
+  if (!row || !row.clock_in) throw new ClockError(404, 'NOT_FOUND', 'That record no longer exists.');
+  if (row.clock_out) throw new ClockError(409, 'ALREADY_DONE', 'This day already has a check-out.');
+  const today = schoolDateString(new Date(clockNow()));
+  const inLabel = safeClockLabel(row.clock_in);
+  if (inLabel && timeToMinutes(time) <= timeToMinutes(inLabel)) throw new ClockError(400, 'INVALID', `The check-in was at ${inLabel}. Enter a later time.`);
+  if (row.date === today && timeToMinutes(time) > schoolMinutesOfDay(new Date(clockNow()))) throw new ClockError(400, 'INVALID', 'That time has not come yet.');
+  const rule = (await loadPlanBook(db, String(row.staff_id))).dayFor(String(row.staff_id), String(row.date));
+  const outStatus = rule.earlyBefore != null && timeToMinutes(time) < rule.earlyBefore ? 'early' : 'on_time';
+  const flags = [...JSON.parse(row.flags || '[]').filter((f: string) => f !== 'out:manual'), 'out:manual'];
+  const res = await db.run(
+    `UPDATE staff_attendance SET clock_out = ?, out_status = ?, out_by = ?, flags = ? WHERE id = ? AND clock_out IS NULL`,
+    schoolLocalToUtc(String(row.date), time).toISOString(), outStatus, by, JSON.stringify(flags), row.id
+  );
+  if (!res.changes) throw new ClockError(409, 'ALREADY_DONE', 'This day already has a check-out.');
+  return { row, outStatus };
 }
 
 // ---------------------------------------------------------------------------

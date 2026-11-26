@@ -38,8 +38,10 @@ export interface Bootstrap {
   serverNow: string;
   schoolDate: string;
   timezone: string;
-  rules: { allowance?: number; opens: string; lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; maxAccuracy: number; requireZone: boolean; weakMaxAccuracy?: number };
+  rules: { allowance?: number; opens: string; lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; maxAccuracy: number; requireZone: boolean; weakMaxAccuracy?: number; remindMinutes?: number };
   zones: Zone[];
+  /** Web Push key for reminders; null when the school turned reminders off */
+  pushKey?: string | null;
 }
 
 export interface Person {
@@ -68,6 +70,8 @@ export interface DayState {
   opensAt: string;
   today: { checkIn: string | null; checkOut: string | null; status: string; outStatus: string | null; minutesAtSchool: number } | null;
   week: WeekDay[];
+  /** a recent day left without a check-out that the person has not explained yet */
+  missedOut?: { date: string; checkIn: string | null } | null;
   /** today's times for this person: their own hours (own) or the school's */
   rules: { lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; own?: boolean };
 }
@@ -78,6 +82,8 @@ export interface Me extends DayState {
   person: Person;
   email: string;
   device: { status: 'active' | 'pending'; label: string | null; formFactor: string; registeredAt: string };
+  /** this device gets check-in / check-out reminders */
+  reminders?: { on: boolean };
 }
 
 export interface RegisterPreview {
@@ -142,6 +148,12 @@ export const clockApi = {
   me: (slug: string, token: string) => call<Me>(slug, '/me', { token }),
   challenge: (slug: string, token: string) => call<{ nonce: string; expiresIn: number; serverNow: string }>(slug, '/challenge', { method: 'POST', token, body: '{}' }),
   punch: (slug: string, token: string, payload: Record<string, unknown>) => call<PunchResult>(slug, '/punch', { method: 'POST', token, body: JSON.stringify(payload) }),
+  pushOn: (slug: string, token: string, payload: { subscription: unknown; lang: string; test?: boolean }) =>
+    call<{ on: boolean; tested: boolean }>(slug, '/push', { method: 'POST', token, body: JSON.stringify(payload) }),
+  pushOff: (slug: string, token: string) => call<{ on: boolean }>(slug, '/push', { method: 'DELETE', token }),
+  /** A day left without a check-out: say when you left (the office confirms it). */
+  missedCheckout: (slug: string, token: string, payload: { date: string; time: string }) =>
+    call<DayState>(slug, '/missed-checkout', { method: 'POST', token, body: JSON.stringify(payload) }),
   /** Computer: a 2-minute code a phone scans to lend its location to this tap. */
   phoneTap: (slug: string, token: string, payload: { nonce: string; signature: string }) =>
     call<{ code: string; url: string; expiresIn: number }>(slug, '/phone-tap', { method: 'POST', token, body: JSON.stringify(payload) }),

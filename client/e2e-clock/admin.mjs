@@ -111,6 +111,8 @@ const reportStaff = (group) => ({ from: REPORT.from, to: REPORT.to, schoolDays: 
 /** Working weeks: the school's, and the own plans saved during the run (PUT .../plan). */
 const SCHOOL_WEEK = Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, { works: d !== '0' && d !== '6', start: '08:30', end: '16:00' }]));
 const PLANS = new Map();
+/** people whose forgotten check-out the office has saved during the run */
+const FIXED = new Set();
 const planOf = (id) => {
   const own = PLANS.get(id);
   return { own: !!own, days: own?.days ?? SCHOOL_WEEK, school: SCHOOL_WEEK, effectiveFrom: own ? '2026-11-24' : null, note: own?.note ?? null, updatedByName: own ? 'Admin Office' : null, updatedAt: own ? '2026-11-24T08:16:00Z' : null, upcoming: null, versions: [] };
@@ -130,7 +132,13 @@ function history(id) {
     const din = att ? (kind === 'late' ? '08:4' + (seed % 10) : '07:' + String(10 + seed).padStart(2, '0')) : null;
     const noOut = att && seed === 11;
     const early = att && seed === 13;
-    days.push({ date, kind, in: din, out: att && !noOut ? (early ? '14:10' : '16:3' + (seed % 10)) : null, early, noOut, minutes: att && !noOut ? 520 : null, card: false });
+    // The day before today: this person forgot to check out and said when they left.
+    const forgot = i === 1 && id === '109' && !FIXED.has(id);
+    const fixed = i === 1 && id === '109' && FIXED.has(id);
+    if (forgot || fixed) kind = 'on_time';
+    const att2 = kind === 'on_time' || kind === 'late';
+    days.push({ date, kind, in: att2 ? din ?? '07:20' : null, out: fixed ? '16:20' : att && !noOut && !forgot ? (early ? '14:10' : '16:3' + (seed % 10)) : null, early, noOut: forgot || (noOut && !fixed), minutes: att && !noOut && !forgot ? 520 : null, card: false,
+      recordId: forgot ? 9109 : null, claim: forgot ? '16:20' : null, manualOut: fixed });
     if (kind !== 'off' && kind !== 'untracked' && kind !== 'today') sum.schoolDays++;
     if (att) { sum.attended++; kind === 'late' ? sum.late++ : sum.onTime++; }
     if (kind === 'absent') sum.absent++;
@@ -189,6 +197,10 @@ async function context(browser, { width, height, theme, mobile = false }) {
         if (body.days) PLANS.set(m[1], body); else PLANS.delete(m[1]);
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: body.days ? 'Own hours saved, from today' : "Back to the school's hours, from today", data: { plan: planOf(m[1]), rejudged: 0 } }) });
       } }
+    if (p === '/api/staff/clock/attendance/9109/checkout') {
+      FIXED.add('109');
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: `Check-out saved: ${route.request().postDataJSON().time}`, data: { outStatus: 'on_time' } }) });
+    }
     if (p === '/api/staff/clock/report') return ok(REPORT);
     if (p === '/api/staff/clock/document-brand') { globalThis.__docBrandCalls = (globalThis.__docBrandCalls || 0) + 1; return ok({ name: 'New Generation Academy', logo: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGNkYPhfzwAEjAwM/xkYGAAZBgP+oSDdTQAAAABJRU5ErkJggg==' }); }
     if (p === '/api/staff/clock/report/staff') return ok(reportStaff(u.searchParams.get('group')));
@@ -382,6 +394,7 @@ async function run(browser, vp) {
   await page.getByRole('tab', { name: /Everyone/ }).click();
   await expectText(page, 'Fabrice Ndayisaba', `${tag} staff list`);
   await shot('02b-staff');
+  FIXED.clear();
   await page.getByText('Fabrice Ndayisaba').locator('visible=true').first().click();
   const modal = page.getByTestId('staff-history');
   await modal.waitFor();
@@ -397,6 +410,15 @@ async function run(browser, vp) {
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: history modal scrolls sideways`);
   await shot('02c-history');
   await modal.getByRole('button', { name: 'Previous month' }).click();
+
+  // Yesterday Fabrice forgot to check out and said 16:20: the office confirms it from the day.
+  await modal.locator('.sh-year button[aria-label*="23 Nov 2026"]').click();
+  await expectText(page, 'says they left at 16:20', `${tag} forgotten check-out claim`);
+  await shot('02f-forgot-checkout');
+  await page.getByTestId('fix-out').getByRole('button', { name: 'Confirm' }).click();
+  await expectText(page, 'Check-out saved: 16:20', `${tag} check-out saved toast`);
+  await expectText(page, 'check-out entered by the office', `${tag} manual check-out tag`);
+  if (await page.getByTestId('fix-out').count()) fail(`${tag}: the check-out form is still shown after saving`);
 
   // Working hours: by default the school's; Wednesday off + a later Monday start makes it an own plan.
   await page.getByTestId('tab-hours').click();
