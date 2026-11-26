@@ -7,7 +7,7 @@ import { authorizePermission } from '../../middleware/authorize.js';
 import { recordAudit } from '../../shared/audit.js';
 import { addDays, dayOfWeekFor, safeClockLabel, schoolDateString, schoolMinutesOfDay, timeToMinutes } from '../../shared/schoolTime.js';
 import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
-import { currentTenant } from '../../tenancy/index.js';
+import { currentTenant, currentTid } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
 import { schoolBranding } from '../../routes/sso.js';
 import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, personWeek, scanCard, setManualCheckout, signOutDevice } from './clock.service.js';
@@ -15,6 +15,7 @@ import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 import { buildReport, reportStaff } from './clockReport.js';
 import { sendNudges } from './reminders.js';
+import { announceClock, clockLive, type ClockLiveEvent } from './clockLive.js';
 import { loadPlanBook, parseWeekPlan, sameWeek, savePlan, schoolWeek, type DayRule, type PlanBook } from './workPlan.js';
 
 /**
@@ -392,6 +393,33 @@ async function staffRoster(req: any, db: ReturnType<typeof getDb>, site: string)
   }
   return { roster, rosterSource };
 }
+
+/**
+ * Live changes for the Gate view: Server-Sent Events over a plain authenticated
+ * GET (read with fetch() streaming, so the token stays in a header). It carries
+ * no names, only "something changed": the page then re-reads the overview.
+ */
+router.get('/stream', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), (req: any, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // nginx: don't buffer this response
+  res.flushHeaders?.();
+  res.write(`event: ready\ndata: {}\n\n`);
+
+  // Only this subscriber's school: the emitter is process-wide.
+  const subscriberTid = currentTid('staff clock stream');
+  const onEvent = (evt: ClockLiveEvent) => {
+    if (evt.tid !== subscriberTid) return;
+    res.write(`event: ${evt.type}\ndata: ${JSON.stringify({ type: evt.type, at: evt.at })}\n\n`);
+  };
+  clockLive.on('event', onEvent);
+  const heartbeat = setInterval(() => res.write(`: ping\n\n`), 25_000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    clockLive.off('event', onEvent);
+  });
+});
 
 router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
   try {
@@ -899,6 +927,7 @@ router.post('/attendance/:id/review', authorizePermission('STAFF_DEVICES_MANAGE'
       `UPDATE staff_attendance SET review_state = ?, review_note = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?`,
       b.decision, b.note?.trim() || null, actor.id, new Date(clockNow()).toISOString(), row.id
     );
+    announceClock('changed', row.staff_id);
     await recordAudit(db, actor, 'STAFF_CLOCK_RECORD_REVIEWED', 'staff_attendance', row.id, { staff: row.staff_name, date: row.date, decision: b.decision, note: b.note }, { required: true });
     return res.json({ success: true, message: b.decision === 'accepted' ? 'Check-in accepted' : 'Marked invalid' });
   } catch (err) {

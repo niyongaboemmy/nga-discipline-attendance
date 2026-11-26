@@ -6,6 +6,7 @@ import { resolveAcademicPeriodForDate } from '../../utils/academicPeriod.js';
 import { cleanJwk, consumeNonce, hashDeviceToken, issueNonce, jwkThumbprint, newDeviceToken, punchMessage, verifyDeviceSignature, type EcJwk } from './deviceAuth.js';
 import { judge, onSchoolNetwork, plausibilityFlags, validFix, weakButPlausible, type ClockFlag, type Fix, type Zone } from './geofence.js';
 import { loadPlanBook, minShiftFor, opensFor } from './workPlan.js';
+import { announceClock } from './clockLive.js';
 
 /**
  * The staff attendance clock (STAFF_ATTENDANCE_CLOCK_PLAN.md §4-§7): device rules,
@@ -716,6 +717,8 @@ export async function applyTap(
     kind: action, reason: t.source === 'card' ? `card_by:${t.by}` : null, userId: t.userId, deviceId: t.deviceId, fix, distance,
     ip: t.ip, userAgent: t.userAgent, clientTime: t.clientTime, flags,
   });
+  // The Gate view of this school updates now, not at its next refresh.
+  announceClock(action, t.userId);
   return { action, at: schoolClockLabel(now), status, distance, zone: verdict.inside ? verdict.zoneName : null, flags };
 }
 
@@ -848,6 +851,7 @@ export async function setManualCheckout(db: Database, recordId: number, time: st
     schoolLocalToUtc(String(row.date), time).toISOString(), outStatus, by, JSON.stringify(flags), row.id
   );
   if (!res.changes) throw new ClockError(409, 'ALREADY_DONE', 'This day already has a check-out.');
+  announceClock('changed', row.staff_id);
   return { row, outStatus };
 }
 

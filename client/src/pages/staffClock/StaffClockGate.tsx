@@ -7,6 +7,7 @@ import { ApiError } from '../../api/client';
 import { staffClockApi, type Overview } from '../../api/staffClock';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useToast } from '../../context/ToastContext';
+import { useEventStream } from '../../hooks/useEventStream';
 import { UserAvatar } from '../../components/common/UserAvatar';
 import { ErrorState } from '../../components/common/ErrorState';
 import { StaffHistoryModal } from './StaffHistoryModal';
@@ -20,6 +21,7 @@ import { agoText, gateHeadline, gateModel, hhmm, toMin, type GateCheck, type Gat
  * columns. "Leaving" turns it into the end-of-day picture.
  */
 
+/** The server pushes every check-in; this re-read is only the safety net behind it. */
 const REFRESH_MS = 20_000;
 const SOUND_KEY = 'tendo.gate.sound';
 type Tab = 'wait' | 'events' | 'check' | 'off';
@@ -69,6 +71,8 @@ export const StaffClockGate: React.FC = () => {
   const [mode, setMode] = useState<GateMode>('in');
   const [tab, setTab] = useState<Tab>('wait');
   const [filter, setFilter] = useState<Filter>('all');
+  /** the right column: everyone, only on time, only late (or left early), or only the check-ins to confirm */
+  const [feed, setFeed] = useState<'all' | 'ok' | 'warn' | 'check'>('all');
   const [sent, setSent] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -103,6 +107,19 @@ export const StaffClockGate: React.FC = () => {
     document.addEventListener('visibilitychange', onShow);
     return () => { window.clearTimeout(first); window.clearInterval(poll); window.clearInterval(clock); document.removeEventListener('visibilitychange', onShow); };
   }, [load]);
+
+  // Real time: the server says "something changed" the moment a check-in, check-out,
+  // card scan or review is saved, and the page re-reads at once. Several at the same
+  // moment (the 07:30 rush) become one re-read.
+  const pending = useRef<number | null>(null);
+  const refreshSoon = useCallback(() => {
+    if (pending.current != null) return;
+    pending.current = window.setTimeout(() => { pending.current = null; void load(); }, 250);
+  }, [load]);
+  useEffect(() => () => { if (pending.current != null) window.clearTimeout(pending.current); }, []);
+  const stream = useEventStream<{ type: string }>('/api/staff/clock/stream', refreshSoon, { onReconnect: refreshSoon });
+  // Only a dropped connection is shown as such; without push (not allowed, or still connecting) the 20 s refresh carries on.
+  const live = stream !== 'reconnecting' && !error;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('.sh-overlay')) setSheet(null); };
@@ -173,6 +190,18 @@ export const StaffClockGate: React.FC = () => {
   const waiting = model && !showOff ? (filter === 'all' ? model.waiting : model.waiting.filter((w) => w.kind === filter)) : [];
   /** The day-off list: a tab on a phone, a filter on a desktop, and the day-off numbers open it. */
   const openOff = () => { setFilter('off'); setTab('off'); };
+  const events = model ? (feed === 'ok' ? model.events.filter((e) => !e.warn) : feed === 'warn' ? model.events.filter((e) => e.warn) : feed === 'check' ? [] : model.events) : [];
+  const warnEvents = model ? model.events.filter((e) => e.warn).length : 0;
+  // The numbers on the left are filters: a second click on the same one shows everyone again.
+  const pickFeed = (f: 'ok' | 'warn' | 'check') => () => { const next = feed === f ? 'all' : f; setFeed(next); setTab(next === 'check' ? 'check' : 'events'); };
+  const countRows = model ? [
+    { key: 'ok', dot: 'blue', label: mode === 'in' ? 'On time' : 'Left on time', n: model.events.length - warnEvents, on: feed === 'ok', open: pickFeed('ok') },
+    { key: 'warn', dot: 'amber', label: mode === 'in' ? 'Arrived late' : 'Left early', n: warnEvents, on: feed === 'warn', open: pickFeed('warn') },
+    { key: 'wait', dot: 'gray', label: words.waitTitle, n: model.waiting.length, on: false, open: () => { setFilter('all'); setTab('wait'); } },
+    { key: 'check', dot: 'amber', label: 'To check', n: model.checks.length, on: feed === 'check', open: pickFeed('check') },
+    { key: 'off', dot: 'muted', label: 'Day off today', n: model.dayOff, on: showOff, open: () => { if (showOff) { setFilter('all'); setTab('wait'); } else openOff(); } },
+  ] : [];
+  const feedTitle = feed === 'ok' ? (mode === 'in' ? 'Arrived on time' : 'Left on time') : feed === 'warn' ? (mode === 'in' ? 'Arrived late' : 'Left early') : feed === 'check' ? 'To check' : words.eventsTitle;
   const clock = hhmm(nowMin);
   const dateLabel = ov ? new Date(`${ov.date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }) : '';
   const remindLabel = toRemind.length ? `Remind ${toRemind.length === 1 ? '1 person' : `all ${toRemind.length}`}` : model?.remindIds.length ? 'All reminded' : 'Nobody to remind';
@@ -183,12 +212,12 @@ export const StaffClockGate: React.FC = () => {
         <Link to="/staff/clock" className="gt-back" aria-label="Back to Staff attendance" data-testid="gate-back"><ChevronLeft size={22} /><span>Staff attendance</span></Link>
         <h1 className="gt-title">Gate</h1>
         <div className="gt-seg gt-mode" role="group" aria-label="Arriving or leaving">
-          <button type="button" aria-pressed={mode === 'in'} onClick={() => { setMode('in'); setFilter('all'); }}>Arriving</button>
-          <button type="button" aria-pressed={mode === 'out'} onClick={() => { setMode('out'); setFilter('all'); }} data-testid="gate-leaving">Leaving</button>
+          <button type="button" aria-pressed={mode === 'in'} onClick={() => { setMode('in'); setFilter('all'); setFeed('all'); }}>Arriving</button>
+          <button type="button" aria-pressed={mode === 'out'} onClick={() => { setMode('out'); setFilter('all'); setFeed('all'); }} data-testid="gate-leaving">Leaving</button>
         </div>
         <span className="gt-grow" />
         <span className="gt-date">{dateLabel}</span>
-        <span className="gt-live" aria-label={`Live, ${clock}`}><i /><em>Live · </em><b className="sc-num">{clock}</b></span>
+        <span className="gt-live" data-state={live ? 'live' : 'wait'} data-testid="gate-live" aria-label={`${live ? 'Live' : 'Reconnecting'}, ${clock}`} title={live ? 'Live: updates the moment someone checks in' : 'Reconnecting. Still refreshing every 20 seconds.'}><i /><em>{live ? 'Live' : 'Reconnecting'} · </em><b className="sc-num">{clock}</b></span>
         {can('STAFF_CLOCK_SCAN') && <Link to="/staff/clock/scan" className="gt-btn gt-top-scan"><ScanLine size={18} />Scan card</Link>}
         <button type="button" className="gt-icon" aria-pressed={sound} aria-label={sound ? 'Sound for each check-in: on' : 'Sound for each check-in: off'} onClick={toggleSound}>{sound ? <Volume2 size={21} /> : <VolumeX size={21} />}</button>
       </header>
@@ -221,13 +250,14 @@ export const StaffClockGate: React.FC = () => {
                 </p>
               </div>
             </div>
-            <dl className="gt-counts sc-num">
-              <div><dt><i data-dot="blue" />On time</dt><dd>{model.onTime}</dd></div>
-              <div><dt><i data-dot="amber" />Arrived late</dt><dd>{model.lateArrived}</dd></div>
-              <div><dt><i data-dot="gray" />{words.waitTitle}</dt><dd>{model.waiting.length}</dd></div>
-              <div><dt><i data-dot="amber" />To check</dt><dd>{model.checks.length}</dd></div>
-              <div><dt><i data-dot="muted" /><button type="button" onClick={openOff} data-testid="gate-off-count">Day off today<ChevronRight size={16} /></button></dt><dd>{model.dayOff}</dd></div>
-            </dl>
+            {/* Every number opens the people behind it. */}
+            <div className="gt-counts sc-num" role="group" aria-label="Today in numbers" data-testid="gate-counts">
+              {countRows.map((c) => (
+                <button key={c.key} type="button" aria-pressed={c.on} onClick={c.open} data-count={c.key}>
+                  <i data-dot={c.dot} /><span>{c.label}</span><b>{c.n}</b><ChevronRight size={16} aria-hidden />
+                </button>
+              ))}
+            </div>
             <div className="gt-actions">
               <button type="button" className="gt-btn gt-btn-primary" disabled={!toRemind.length || !!busy} onClick={() => setSheet({ kind: 'all' })} data-testid="gate-remind-all"><BellRing size={20} />{remindLabel}</button>
               {can('STAFF_CLOCK_SCAN') && <Link to="/staff/clock/scan" className="gt-btn gt-actions-scan"><ScanLine size={20} />Scan card</Link>}
@@ -236,8 +266,8 @@ export const StaffClockGate: React.FC = () => {
 
           <div className="gt-seg gt-tabs" role="group" aria-label="Lists">
             <button type="button" aria-pressed={tab === 'wait'} onClick={() => { setTab('wait'); if (showOff) setFilter('all'); }}>{words.wait} <b className="sc-num">{model.waiting.length}</b></button>
-            <button type="button" aria-pressed={tab === 'events'} onClick={() => setTab('events')} data-testid="gate-tab-events">{words.events} <b className="sc-num">{model.events.length}</b></button>
-            <button type="button" aria-pressed={tab === 'check'} onClick={() => setTab('check')} data-testid="gate-tab-check" data-warn={model.checks.length > 0 || undefined}>Check <b className="sc-num">{model.checks.length}</b></button>
+            <button type="button" aria-pressed={tab === 'events'} onClick={() => { setTab('events'); setFeed('all'); }} data-testid="gate-tab-events">{words.events} <b className="sc-num">{model.events.length}</b></button>
+            <button type="button" aria-pressed={tab === 'check'} onClick={() => { setTab('check'); setFeed('all'); }} data-testid="gate-tab-check" data-warn={model.checks.length > 0 || undefined}>Check <b className="sc-num">{model.checks.length}</b></button>
             <button type="button" aria-pressed={tab === 'off'} onClick={openOff} data-testid="gate-tab-off">Off <b className="sc-num">{model.dayOff}</b></button>
           </div>
 
@@ -285,11 +315,13 @@ export const StaffClockGate: React.FC = () => {
 
           <section className="gt-col gt-col-feed" aria-label={words.eventsTitle}>
             <div className="gt-col-head">
-              <h2>{words.eventsTitle}</h2>
-              <span className="gt-note sc-num">{model.events.length} so far{model.checks.length ? ` · ${model.checks.length} to check` : ''}</span>
+              <h2>{feedTitle}</h2>
+              {feed === 'all'
+                ? <span className="gt-note sc-num">{model.events.length} so far{model.checks.length ? ` · ${model.checks.length} to check` : ''}</span>
+                : <button type="button" className="gt-clear" onClick={() => setFeed('all')} data-testid="gate-feed-all">Show everyone<X size={15} /></button>}
             </div>
             <div className="gt-list">
-              <div className="gt-checks" data-testid="gate-checks">
+              <div className="gt-checks" data-testid="gate-checks" data-only={feed === 'check' || undefined} hidden={feed === 'ok' || feed === 'warn'}>
                 {model.checks.length === 0 && <p className="gt-empty gt-empty-check"><Check size={26} />Nothing to check.</p>}
                 {model.checks.map((c) => (
                   <div key={c.recordId} className="gt-check">
@@ -306,9 +338,9 @@ export const StaffClockGate: React.FC = () => {
                 ))}
               </div>
               <div className="gt-events" data-testid="gate-events">
-                {model.events.length === 0 && <p className="gt-empty">{words.emptyEvents}</p>}
-                {model.events.map((e, i) => (
-                  <button key={e.userId} type="button" className="gt-event" data-new={(i === 0 && e.ago <= 2) || undefined} data-warn={e.warn || undefined} onClick={() => setPerson({ id: e.userId, name: e.name })} aria-label={`${e.name}, ${e.at}, ${e.tag}. Open history`}>
+                {feed !== 'check' && events.length === 0 && <p className="gt-empty">{feed === 'all' ? words.emptyEvents : 'Nobody in this group.'}</p>}
+                {events.map((e, i) => (
+                  <button key={e.userId} type="button" className="gt-event" data-new={(feed === 'all' && i === 0 && e.ago <= 2) || undefined} data-warn={e.warn || undefined} onClick={() => setPerson({ id: e.userId, name: e.name })} aria-label={`${e.name}, ${e.at}, ${e.tag}. Open history`}>
                     <b className="gt-event-at sc-num">{e.at}</b>
                     <UserAvatar decorative userId={e.userId} name={e.name} px={40} className="gt-av gt-av-sm" />
                     <span className="gt-row-text">
