@@ -1086,3 +1086,6 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
   .now-main b { font-size: 32px; }
   .now-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.sc-home-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.now-main span, .now-expected span, .now-kicker { white-space: nowrap; }

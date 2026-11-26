@@ -272,6 +272,7 @@ async function run(browser, vp) {
   await page.getByTestId('sheet-action').click();
   await expectText(page, 'Reminder sent to 1 person', `${tag} nudge toast`);
   await shot('00b-not-here-sheet');
+  for (const b of await page.locator('.toast-close').all()) await b.click().catch(() => {});
   await page.keyboard.press('Escape');
   await board.locator('[data-now="dayOff"]').click();
   await expectText(page, 'Day off today', `${tag} day-off list`);

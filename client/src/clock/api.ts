@@ -87,6 +87,14 @@ export interface DayState {
   rules: { lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; own?: boolean };
 }
 
+export type MyDayKind = 'on_time' | 'late' | 'absent' | 'today' | 'planned' | 'off' | 'closed' | 'untracked';
+export interface MyDay { date: string; kind: MyDayKind; start: string | null; end: string | null; in: string | null; out: string | null; early: boolean; noOut: boolean; own: boolean }
+/** One month of the person's own days. */
+export interface MyCalendar {
+  month: string; today: string; min: string; max: string; days: MyDay[];
+  summary: { workDays: number; worked: number; late: number; absent: number; daysOff: number; plannedMinutes: number; left: number };
+}
+
 export interface Me extends DayState {
   school: { name: string; slug: string };
   open: boolean;
@@ -159,6 +167,7 @@ export const clockApi = {
   me: (slug: string, token: string) => call<Me>(slug, '/me', { token }),
   challenge: (slug: string, token: string) => call<{ nonce: string; expiresIn: number; serverNow: string }>(slug, '/challenge', { method: 'POST', token, body: '{}' }),
   punch: (slug: string, token: string, payload: Record<string, unknown>) => call<PunchResult>(slug, '/punch', { method: 'POST', token, body: JSON.stringify(payload) }),
+  calendar: (slug: string, token: string, month?: string) => call<MyCalendar>(slug, `/calendar${month ? `?month=${month}` : ''}`, { token }),
   pushOn: (slug: string, token: string, payload: { subscription: unknown; lang: string; test?: boolean }) =>
     call<{ on: boolean; tested: boolean }>(slug, '/push', { method: 'POST', token, body: JSON.stringify(payload) }),
   pushOff: (slug: string, token: string) => call<{ on: boolean }>(slug, '/push', { method: 'DELETE', token }),

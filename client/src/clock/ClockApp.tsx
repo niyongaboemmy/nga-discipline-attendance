@@ -4,7 +4,7 @@ import { askPersistentStorage, deviceInfo, ensureKeys, forgetDevice, installUuid
 import { formatDistance, GeoError, permissionState, sampleLocation, weakButPlausible, zoneHint, type Fix, type ZoneHint } from './geo';
 import { renderGoogleButton } from './google';
 import { PhoneTap } from './PhoneTap';
-import { MissedCheckout, MyHours, Reminders } from './Extras';
+import { QuickActions } from './Quick';
 import { detectLang, makeT, type Lang, type T } from './i18n';
 import {
   IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconIn, IconKeyboard, IconMail, IconOut, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
@@ -655,16 +655,10 @@ export function ClockApp() {
           clockText={clockText}
           dateText={dateText}
           place={place}
-          extras={
-            <>
-              {me.missedOut && slug && token && <MissedCheckout t={t} slug={slug} token={token} locale={locale} missed={me.missedOut} flash={flash} onState={(st) => setMe((m) => (m ? { ...m, ...st } : m))} />}
-              {me.myWeek && <MyHours t={t} locale={locale} week={me.myWeek} schoolDate={me.schoolDate} />}
-              {boot?.pushKey && !computer && slug && token && (
-                <Reminders t={t} lang={lang} slug={slug} token={token} pushKey={boot.pushKey} minutes={boot.rules.remindMinutes ?? 15} me={me} flash={flash}
-                  onChange={(on) => setMe((m) => (m ? { ...m, reminders: { on } } : m))} />
-              )}
-            </>
-          }
+          quick={slug && token && me.device.status === 'active' ? (
+            <QuickActions t={t} lang={lang} locale={locale} slug={slug} token={token} me={me} setMe={setMe} flash={flash}
+              push={boot?.pushKey && !computer ? { key: boot.pushKey, minutes: boot.rules.remindMinutes ?? 15 } : null} />
+          ) : null}
           geoMode={geoMode}
           seeking={seeking}
           weak={weak}
@@ -932,8 +926,8 @@ interface DailyProps {
   clockText: string;
   dateText: string;
   place: string;
-  /** cards above the week: a forgotten check-out, the reminders switch */
-  extras?: React.ReactNode;
+  /** under the week: short buttons that open my calendar, reminders, a forgotten check-out */
+  quick?: React.ReactNode;
   geoMode: GeoMode;
   seeking: number | null;
   weak: boolean;
@@ -1047,8 +1041,6 @@ function Daily(p: DailyProps) {
         </div>
       )}
 
-      {p.extras}
-
       <div className="ck-week">
         <div className="ck-week-head"><b>{t('thisWeek')}</b><span>{t('daysOf', { done, total: me.week.length })}</span></div>
         <div className="ck-week-days" style={{ '--ck-days': me.week.length || 5 } as React.CSSProperties}>
@@ -1070,6 +1062,7 @@ function Daily(p: DailyProps) {
           })}
         </div>
       </div>
+      {p.quick}
       <span className="ck-sr">{deviceWord}</span>
     </main>
   );

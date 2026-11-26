@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ClockApiError, clockApi, type DayState, type Me } from './api';
 import { notificationsBlocked, ReminderError, reminderSupport, subscribeReminders, unsubscribeReminders } from './reminders';
 import type { Lang, T } from './i18n';
-import { IconBell, IconClock, IconOut } from './icons';
+import { IconBell, IconOut } from './icons';
 
 /**
  * Under the big button on the daily screen: "you forgot to check out" (say when
@@ -95,44 +95,6 @@ export function Reminders(p: { t: T; lang: Lang; slug: string; token: string; pu
         )}
       </div>
       <p>{support === 'needs_install' ? t('remindInstall') : blocked ? t('remindBlocked') : on ? when : t('remindLead', { minutes: p.minutes })}</p>
-    </div>
-  );
-}
-
-const WEEK_ORDER = ['1', '2', '3', '4', '5', '6', '0'];
-
-/** The person's own working week: today's hours at a glance, the seven days on request. */
-export function MyHours(p: { t: T; locale: string; week: NonNullable<Me['myWeek']>; schoolDate: string }) {
-  const { t, week } = p;
-  const [open, setOpen] = useState(false);
-  const todayKey = String(new Date(`${p.schoolDate}T12:00:00Z`).getUTCDay());
-  const today = week.days[todayKey];
-  // 2024-09-01 was a Sunday: a fixed week to name the days in the page's language.
-  const name = (d: string) => new Date(Date.UTC(2024, 8, 1 + Number(d), 12)).toLocaleDateString(p.locale, { weekday: 'long', timeZone: 'UTC' });
-  return (
-    <div className="ck-x" role="group" aria-label={t('myHours')} data-testid="my-hours">
-      <div className="ck-x-head">
-        <span className="ck-x-icon"><IconClock size={18} /></span>
-        <b>{t('myHours')}</b>
-        <button className="ck-x-btn ck-x-btn-quiet" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{open ? t('myHoursHide') : t('myHoursShow')}</button>
-      </div>
-      <p>{today?.works ? t('myHoursToday', { start: today.start, end: today.end }) : t('myHoursTodayOff')} · {week.own ? t('myHoursOwn') : t('myHoursSchool')}</p>
-      {open && (
-        <>
-          <ul className="ck-hours">
-            {WEEK_ORDER.map((d) => {
-              const day = week.days[d];
-              return (
-                <li key={d} className={`${d === todayKey ? 'today' : ''}${day?.works ? '' : ' off'}`}>
-                  <span>{name(d)}</span>
-                  <b>{day?.works ? `${day.start} – ${day.end}` : t('myHoursOff')}</b>
-                </li>
-              );
-            })}
-          </ul>
-          <small>{t('myHoursNote')}</small>
-        </>
-      )}
     </div>
   );
 }
