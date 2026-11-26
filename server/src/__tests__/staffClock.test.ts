@@ -12,6 +12,7 @@ import { __setIdentityResolver, type MisStaffIdentity } from '../modules/clock/i
 import { __setClockNow } from '../modules/clock/clock.service.js';
 import { __resetNonces, punchMessage } from '../modules/clock/deviceAuth.js';
 import { __resetClockRateLimits } from '../modules/clock/clock.routes.js';
+import { __resetPhoneTaps, phoneTapMessage } from '../modules/clock/phoneTap.js';
 import { haversine, judge, onSchoolNetwork, plausibilityFlags } from '../modules/clock/geofence.js';
 
 /**
@@ -478,6 +479,68 @@ describe('phone GPS for a setup test on a computer', () => {
     expect((await request(app).get(`/api/staff/clock/pair/${code}`).set(authHeader(token))).status).toBe(403);
     // No attendance was recorded by any of this.
     expect(await db.get(`SELECT 1 FROM attendance_events WHERE kind = 'check_in' AND lat = ? AND accuracy_m = 9`, INSIDE.lat)).toBeUndefined();
+  });
+});
+
+describe('check in from a computer with a phone (QR code)', () => {
+  async function phoneCode(device: FakeDevice) {
+    const ch = await request(app).post('/api/clock/nga/challenge').set('X-Clock-Device', device.token!);
+    const nonce = ch.body.data.nonce;
+    return request(app).post('/api/clock/nga/phone-tap').set('X-Clock-Device', device.token!).send({ nonce, signature: await sign(device, phoneTapMessage(nonce)) });
+  }
+
+  it('the computer shows a code; a phone scans it, sends its location and the tap is recorded for the computer owner', async () => {
+    __resetPhoneTaps();
+    misPerson(120, 'Aline Uwase', 'aline@gmail.com');
+    const laptop = await newDevice();
+    now = kigali('07:30', '2026-11-25');
+    expect((await register('nga', 'aline@gmail.com', laptop, { device: { browser: 'Chrome', os: 'macOS', formFactor: 'desktop' } })).status).toBe(200);
+
+    // A bad signature gets no code.
+    const ch = await request(app).post('/api/clock/nga/challenge').set('X-Clock-Device', laptop.token!);
+    expect((await request(app).post('/api/clock/nga/phone-tap').set('X-Clock-Device', laptop.token!).send({ nonce: ch.body.data.nonce, signature: 'AAAA' })).status).toBe(401);
+
+    const made = await phoneCode(laptop);
+    expect(made.status).toBe(200);
+    const { code, url } = made.body.data;
+    expect(url).toContain(`/c/nga/tap/${code}`);
+    expect((await request(app).get(`/api/clock/nga/phone-tap/${code}`).set('X-Clock-Device', laptop.token!)).body.data.state).toBe('waiting');
+
+    // The phone (no sign-in) sees whose tap it is, then sends a vague reading: refused, the code stays usable.
+    const preview = await request(app).get(`/api/clock/nga/tap/${code}`);
+    expect(preview.body.data).toMatchObject({ firstName: 'Aline', next: 'check_in' });
+    const vague = await request(app).post(`/api/clock/nga/tap/${code}`).send({ position: { lat: INSIDE.lat, lng: INSIDE.lng, accuracy: 400 } });
+    expect(vague.status).toBe(422);
+    const seen = await request(app).get(`/api/clock/nga/phone-tap/${code}`).set('X-Clock-Device', laptop.token!);
+    expect(seen.body.data).toMatchObject({ state: 'failed', error: { code: 'LOW_ACCURACY' } });
+
+    const ok = await request(app).post(`/api/clock/nga/tap/${code}`).send({ position: { lat: INSIDE.lat, lng: INSIDE.lng, accuracy: 12 }, clientTime: new Date(now).toISOString() });
+    expect(ok.status).toBe(200);
+    expect(ok.body.data).toMatchObject({ action: 'check_in', at: '07:30', status: 'present', zone: 'Main campus' });
+    expect(ok.body.data.flags).toContain('phone_location');
+    const done = await request(app).get(`/api/clock/nga/phone-tap/${code}`).set('X-Clock-Device', laptop.token!);
+    expect(done.body.data).toMatchObject({ state: 'done', result: { action: 'check_in' }, dayState: { next: 'check_out' } });
+    const row = await db.get<{ source: string; flags: string; in_accuracy_m: number }>(`SELECT source, flags, in_accuracy_m FROM staff_attendance WHERE staff_id = '120' AND date = '2026-11-25'`);
+    expect(row).toMatchObject({ source: 'device', in_accuracy_m: 12 });
+    expect(JSON.parse(row!.flags)).toContain('phone_location');
+
+    // One tap per code; another computer cannot read it; unknown codes are refused.
+    expect((await request(app).post(`/api/clock/nga/tap/${code}`).send({ position: INSIDE })).status).toBe(409);
+    const other = await newDevice();
+    misPerson(121, 'Eric Habimana', 'eric.h@gmail.com');
+    await register('nga', 'eric.h@gmail.com', other);
+    expect((await request(app).get(`/api/clock/nga/phone-tap/${code}`).set('X-Clock-Device', other.token!)).status).toBe(404);
+    expect((await request(app).get('/api/clock/nga/tap/nope-nope-nope')).status).toBe(404);
+
+    // Outside the zone is still refused; codes expire after 2 minutes.
+    now = kigali('16:30', '2026-11-25');
+    const out1 = (await phoneCode(laptop)).body.data.code;
+    expect((await request(app).post(`/api/clock/nga/tap/${out1}`).send({ position: FAR })).status).toBe(403);
+    now += 3 * 60_000;
+    expect((await request(app).post(`/api/clock/nga/tap/${out1}`).send({ position: INSIDE })).status).toBe(404);
+    const out2 = (await phoneCode(laptop)).body.data.code;
+    const out = await request(app).post(`/api/clock/nga/tap/${out2}`).send({ position: INSIDE });
+    expect(out.body.data).toMatchObject({ action: 'check_out' });
   });
 });
 

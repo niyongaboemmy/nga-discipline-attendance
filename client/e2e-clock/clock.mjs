@@ -63,7 +63,7 @@ async function expectText(page, text, label) {
 
 /** A mocked /api/clock/nga backend with just enough state. */
 function mockServer(opts = {}) {
-  const st = { registered: !!opts.registered, deviceStatus: opts.deviceStatus || 'active', checkIn: opts.checkIn || null, checkOut: null, now: '2026-11-24T05:42:00.000Z', revoked: !!opts.revoked };
+  const st = { tap: 'waiting', tapError: null, registered: !!opts.registered, deviceStatus: opts.deviceStatus || 'active', checkIn: opts.checkIn || null, checkOut: null, now: '2026-11-24T05:42:00.000Z', revoked: !!opts.revoked };
   const person = { name: opts.name || 'Grace Mukamana', firstName: (opts.name || 'Grace Mukamana').split(' ')[0], initials: 'GM', role: 'Teacher' };
   const day = () => ({
     serverNow: st.now, schoolDate: '2026-11-24', timezone: 'Africa/Kigali', schoolDay: true,
@@ -98,7 +98,7 @@ function mockServer(opts = {}) {
     if (st.revoked) return route.fulfill(err(401, 'DEVICE_REVOKED', 'removed'));
     if (p === '/me') {
       return route.fulfill(ok({ ...day(), school: { name: 'New Generation Academy', slug: 'nga' }, open: true, person, email: 'grace.mukamana@gmail.com',
-        device: { status: st.deviceStatus, label: 'Samsung A15 · Chrome', formFactor: 'phone', registeredAt: '2026-11-24T05:40:00.000Z' },
+        device: { status: st.deviceStatus, label: opts.formFactor === 'desktop' ? 'MacBook · Chrome' : 'Samsung A15 · Chrome', formFactor: opts.formFactor || 'phone', registeredAt: '2026-11-24T05:40:00.000Z' },
         rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60 } }));
     }
     if (p === '/challenge') return route.fulfill(ok({ nonce: 'n' + Math.random().toString(36).slice(2), expiresIn: 60, serverNow: st.now }));
@@ -113,6 +113,32 @@ function mockServer(opts = {}) {
       st.checkOut = '16:10';
       st.now = '2026-11-24T14:10:00.000Z';
       return route.fulfill(ok({ action: 'check_out', at: '16:10', status: 'on_time', distance: 35, zone: 'Main campus', flags: [], state: day() }));
+    }
+    // Check in from a computer with a phone (QR code).
+    if (p === '/phone-tap' && req.method() === 'POST') {
+      if (!body.signature || body.signature.length < 80) return route.fulfill(err(401, 'BAD_SIGNATURE', 'bad sig'));
+      st.tap = 'waiting';
+      return route.fulfill(ok({ code: 'ptapcode12345678', url: `${BASE}/c/nga/tap/ptapcode12345678`, expiresIn: 120 }));
+    }
+    if (p === '/phone-tap/ptapcode12345678') {
+      return route.fulfill(ok({ state: st.tap, expiresIn: 100, error: st.tapError,
+        result: st.tap === 'done' ? { action: 'check_in', at: '07:42', status: 'present', distance: 40, zone: 'Main campus', flags: ['phone_location'] } : null,
+        dayState: st.tap === 'done' ? day() : null }));
+    }
+    if (p === '/tap/ptapcode12345678' && req.method() === 'GET') {
+      if (st.tap === 'done') return route.fulfill(err(404, 'TAP_EXPIRED', 'This code expired. Show a new one on the computer.'));
+      st.tap = 'locating';
+      return route.fulfill(ok({ school: { name: 'New Generation Academy', slug: 'nga' }, firstName: person.firstName, next: st.checkIn ? 'check_out' : 'check_in', expiresIn: 110 }));
+    }
+    if (p === '/tap/ptapcode12345678') {
+      if (body.position.accuracy > 100) {
+        st.tap = 'failed';
+        st.tapError = { code: 'LOW_ACCURACY', message: 'not precise', data: { accuracy: Math.round(body.position.accuracy) } };
+        return route.fulfill(err(422, 'LOW_ACCURACY', 'not precise', { accuracy: Math.round(body.position.accuracy) }));
+      }
+      st.tap = 'done';
+      st.checkIn = '07:42';
+      return route.fulfill(ok({ action: 'check_in', at: '07:42', status: 'present', distance: 40, zone: 'Main campus', flags: ['phone_location'] }));
     }
     return route.fulfill(err(404, 'NOPE', 'not mocked'));
   };
@@ -278,6 +304,55 @@ async function longName(browser, vp) {
   await ctx.close();
 }
 
+/** A laptop (no GPS, ± 266 m): the QR panel opens by itself; a phone scans it and the check-in lands on the laptop. */
+async function phoneTapFlow(browser, theme) {
+  const tag = `laptop-${theme}`;
+  const laptop = { name: 'laptop', width: 1280, height: 800, ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36', mobile: false };
+  const server = mockServer({ formFactor: 'desktop', name: 'Tuyishimire Aline' });
+  const { ctx, page } = await newPage(browser, laptop, theme, { server, geo: { ...INSIDE, accuracy: 266 } });
+  await page.goto(`${BASE}/c/nga`);
+  await page.getByTestId('gis').click();
+  await page.getByRole('button', { name: /Yes, this is my/ }).click();
+  const allow = page.getByRole('button', { name: 'Allow location' });
+  if (await allow.isVisible().catch(() => false)) await allow.click();
+  await expectText(page, 'Scan to check in', `${tag} QR panel opens on a vague computer location`);
+  await page.locator('.ck-ptap-qr img').waitFor();
+  await expectText(page, 'Any phone camera', `${tag} QR hint`);
+  await page.waitForTimeout(400);
+  await shot(page, `${tag}-20-phone-qr`);
+
+  // Hide -> the offer pill; open again.
+  await page.getByRole('button', { name: 'Hide' }).click();
+  await page.getByTestId('use-phone').waitFor();
+  await shot(page, `${tag}-21-use-phone-offer`);
+  await page.getByTestId('use-phone').click();
+  await page.locator('.ck-ptap-qr img').waitFor();
+
+  // The phone: a vague reading first (try again), then a good one.
+  const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, userAgent: PHONE_UA, isMobile: true, hasTouch: true, colorScheme: theme, locale: 'en-GB', deviceScaleFactor: 2, geolocation: { ...INSIDE, accuracy: 300 }, permissions: ['geolocation'] });
+  await phoneCtx.route('**/api/clock/nga/**', server);
+  const phone = await phoneCtx.newPage();
+  phone.on('pageerror', (e) => fail(`phone page error: ${e.message}`));
+  await phone.goto(`${BASE}/c/nga/tap/ptapcode12345678`);
+  await expectText(phone, 'Tuyishimire', `${tag} phone shows whose tap`);
+  await expectText(phone, 'Location is not precise', `${tag} phone vague`);
+  await expectText(page, 'Phone location not precise', `${tag} laptop sees the phone's problem`);
+  await shot(phone, `${tag}-22-phone-vague`);
+  await shot(page, `${tag}-23-laptop-phone-vague`);
+  await phoneCtx.setGeolocation({ ...INSIDE, accuracy: 12 });
+  await phone.getByRole('button', { name: 'Try again' }).click();
+  await expectText(phone, 'Check-in saved · 07:42', `${tag} phone saved`);
+  await expectText(phone, 'You can close this page', `${tag} phone done lead`);
+  await shot(phone, `${tag}-24-phone-done`);
+  await expectText(page, 'On time', `${tag} laptop success`);
+  await shot(page, `${tag}-25-laptop-success`);
+  // The used code is refused on a second scan.
+  await phone.goto(`${BASE}/c/nga/tap/ptapcode12345678`);
+  await expectText(phone, 'Code expired', `${tag} used code`);
+  await phoneCtx.close();
+  await ctx.close();
+}
+
 async function main() {
   const preview = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], { stdio: 'ignore' });
   try {
@@ -297,6 +372,8 @@ async function main() {
       await longName(browser, vp);
       console.log(`ok ${vp.name}`);
     }
+    for (const theme of ['light', 'dark']) await phoneTapFlow(browser, theme);
+    console.log('ok laptop + phone QR');
     await browser.close();
     console.log(`All clock screens passed. Screenshots in ${OUT}`);
   } finally {

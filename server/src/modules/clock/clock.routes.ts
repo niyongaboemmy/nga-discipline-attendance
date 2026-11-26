@@ -8,6 +8,7 @@ import { resolvePermissions } from '../../middleware/auth.js';
 import { domainAllowed, GoogleTokenError, verifyGoogleCredential } from './google.js';
 import { IdentityUnavailable, resolveStaffIdentity } from './identity.js';
 import { addPairReading, pairingExists } from './pairing.js';
+import { createPhoneTap, previewPhoneTap, readPhoneTap, submitPhoneTap } from './phoneTap.js';
 import {
   challengeFor,
   ClockError,
@@ -241,6 +242,63 @@ router.post('/pair/:code', (req: Request, res: Response) => {
   if (r === 'bad') return res.status(400).json({ success: false, code: 'NO_LOCATION', message: 'No location was sent.' });
   if (r === 'full') return res.status(409).json({ success: false, code: 'PAIR_FULL', message: 'Enough readings were sent. Look at the computer.' });
   return res.json({ success: true, data: { received: true } });
+});
+
+// ---------------------------------------------------------------------------
+// Check in from a computer with a phone's location (QR code on the computer).
+// ---------------------------------------------------------------------------
+
+/** The computer (the person's own, signed) asks for a 2-minute code to show as a QR. */
+router.post('/phone-tap', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req));
+    if (limited(`pt:${tenant.tid}:${device.id}`, 20, 600_000)) throw new ClockError(429, 'RATE_LIMITED', 'Too many codes. Wait a little.');
+    if (!(await clockReady(db))) throw new ClockError(403, 'CLOCK_OFF', 'Staff attendance is not open for this school yet.');
+    const p = createPhoneTap(tenant.tid, device, req.body ?? {});
+    return res.json({ success: true, data: { ...p, url: `${config.appPublicUrl}/c/${tenant.slug}/tap/${p.code}` } });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** The computer polls: waiting, the phone is locating, done (with the result) or refused. */
+router.get('/phone-tap/:code', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  const db = getDb();
+  try {
+    const device = await requireDevice(db, deviceTokenOf(req));
+    const r = readPhoneTap(tenant.tid, device.id, String(req.params.code));
+    if (!r) return res.status(404).json({ success: false, code: 'TAP_EXPIRED', message: 'This code expired.' });
+    const state = r.state === 'done' ? await personState(db, device) : null;
+    return res.json({ success: true, data: { ...r, dayState: state } });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** The phone (no sign-in, the code is the key): whose tap and what it will be. */
+router.get('/tap/:code', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  try {
+    const p = await previewPhoneTap(getDb(), tenant.tid, String(req.params.code));
+    return res.json({ success: true, data: { school: { name: tenant.name, slug: tenant.slug }, ...p } });
+  } catch (err) {
+    return send(res, err);
+  }
+});
+
+/** The phone sends its location: the tap is recorded for the computer's owner. */
+router.post('/tap/:code', async (req: Request, res: Response) => {
+  const tenant: TenantCtx = (req as any).clockTenant;
+  if (limited(`tap:${tenant.tid}:${ipOf(req)}`, 30, 600_000)) return res.status(429).json({ success: false, code: 'RATE_LIMITED', message: 'Too many tries. Wait a little.' });
+  try {
+    const r = await submitPhoneTap(getDb(), tenant.tid, String(req.params.code), req.body ?? {}, { ip: ipOf(req), userAgent: req.get('User-Agent') || null });
+    return res.json({ success: true, data: r });
+  } catch (err) {
+    return send(res, err);
+  }
 });
 
 /** The person's state: drives the single button. Pending devices get an answer too. */
