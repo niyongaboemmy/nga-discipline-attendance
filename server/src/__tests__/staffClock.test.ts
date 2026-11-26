@@ -893,6 +893,13 @@ describe('reminders and forgotten check-outs', () => {
     expect(calSchool.days[5]).toMatchObject({ date: '2027-02-06', kind: 'off' });
     expect((await request(app).get('/api/clock/nga/calendar?month=2031-01').set('X-Clock-Device', phone.token!)).body.data.month).toBe(cal.max);
     expect((await request(app).get('/api/clock/nga/calendar').send()).status).toBe(401);
+    // Signed in to Tendo (not the phone page): their own week for the home card. Admin '900' has no records: Mon-Tue absent, today Wednesday.
+    const wk = (await request(app).get('/api/staff/clock/my-week').set(authHeader(adminToken))).body.data;
+    expect(wk).toMatchObject({ today: '2027-02-03', nowMinutes: 540, own: false });
+    expect(wk.days.map((d: any) => d.kind)).toEqual(['absent', 'absent', 'today', 'planned', 'planned', 'off', 'off']);
+    expect(wk.days[2]).toMatchObject({ date: '2027-02-03', start: '08:30', end: '16:00' });
+    expect(wk.summary).toMatchObject({ workDays: 5, worked: 0, absent: 2, plannedMinutes: 2250 });
+    expect((await request(app).get('/api/staff/clock/my-week')).status).toBe(401);
     expect(me.myWeek).toMatchObject({ own: true, days: { '2': { works: true, start: '10:00', end: '14:00' }, '3': { works: false } } });
     expect(me.missedOut).toEqual({ date: '2027-02-02', checkIn: '09:45' });
     const claim = (body: unknown) => request(app).post('/api/clock/nga/missed-checkout').set('X-Clock-Device', phone2.token!).send(body as any);

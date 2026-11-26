@@ -705,20 +705,14 @@ export async function applyTap(
 
 export type MyDayKind = 'on_time' | 'late' | 'absent' | 'today' | 'planned' | 'off' | 'closed' | 'untracked';
 
-export async function personCalendar(db: Database, device: DeviceRow, monthRaw: unknown) {
-  const today = schoolDateString(new Date(clockNow()));
-  let month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(monthRaw ?? '')) ? String(monthRaw) : today.slice(0, 7);
-  // A year back, six months ahead.
-  const lo = addDays(today, -366).slice(0, 7);
-  const hi = addDays(today, 184).slice(0, 7);
-  if (month < lo) month = lo;
-  if (month > hi) month = hi;
-  const from = `${month}-01`;
-  const to = addDays(`${addDays(from, 32).slice(0, 7)}-01`, -1);
+export interface MyDay { date: string; kind: MyDayKind; start: string | null; end: string | null; in: string | null; out: string | null; early: boolean; noOut: boolean; own: boolean }
 
-  const book = await loadPlanBook(db, device.user_id);
+/** A person's days over a range: expected hours, days off, what was recorded. */
+export async function personDays(db: Database, userId: string, from: string, to: string) {
+  const today = schoolDateString(new Date(clockNow()));
+  const book = await loadPlanBook(db, userId);
   const records = new Map((await db.all<any[]>(
-    `SELECT date, clock_in, clock_out, status, out_status, review_state FROM staff_attendance WHERE staff_id = ? AND date >= ? AND date <= ?`, device.user_id, from, to
+    `SELECT date, clock_in, clock_out, status, out_status, review_state FROM staff_attendance WHERE staff_id = ? AND date >= ? AND date <= ?`, userId, from, to
   )).map((r) => [String(r.date), r]));
   let closedDays = new Set<string>();
   try {
@@ -727,10 +721,10 @@ export async function personCalendar(db: Database, device: DeviceRow, monthRaw: 
   const first = await db.get<{ d: string | null }>(`SELECT MIN(date) AS d FROM staff_attendance WHERE source IN ('device','card')`);
   const trackingFrom = first?.d && first.d <= today ? first.d : today;
 
-  const days: Array<{ date: string; kind: MyDayKind; start: string | null; end: string | null; in: string | null; out: string | null; early: boolean; noOut: boolean; own: boolean }> = [];
+  const days: MyDay[] = [];
   const sum = { workDays: 0, worked: 0, late: 0, absent: 0, daysOff: 0, plannedMinutes: 0, left: 0 };
   for (let d = from; d <= to; d = addDays(d, 1)) {
-    const rule = book.dayFor(device.user_id, d);
+    const rule = book.dayFor(userId, d);
     const closed = closedDays.has(d);
     const works = rule.works && !closed;
     const r = records.get(d);
@@ -756,7 +750,37 @@ export async function personCalendar(db: Database, device: DeviceRow, monthRaw: 
     if (came) { sum.worked += 1; if (kind === 'late') sum.late += 1; }
     if (kind === 'absent') sum.absent += 1;
   }
-  return { month, today, min: lo, max: hi, days, summary: sum };
+  return { today, days, summary: sum };
+}
+
+export async function personCalendar(db: Database, device: DeviceRow, monthRaw: unknown) {
+  const today = schoolDateString(new Date(clockNow()));
+  let month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(monthRaw ?? '')) ? String(monthRaw) : today.slice(0, 7);
+  // A year back, six months ahead.
+  const lo = addDays(today, -366).slice(0, 7);
+  const hi = addDays(today, 184).slice(0, 7);
+  if (month < lo) month = lo;
+  if (month > hi) month = hi;
+  const from = `${month}-01`;
+  const to = addDays(`${addDays(from, 32).slice(0, 7)}-01`, -1);
+  const { days, summary } = await personDays(db, device.user_id, from, to);
+  return { month, today, min: lo, max: hi, days, summary };
+}
+
+/** The signed-in person's own week (Monday to Sunday) and month so far, for their Tendo home card. */
+export async function personWeek(db: Database, userId: string) {
+  const now = new Date(clockNow());
+  const today = schoolDateString(now);
+  const start = weekStartFor(today);
+  const week = await personDays(db, userId, start, addDays(start, 6));
+  const month = await personDays(db, userId, `${today.slice(0, 7)}-01`, today);
+  const rule = (await loadPlanBook(db, userId)).dayFor(userId, today);
+  return {
+    today, nowMinutes: schoolMinutesOfDay(now), own: rule.own,
+    days: week.days, summary: week.summary,
+    /** this month up to today */
+    month: { workDays: month.summary.workDays - month.summary.left, worked: month.summary.worked, late: month.summary.late, absent: month.summary.absent },
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -153,6 +153,17 @@ export interface HistoryDay {
   manualOut?: boolean;
 }
 
+export interface MyWeekDay {
+  date: string; kind: 'on_time' | 'late' | 'absent' | 'today' | 'planned' | 'off' | 'closed' | 'untracked';
+  start: string | null; end: string | null; in: string | null; out: string | null; early: boolean; noOut: boolean; own: boolean;
+}
+/** The signed-in person's own week (Monday to Sunday) and month so far. */
+export interface MyWeek {
+  today: string; nowMinutes: number; own: boolean; days: MyWeekDay[];
+  summary: { workDays: number; worked: number; late: number; absent: number; daysOff: number; plannedMinutes: number; left: number };
+  month: { workDays: number; worked: number; late: number; absent: number };
+}
+
 export interface DayPlan { works: boolean; start: string; end: string }
 /** Keys '0'..'6', 0 = Sunday. */
 export type WeekPlan = Record<string, DayPlan>;
@@ -210,6 +221,7 @@ export const staffClockApi = {
   documentBrand: () => data(apiGet<{ name: string; logo: string | null }>('/api/staff/clock/document-brand')),
   report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
   reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),
+  myWeek: () => data(apiGet<MyWeek>('/api/staff/clock/my-week')),
   /** A leader reminds named people to check in (or out) now; only phones with reminders on get it. */
   nudge: (kind: 'in' | 'out', userIds: string[]) => apiPost<{ sent: number; noReminders: number; already: number; notNeeded: number }>('/api/staff/clock/nudge', { kind, userIds }),
   /** The office records when someone left on a day they forgot to check out. */

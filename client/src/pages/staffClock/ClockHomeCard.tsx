@@ -8,6 +8,7 @@ import { staffClockApi, type Overview } from '../../api/staffClock';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useAuth } from '../../context/AuthContext';
 import { Ring } from './StaffClockAttention';
+import { MyWeekLine } from './MyWeekLine';
 
 /**
  * Tendo Home: staff attendance at a glance.
@@ -147,6 +148,7 @@ const StaffCard: React.FC = () => {
           </div>
         )}
       </div>
+      <MyWeekLine />
       {missed.length > 0 && (
         <div className="sc-home-missed" role="status">
           <AlertTriangle size={16} />
