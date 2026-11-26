@@ -229,3 +229,31 @@
   .gt-live { padding: 0 10px; }
   .gt-hero { gap: 12px; }
 }
+
+/* Desktop rows: room around the photo and its ring, the status clear of the edge,
+   one hover surface for the whole row. The list is pulled out by the row's own
+   padding so photos still line up with the column title. */
+@media (min-width: 900px) {
+  .gt-list { margin: 0 -12px; gap: 2px; }
+  .gt-row { min-height: 68px; gap: 12px; padding: 0 12px; border-top: 0; border-radius: 18px; }
+  .gt-row:hover, .gt-row:focus-within { background: var(--g-hover); }
+  .gt-row-main { min-height: 68px; gap: 14px; padding: 10px 0; border-radius: 18px; }
+  .gt-row-main:hover { background: transparent; }
+  .gt-row-text { gap: 2px; }
+  .gt-event { min-height: 64px; gap: 14px; padding: 10px 12px; border-radius: 18px; }
+  .gt-checks { margin: 0 12px; }
+  .gt-checks:not(:empty) { margin-bottom: 8px; }
+  .gt-empty { margin: 0 12px; }
+}
+
+/* Day off today: a filter on a desktop, a fourth tab on a phone; the numbers open it */
+.gt-row[data-kind="off"] .gt-tag { color: var(--g-ink2); }
+.gt-counts dt button, .gt-mini button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; padding: 0; color: inherit; font: inherit; cursor: pointer; border-radius: 999px; }
+.gt-counts dt button { min-height: 44px; padding: 0 10px 0 0; }
+.gt-counts dt button:hover { color: var(--g-blue-ink); }
+.gt-counts dt button svg { color: var(--g-ink2); }
+@media (max-width: 899px) {
+  .gt[data-tab="off"] .gt-col-feed { display: none; }
+  .gt-tabs button { padding: 0 4px; font-size: 14px; }
+  .gt-mini button { min-height: 32px; text-decoration: underline; text-underline-offset: 3px; }
+}

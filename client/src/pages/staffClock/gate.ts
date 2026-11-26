@@ -39,6 +39,9 @@ export interface GateEvent {
   needsReview: boolean;
 }
 
+/** Not expected today: their own day off, or the school is closed. */
+export interface GateOff { userId: string; name: string; role: string; note: string }
+
 export interface GateCheck { recordId: number; userId: string; name: string; at: string | null; reason: string }
 
 export interface GateModel {
@@ -52,6 +55,8 @@ export interface GateModel {
   /** the next start (or end) still ahead: time, people on it, minutes to go */
   next: { at: string; people: number; minutes: number } | null;
   onTime: number; lateArrived: number; dayOff: number;
+  /** the people behind the day-off number, by name */
+  off: GateOff[];
   /** the people a "remind all" reaches */
   remindIds: string[];
   /** still waiting, with reminders off on their phone */
@@ -73,10 +78,13 @@ const counted = (r: OverviewRow) => r.status !== 'invalid';
 export function gateModel(ov: Overview, nowMin: number, mode: GateMode): GateModel {
   const rows = ov.rows;
   const checks: GateCheck[] = ov.review.map((v) => ({ recordId: v.recordId, userId: v.userId, name: v.name, at: v.at, reason: v.flagText[0] ?? 'Unusual check-in' }));
-  const dayOff = rows.filter((r) => r.status === 'day_off').length;
+  const off: GateOff[] = rows.filter((r) => r.status === 'day_off')
+    .map((r) => ({ userId: r.userId, name: r.name, role: r.role, note: ov.holiday ? 'School closed today' : r.plan?.own ? 'Own hours: day off' : 'Day off' }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const dayOff = off.length;
   const arrived = rows.filter((r) => r.checkIn && counted(r));
   const lateArrived = arrived.filter((r) => r.status === 'late').length;
-  const base = { mode, checks, dayOff, onTime: arrived.length - lateArrived, lateArrived };
+  const base = { mode, checks, dayOff, off, onTime: arrived.length - lateArrived, lateArrived };
 
   const waitingOf = (list: OverviewRow[], pointOf: (r: OverviewRow) => number | null, words: { late: (m: number) => string; soon: (m: number) => string; later: (t: string) => string }, remindable: (r: OverviewRow, kind: GateKind) => boolean): GateWaiting[] =>
     list.map((r) => {
