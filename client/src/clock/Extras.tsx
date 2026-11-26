@@ -32,12 +32,12 @@ export function MissedCheckout(p: { t: T; slug: string; token: string; locale: s
     }
   };
   return (
-    <div className="ck-card ck-card-warn" role="group" aria-label={t('missedTitle')} data-testid="missed-out">
-      <div className="ck-card-head"><span className="ck-card-icon"><IconOut size={18} /></span><b>{t('missedTitle')}</b></div>
+    <div className="ck-x ck-x-warn" role="group" aria-label={t('missedTitle')} data-testid="missed-out">
+      <div className="ck-x-head"><span className="ck-x-icon"><IconOut size={18} /></span><b>{t('missedTitle')}</b></div>
       <p>{t('missedLead', { day, time: p.missed.checkIn ?? '' })}</p>
-      <div className="ck-card-row">
+      <div className="ck-x-row">
         <input className="ck-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label={t('missedAsk')} aria-invalid={tooEarly} />
-        <button className="ck-card-btn" disabled={!time || tooEarly || busy} onClick={() => void send()}>{busy ? t('sending') : t('missedSend')}</button>
+        <button className="ck-x-btn" disabled={!time || tooEarly || busy} onClick={() => void send()}>{busy ? t('sending') : t('missedSend')}</button>
       </div>
       <small>{tooEarly ? t('missedTooEarly', { time: p.missed.checkIn ?? '' }) : t('missedNote')}</small>
     </div>
@@ -84,12 +84,12 @@ export function Reminders(p: { t: T; lang: Lang; slug: string; token: string; pu
 
   if (support === 'unsupported') return null;
   return (
-    <div className={`ck-card${on ? ' ck-card-on' : ''}`} role="group" aria-label={t('remindTitle')} data-testid="reminders">
-      <div className="ck-card-head">
-        <span className="ck-card-icon"><IconBell size={18} /></span>
+    <div className={`ck-x${on ? ' ck-x-on' : ''}`} role="group" aria-label={t('remindTitle')} data-testid="reminders">
+      <div className="ck-x-head">
+        <span className="ck-x-icon"><IconBell size={18} /></span>
         <b>{on ? t('remindOn') : t('remindTitle')}</b>
         {support === 'ok' && !blocked && (
-          <button className={`ck-card-btn${on ? ' ck-card-btn-quiet' : ''}`} disabled={busy} onClick={() => void (on ? turnOff() : turnOn())} data-testid="reminders-toggle">
+          <button className={`ck-x-btn${on ? ' ck-x-btn-quiet' : ''}`} disabled={busy} onClick={() => void (on ? turnOff() : turnOn())} data-testid="reminders-toggle">
             {busy ? t('oneMoment') : on ? t('remindTurnOff') : t('remindTurnOn')}
           </button>
         )}

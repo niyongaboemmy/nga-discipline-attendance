@@ -385,6 +385,8 @@ async function extrasFlow(browser, theme) {
   const vp = VIEWPORTS[0];
   const server = mockServer({ missed: true, push: true });
   const { ctx, page } = await newPage(browser, vp, theme, { server });
+  // Headless Chromium starts with notifications denied (the card would say "blocked").
+  await ctx.grantPermissions(['geolocation', 'notifications']);
   await page.goto(`${BASE}/c/nga`);
   await page.getByTestId('gis').click();
   await page.getByRole('button', { name: /Yes, this is my/ }).click();
@@ -418,7 +420,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 250));
     }
     const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
-    for (const vp of VIEWPORTS) {
+    for (const vp of process.env.ONLY_EXTRAS ? [] : VIEWPORTS) {
       for (const theme of ['light', 'dark']) {
         await fullFlow(browser, vp, theme);
         await edgeStates(browser, vp, theme);

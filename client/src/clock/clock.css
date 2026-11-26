@@ -580,19 +580,19 @@ a.ck-btn { text-decoration: none; }
 @media (prefers-reduced-motion: reduce) { .ck-ptap-pin, .ck-tap-orb.is-done { animation: none; } }
 
 /* Cards above the week: a forgotten check-out, the reminders switch */
-.ck-card { border: 1px solid var(--ck-border); border-radius: 20px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-.ck-card-head { display: flex; align-items: center; gap: 10px; min-height: 36px; }
-.ck-card-head b { font-size: 15px; font-weight: 600; flex: 1; min-width: 0; }
-.ck-card-icon { width: 34px; height: 34px; flex: none; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--ck-blue-tint); color: var(--ck-blue-text); }
-.ck-card p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ck-muted, inherit); }
-.ck-card small { font-size: 13px; color: var(--ck-faint); }
-.ck-card-on .ck-card-icon { background: var(--ck-blue, #2563eb); color: #fff; }
-.ck-card-warn .ck-card-icon { background: var(--ck-amber-bg); color: var(--ck-amber); }
-.ck-card-row { display: flex; gap: 10px; align-items: center; }
+.ck-x { border: 1px solid var(--ck-border); border-radius: 20px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.ck-x-head { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+.ck-x-head b { font-size: 15px; font-weight: 600; flex: 1; min-width: 0; }
+.ck-x-icon { width: 34px; height: 34px; flex: none; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--ck-blue-tint); color: var(--ck-blue-text); }
+.ck-x p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ck-muted, inherit); }
+.ck-x small { font-size: 13px; color: var(--ck-faint); }
+.ck-x-on .ck-x-icon { background: var(--ck-blue, #2563eb); color: #fff; }
+.ck-x-warn .ck-x-icon { background: var(--ck-amber-bg); color: var(--ck-amber); }
+.ck-x-row { display: flex; gap: 10px; align-items: center; }
 .ck-time { flex: 1; min-width: 0; height: 46px; box-sizing: border-box; border-radius: 999px; border: 1px solid var(--ck-border); background: transparent; color: inherit; padding: 0 16px; font: 500 17px inherit; font-family: inherit; font-variant-numeric: tabular-nums; }
 .ck-time:focus { outline: 2px solid var(--ck-blue, #2563eb); outline-offset: 0; border-color: transparent; }
 .ck-time[aria-invalid='true'] { border-color: #dc2626; }
-.ck-card-btn { height: 40px; padding: 0 18px; border-radius: 999px; border: 0; background: var(--ck-blue, #2563eb); color: #fff; font: 600 14px inherit; font-family: inherit; cursor: pointer; flex: none; }
-.ck-card-row .ck-card-btn { height: 46px; padding: 0 22px; }
-.ck-card-btn:disabled { opacity: .5; cursor: default; }
-.ck-card-btn-quiet { background: transparent; color: inherit; border: 1px solid var(--ck-border); }
+.ck-x-btn { height: 40px; padding: 0 18px; border-radius: 999px; border: 0; background: var(--ck-blue, #2563eb); color: #fff; font: 600 14px inherit; font-family: inherit; cursor: pointer; flex: none; }
+.ck-x-row .ck-x-btn { height: 46px; padding: 0 22px; }
+.ck-x-btn:disabled { opacity: .5; cursor: default; }
+.ck-x-btn-quiet { background: transparent; color: inherit; border: 1px solid var(--ck-border); }
