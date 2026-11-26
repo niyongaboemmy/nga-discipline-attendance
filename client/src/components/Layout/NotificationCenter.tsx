@@ -8,6 +8,7 @@ import {
   type AppNotification, type NotificationType,
 } from '../../api/notifications';
 import { relativeTime, isoDate } from '../../utils/time';
+import { SkeletonList } from '../common/Skeleton';
 
 /** Exported so other surfaces (the Dashboard's alerts panel) can render
  *  notifications with the same visual language as this dropdown, instead
@@ -36,9 +37,10 @@ interface Props {
 export const NotificationCenter: React.FC<Props> = ({ open, onToggle, onClose }) => {
   const navigate = useNavigate();
   const [items, setItems] = useState<AppNotification[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
-    try { setItems(await getNotifications()); } catch { /* transient */ }
+    try { setItems(await getNotifications()); } catch { /* transient */ } finally { setLoaded(true); }
   }, []);
 
   useEffect(() => {
@@ -96,7 +98,9 @@ export const NotificationCenter: React.FC<Props> = ({ open, onToggle, onClose })
           </div>
 
           <div className="notif-list">
-            {items.length === 0 ? (
+            {!loaded ? (
+              <SkeletonList rows={3} label="Loading notifications" />
+            ) : items.length === 0 ? (
               <div className="empty-state" style={{ padding: 32 }}>
                 <Bell size={24} />
                 <span className="text-sm">You're all caught up</span>

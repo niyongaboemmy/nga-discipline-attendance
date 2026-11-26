@@ -54,12 +54,12 @@ export const AttentionStrip: React.FC<{ data: Overview; canSetup: boolean; onRev
 };
 
 /** Check-in ring: share of staff in today. */
-export const Ring: React.FC<{ value: number; total: number; size?: number }> = ({ value, total, size = 92 }) => {
+export const Ring: React.FC<{ value: number; total: number; size?: number; label?: string }> = ({ value, total, size = 92, label }) => {
   const r = (size - 12) / 2;
   const c = 2 * Math.PI * r;
   const pct = total ? Math.min(1, value / total) : 0;
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${value} of ${total} checked in`} className="sc-ring">
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={label ?? `${value} of ${total} checked in`} className="sc-ring">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--primary-light)" strokeWidth="10" />
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--primary)" strokeWidth="10" strokeLinecap="round"
         strokeDasharray={`${c * pct} ${c}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: 'stroke-dasharray .6s ease' }} />
@@ -68,10 +68,10 @@ export const Ring: React.FC<{ value: number; total: number; size?: number }> = (
   );
 };
 
-export interface SheetPerson { id: string; name: string; meta?: string; tag?: string; group?: string }
+export interface SheetPerson { id: string; name: string; meta?: string; tag?: string; group?: string; personId?: string }
 
 /** Side sheet listing people (not in, no check-out ...), with "Copy names". */
-export const ListSheet: React.FC<{ title: string; subtitle?: string; people: SheetPerson[]; empty: string; onClose: () => void }> = ({ title, subtitle, people, empty, onClose }) => {
+export const ListSheet: React.FC<{ title: string; subtitle?: string; people: SheetPerson[]; empty: string; onClose: () => void; onPick?: (p: SheetPerson) => void }> = ({ title, subtitle, people, empty, onClose, onPick }) => {
   const toast = useToast();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -109,13 +109,18 @@ export const ListSheet: React.FC<{ title: string; subtitle?: string; people: She
             {[...groups.entries()].map(([g, ps]) => (
               <div key={g || 'all'}>
                 {g && <div className="sc-sheet-group">{g}</div>}
-                {ps.map((p) => (
-                  <div key={`${g}-${p.id}`} className="sc-item">
-                    <span className="sc-avatar" style={{ width: 38, height: 38 }}>{initialsOf(p.name)}</span>
-                    <span className="sc-item-main"><b className="sc-clip" title={p.name}>{p.name}</b>{p.meta && <small className="sc-clip sc-muted">{p.meta}</small>}</span>
-                    {p.tag && <span className="sc-pill sc-tone-amber" style={{ height: 24, fontSize: 12 }}><AlertTriangle size={12} />{p.tag}</span>}
-                  </div>
-                ))}
+                {ps.map((p) => {
+                  const inner = (
+                    <>
+                      <span className="sc-avatar" style={{ width: 38, height: 38 }}>{initialsOf(p.name)}</span>
+                      <span className="sc-item-main"><b className="sc-clip" title={p.name}>{p.name}</b>{p.meta && <small className="sc-clip sc-muted">{p.meta}</small>}</span>
+                      {p.tag && <span className="sc-pill sc-tone-amber" style={{ height: 24, fontSize: 12 }}><AlertTriangle size={12} />{p.tag}</span>}
+                    </>
+                  );
+                  return onPick
+                    ? <button key={`${g}-${p.id}`} className="sc-item sc-item-pick" onClick={() => onPick(p)}>{inner}</button>
+                    : <div key={`${g}-${p.id}`} className="sc-item">{inner}</div>;
+                })}
               </div>
             ))}
           </div>

@@ -269,7 +269,7 @@
 .rfid-pick { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
 .rfid-pick-list li:last-child .rfid-pick { border-bottom: none; }
 .rfid-pick:hover { background: var(--bg-hover); }
-.rfid-pick.is-picked { background: var(--primary-light); box-shadow: inset 3px 0 0 var(--primary); }
+.rfid-pick.is-picked { background: var(--primary-light); outline: 1.5px solid var(--primary); outline-offset: -1.5px; }
 .rfid-pick:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .rfid-pick-check { color: var(--primary); flex: none; }
 

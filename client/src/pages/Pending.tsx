@@ -57,7 +57,7 @@ export const Pending: React.FC = () => {
             <LogOut size={16} /> Sign out
           </button>
           <button className="btn btn-primary" style={{ flex: 1 }} onClick={checkAgain} disabled={checking}>
-            <RefreshCw size={16} /> {checking ? 'Checking…' : 'Check again'}
+            {checking ? <span className="btn-spin" aria-hidden /> : <RefreshCw size={16} />} {checking ? 'Checking…' : 'Check again'}
           </button>
         </div>
       </div>

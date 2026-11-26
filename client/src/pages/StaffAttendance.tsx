@@ -5,7 +5,7 @@ import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { useToast } from '../context/ToastContext';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { SkeletonTable } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
 import { Copy, ExternalLink, Search, Settings2, Smartphone } from 'lucide-react';
@@ -143,7 +143,7 @@ export const StaffAttendance: React.FC = () => {
           {canViewAll && <span className="text-xs text-secondary">{visibleLogs.length} of {logs.length}</span>}
         </div>
         {loading ? (
-          <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+          <SkeletonTable />
         ) : visibleLogs.length === 0 ? (
           <div className="empty-state">No logs {logs.length ? 'match your filters' : 'recorded yet'}.</div>
         ) : (

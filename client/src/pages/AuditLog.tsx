@@ -382,7 +382,7 @@ export const AuditLog: React.FC = () => {
                 onClick={() => cursor && fetchPage(cursor)}
                 disabled={loadingMore || !cursor}
               >
-                <History size={14} /> {loadingMore ? 'Loading…' : 'Load older entries'}
+                {loadingMore ? <span className="btn-spin" aria-hidden /> : <History size={14} />} {loadingMore ? 'Loading…' : 'Load older entries'}
               </button>
             ) : (
               <span className="text-xs text-tertiary">End of the log</span>

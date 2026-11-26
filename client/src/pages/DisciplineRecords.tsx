@@ -2,7 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { SkeletonTable } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { useToast } from '../context/ToastContext';
@@ -214,7 +214,7 @@ export const DisciplineRecords: React.FC = () => {
       <div className="card" ref={tableRef}>
         <div className="card-header"><span className="section-title">Records {total > 0 && `(${total})`}</span></div>
         {loading ? (
-          <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+          <SkeletonTable />
         ) : records.length === 0 ? (
           <div className="empty-state"><Inbox size={28} /><span className="text-sm">No discipline records match your filters.</span></div>
         ) : (

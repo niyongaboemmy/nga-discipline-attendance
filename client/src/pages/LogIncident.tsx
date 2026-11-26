@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { useToast } from '../context/ToastContext';
 import { usePermissions } from '../hooks/usePermissions';
 import { Gavel, Award, AlertCircle, Save, Users } from 'lucide-react';
@@ -229,7 +229,7 @@ export const LogIncident: React.FC = () => {
   };
 
   if (loadingClasses) {
-    return <DashboardLayout><div style={{ padding: '80px 0' }}><LoadingSpinner /></div></DashboardLayout>;
+    return <DashboardLayout><PageSkeleton variant="form" /></DashboardLayout>;
   }
 
   return (
@@ -435,7 +435,7 @@ export const LogIncident: React.FC = () => {
                   disabled={saving || (bulk ? bulkIds.length === 0 : !form.studentId) || !can('DISCIPLINE_LOG')}
                   title={can('DISCIPLINE_LOG') ? undefined : "You don't have permission to log discipline records."}
                 >
-                  <Save size={16} /> {saving ? 'Saving…' : bulk ? `Save for ${bulkIds.length || ''} students` : 'Save record'}
+                  {saving ? <span className="btn-spin" aria-hidden /> : <Save size={16} />} {saving ? 'Saving…' : bulk ? `Save for ${bulkIds.length || ''} students` : 'Save record'}
                 </button>
               </div>
             </form>

@@ -333,7 +333,7 @@ export const StaffClockGuide: React.FC = () => {
                     <div className={`sc-guide-switch${cfg.rules.enabled ? ' on' : ''}`}>
                       <span><b>{cfg.rules.enabled ? 'Staff check-in is on' : 'Staff check-in is off'}</b><small>{cfg.rules.enabled ? 'Staff can use the link now.' : done.zone ? 'Ready to turn on.' : 'Draw a zone first.'}</small></span>
                       {canEdit && (
-                        <button className="sc-switch sc-switch-lg" role="switch" aria-checked={cfg.rules.enabled} aria-label="Staff check-in" disabled={busy === 'open' || (!cfg.rules.enabled && !done.zone)} onClick={() => void setOpen(!cfg.rules.enabled)}><span /></button>
+                        <button className="sc-switch sc-switch-lg" role="switch" aria-checked={cfg.rules.enabled} aria-label="Staff check-in" aria-busy={busy === 'open'} disabled={busy === 'open' || (!cfg.rules.enabled && !done.zone)} onClick={() => void setOpen(!cfg.rules.enabled)}><span /></button>
                       )}
                     </div>
                   </div>

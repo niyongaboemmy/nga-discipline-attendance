@@ -6,6 +6,7 @@ import { useToast } from '../../context/ToastContext';
 import type { RosterStudent } from '../../api/rfid';
 import { errMsg, showUid, type AssignTarget } from '../../utils/rfidCards';
 import { StudentAvatar } from './CardBits';
+import { Skeleton } from '../common/Skeleton';
 
 type Conflict = { code: 'CARD_ASSIGNED' | 'STUDENT_HAS_CARD'; message: string };
 
@@ -76,7 +77,7 @@ export const AssignCardModal: React.FC<{
           </button>
         ) : (
           <button className="btn btn-primary" onClick={() => submit()} disabled={busy || !picked}>
-            {busy ? 'Assigning…' : picked ? `Assign to ${picked.name.split(' ')[0]}` : 'Assign'}
+            {busy && <span className="btn-spin" aria-hidden />}{busy ? 'Assigning…' : picked ? `Assign to ${picked.name.split(' ')[0]}` : 'Assign'}
           </button>
         )}
       </>}>
@@ -90,7 +91,9 @@ export const AssignCardModal: React.FC<{
               aria-label="Search students" onChange={(e) => { setQuery(e.target.value); setPicked(null); setLoading(true); }} />
           </div>
           <ul className="rfid-pick-list" role="listbox" aria-label="Students">
-            {loading && students.length === 0 && <li className="text-sm text-secondary p-3">Searching…</li>}
+            {loading && students.length === 0 && [0, 1, 2, 3].map((i) => (
+              <li key={i} className="skel-li" aria-hidden><Skeleton w={36} h={36} r={999} /><span className="skel-li-text"><Skeleton w={`${55 - i * 7}%`} h={12} /><Skeleton w="30%" h={10} /></span></li>
+            ))}
             {!loading && students.length === 0 && (
               <li className="text-sm text-secondary p-3">No students found. If someone is missing, press “Sync now” on the cards page.</li>
             )}
@@ -162,7 +165,7 @@ export const CardActionModal: React.FC<{
       footer={<>
         <button className="btn btn-outline" onClick={onClose} disabled={busy}>Cancel</button>
         <button className={`btn ${kind === 'unassign' ? 'btn-primary' : 'btn-danger'}`} onClick={submit}
-          disabled={busy || (copy.required && !reason.trim())}>{busy ? 'Saving…' : copy.cta}</button>
+          disabled={busy || (copy.required && !reason.trim())}>{busy && <span className="btn-spin" aria-hidden />}{busy ? 'Saving…' : copy.cta}</button>
       </>}>
       <p className="text-sm text-secondary mb-3">{copy.body}</p>
       <div className="field">
@@ -198,7 +201,7 @@ export const CardLabelModal: React.FC<{ card: AssignTarget; onClose: () => void;
       onClose={busy ? () => {} : onClose} maxWidth={420}
       footer={<>
         <button className="btn btn-outline" onClick={onClose} disabled={busy}>Cancel</button>
-        <button className="btn btn-primary" onClick={() => submit()} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+        <button className="btn btn-primary" onClick={() => submit()} disabled={busy}>{busy && <span className="btn-spin" aria-hidden />}{busy ? 'Saving…' : 'Save'}</button>
       </>}>
       <form onSubmit={submit} className="field">
         <label className="label" htmlFor="card-label">Card number</label>

@@ -65,9 +65,10 @@
 /* ---- Detail page ---- */
 .ex-detail { display: flex; flex-direction: column; gap: 18px; }
 .ex-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; align-items: start; }
-.ex-status { box-shadow: inset 4px 0 0 var(--warning), var(--shadow-card); }
-.ex-status.is-approved { box-shadow: inset 4px 0 0 var(--success), var(--shadow-card); }
-.ex-status.is-rejected { box-shadow: inset 4px 0 0 var(--danger), var(--shadow-card); }
+/* Status reads from a soft tint of the whole card, not a side strip. */
+.ex-status { background: color-mix(in srgb, var(--warning) 6%, var(--bg-card)); border-color: color-mix(in srgb, var(--warning) 30%, var(--border)); }
+.ex-status.is-approved { background: color-mix(in srgb, var(--success) 6%, var(--bg-card)); border-color: color-mix(in srgb, var(--success) 30%, var(--border)); }
+.ex-status.is-rejected { background: color-mix(in srgb, var(--danger) 6%, var(--bg-card)); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); }
 .ex-status-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .badge.ex-badge-md { font-size: 13px; padding: 6px 12px; }
 

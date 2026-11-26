@@ -1,7 +1,7 @@
 import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
 import { Download, TrendingUp, Users, BarChart2, ArrowUpRight, ArrowDownRight, Minus, Gavel, AlertOctagon } from 'lucide-react';
@@ -72,7 +72,7 @@ export const Reports: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  if (loading) return <DashboardLayout><div style={{ padding: '80px 0' }}><LoadingSpinner /></div></DashboardLayout>;
+  if (loading) return <DashboardLayout><PageSkeleton variant="dashboard" /></DashboardLayout>;
   if (error) return <DashboardLayout><ErrorState message={error} onRetry={load} /></DashboardLayout>;
 
   return (

@@ -158,6 +158,10 @@ h1, h2, p { margin: 0; }
 .ck-start { display: flex; flex-direction: column; gap: 14px; margin-top: 28px; }
 .ck-start-head { display: none; }
 .ck-google-slot { min-height: 44px; display: flex; justify-content: center; }
+/* Google's button is an iframe: with the page in dark mode it paints an opaque white
+   box behind the pill unless it shares the iframe's (light) colour scheme. The pill's
+   own colours still follow the theme (filled_black in dark, outline in light). */
+.ck-google-slot > div, .ck-google-slot iframe { color-scheme: light; background: transparent !important; border-radius: 999px; overflow: hidden; }
 .ck-google-fallback { height: 58px; }
 .ck-note { font-size: 13px; color: var(--ck-faint); text-align: center; line-height: 19px; }
 .ck-langs { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }

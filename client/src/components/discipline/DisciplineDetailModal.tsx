@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal } from '../common/Modal';
 import { ConfirmDialog } from '../common/ConfirmDialog';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { SkeletonList } from '../common/Skeleton';
 import { SearchableSelect } from '../common/SearchableSelect';
 import { useToast } from '../../context/ToastContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -130,7 +130,7 @@ export const DisciplineDetailModal: React.FC<Props> = ({ id, onClose, onChanged 
           <>
             <button className="btn btn-outline" onClick={() => setEditing(false)} disabled={saving}>Cancel</button>
             <button className="btn btn-primary" onClick={save} disabled={saving || !form.title?.trim()}>
-              <Save size={15} /> {saving ? 'Saving…' : 'Save correction'}
+              {saving ? <span className="btn-spin" aria-hidden /> : <Save size={15} />} {saving ? 'Saving…' : 'Save correction'}
             </button>
           </>
         ) : (
@@ -151,7 +151,7 @@ export const DisciplineDetailModal: React.FC<Props> = ({ id, onClose, onChanged 
       }
     >
       {loading ? (
-        <div style={{ padding: '40px 0' }}><LoadingSpinner /></div>
+        <SkeletonList rows={4} />
       ) : error ? (
         <p className="text-sm text-danger">{error}</p>
       ) : editing ? (

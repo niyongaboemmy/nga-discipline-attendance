@@ -554,7 +554,7 @@ export const RuleImportModal: React.FC<RuleImportModalProps> = ({ open, onClose,
                 onClick={draftWithAi}
                 disabled={busy || !!aiOff || prompt.trim().length < 3}
               >
-                <Sparkles size={14} /> {busy ? 'Drafting…' : 'Draft rules'}
+                {busy ? <span className="btn-spin" aria-hidden /> : <Sparkles size={14} />} {busy ? 'Drafting…' : 'Draft rules'}
               </button>
             </div>
           </div>

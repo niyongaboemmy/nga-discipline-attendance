@@ -51,7 +51,10 @@ const MIS_STUDENT_ROLE_ID = '6';
 // 0=Sunday .. 6=Saturday (standard JS Date#getDay()).
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const fullName = (...parts: any[]) => parts.filter(Boolean).join(' ').trim();
+/** Name parts joined; placeholder values some MIS imports carry ("null", "nul", "-") are left out. */
+const PLACEHOLDER_NAME = /^(null?|undefined|none|n\/?a|-+|\.)$/i;
+export const fullName = (...parts: any[]) =>
+  parts.map((p) => (p == null ? '' : String(p).trim())).filter((p) => p && !PLACEHOLDER_NAME.test(p)).join(' ').trim();
 
 /** Flat MIS person row (class-group roster, /users/search) -> {id,name,email}. */
 function normalizeFlatPerson(s: any) {

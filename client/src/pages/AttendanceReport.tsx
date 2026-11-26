@@ -2,7 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton, SkeletonCards } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { SearchableSelect } from '../components/common/SearchableSelect';
 import { useAuth } from '../context/AuthContext';
@@ -433,7 +433,7 @@ export const AttendanceReport: React.FC = () => {
             <ErrorState message={error} onRetry={retry} />
           ) : selectedSubjectId == null ? (
             loadingSubjects ? (
-              <div style={{ padding: '32px 0' }}><LoadingSpinner /></div>
+              <SkeletonCards count={6} />
             ) : subjects.length === 0 ? (
               <div className="card empty-state">No subjects to report on this term.</div>
             ) : (
@@ -460,7 +460,7 @@ export const AttendanceReport: React.FC = () => {
               </div>
             )
           ) : loadingSubjectClasses ? (
-            <div style={{ padding: '32px 0' }}><LoadingSpinner /></div>
+            <SkeletonCards count={6} />
           ) : subjectClasses.length === 0 ? (
             <div className="card empty-state">No classes are teaching this subject this term.</div>
           ) : (
@@ -497,7 +497,7 @@ export const AttendanceReport: React.FC = () => {
           {error ? (
             <ErrorState message={error} onRetry={retry} />
           ) : loadingClasses || myClasses === null ? (
-            <div style={{ padding: '32px 0' }}><LoadingSpinner /></div>
+            <SkeletonCards count={6} />
           ) : (isClassTeacher ? myClasses.length === 0 : classes.length === 0) ? (
             <div className="empty-state"><Inbox size={26} /><span className="text-sm">No classes to report on this term.</span></div>
           ) : (
@@ -526,7 +526,7 @@ export const AttendanceReport: React.FC = () => {
       {/* ---- The report ---- */}
       {classId && (
         loadingReport ? (
-          <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+          <PageSkeleton variant="table" head={false} />
         ) : error ? (
           <ErrorState message={error} onRetry={retry} />
         ) : !report ? (

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { Modal } from '../components/common/Modal';
@@ -346,7 +346,7 @@ export const DisciplineRules: React.FC = () => {
               </div>
               <div className="flex gap-2">
                 <button type="button" className="btn btn-outline" onClick={() => { setCreating(false); setForm(emptyForm); setSeverityCustom(false); }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Create rule'}</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving && <span className="btn-spin" aria-hidden />}{saving ? 'Saving…' : 'Create rule'}</button>
               </div>
             </form>
           </div>
@@ -354,7 +354,7 @@ export const DisciplineRules: React.FC = () => {
       )}
 
       {loading ? (
-        <div style={{ padding: '80px 0' }}><LoadingSpinner /></div>
+        <PageSkeleton variant="cards" head={false} />
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : (
@@ -442,7 +442,7 @@ export const DisciplineRules: React.FC = () => {
             </div>
             <div className="flex gap-2 justify-end mt-2">
               <button type="button" className="btn btn-outline" onClick={() => { setEditTarget(null); setEditForm(null); }}>Cancel</button>
-              <button type="submit" className="btn btn-primary" disabled={editSaving}>{editSaving ? 'Saving…' : 'Save changes'}</button>
+              <button type="submit" className="btn btn-primary" disabled={editSaving}>{editSaving && <span className="btn-spin" aria-hidden />}{editSaving ? 'Saving…' : 'Save changes'}</button>
             </div>
           </form>
         )}

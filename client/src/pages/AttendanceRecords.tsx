@@ -2,7 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { SkeletonTable } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
 import { SearchableSelect } from '../components/common/SearchableSelect';
@@ -179,7 +179,7 @@ export const AttendanceRecords: React.FC = () => {
       {/* Table */}
       <div className="card">
         {loading ? (
-          <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+          <SkeletonTable />
         ) : visible.length === 0 ? (
           <div className="empty-state"><Inbox size={28} /><span className="text-sm">No matching records found.</span></div>
         ) : (

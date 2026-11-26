@@ -40,7 +40,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           onClick={onConfirm}
           disabled={loading}
         >
-          {loading ? 'Working…' : confirmLabel}
+          {loading && <span className="btn-spin" aria-hidden />}{loading ? 'Working…' : confirmLabel}
         </button>
       </>
     }

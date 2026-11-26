@@ -2,7 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { SkeletonList } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { Modal } from '../components/common/Modal';
 import { useToast } from '../context/ToastContext';
@@ -144,7 +144,7 @@ export const ExcuseReview: React.FC = () => {
 
       <div className="card">
         {loading ? (
-          <div style={{ padding: '64px 0' }}><LoadingSpinner /></div>
+          <SkeletonList rows={6} />
         ) : visible.length === 0 ? (
           <div className="empty-state"><Inbox size={28} /><span className="text-sm">No {filter === 'all' ? '' : filter} excuse requests{search ? ' match your search' : ''}.</span></div>
         ) : (

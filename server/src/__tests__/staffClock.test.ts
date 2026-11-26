@@ -383,6 +383,30 @@ describe('the school admin side', () => {
     expect(evening.missing.noCheckoutToday).toEqual([expect.objectContaining({ userId: '777', name: 'Open Day', checkIn: '07:30' })]);
   });
 
+  it("builds one person's history: on time, late, absent, days off, today, streaks", async () => {
+    const add = (date: string, inT: string, status: string, outT?: string, outStatus?: string) =>
+      db.run(`INSERT INTO staff_attendance (staff_id, staff_name, date, clock_in, clock_out, status, out_status, source) VALUES ('888', 'Ange Mukamana nul', ?, ?, ?, ?, ?, 'device')`,
+        date, `${date}T${inT}:00.000Z`, outT ? `${date}T${outT}:00.000Z` : null, status, outStatus ?? null);
+    await add('2026-12-07', '05:40', 'present', '14:30', 'on_time'); // Mon 07:40
+    await add('2026-12-08', '07:10', 'late', '14:20', 'on_time'); // Tue 09:10 late
+    await add('2026-12-10', '05:30', 'present', '12:00', 'early'); // Thu, left early
+    now = kigali('10:00', '2026-12-11'); // Fri, not in yet
+    const res = await request(app).get('/api/staff/clock/people/888/history?days=7').set(authHeader(adminToken));
+    expect(res.status).toBe(200);
+    const h = res.body.data;
+    expect(h.person.name).toBe('Ange Mukamana');
+    expect(h.days.map((d: any) => [d.date, d.kind])).toEqual([
+      ['2026-12-05', 'off'], ['2026-12-06', 'off'], ['2026-12-07', 'on_time'], ['2026-12-08', 'late'],
+      ['2026-12-09', 'absent'], ['2026-12-10', 'on_time'], ['2026-12-11', 'today'],
+    ]);
+    expect(h.days[2]).toMatchObject({ in: '07:40', out: '16:30', minutes: 530 });
+    expect(h.days[5]).toMatchObject({ early: true });
+    expect(h.summary).toMatchObject({ schoolDays: 4, attended: 3, onTime: 2, late: 1, absent: 1, early: 1, rate: 75, punctuality: 67, streak: 1, bestStreak: 1 });
+    // Teachers cannot read it.
+    const { token } = await createTestUser(db, { id: '955', name: 'T6', email: 't6@x', roleLevel: 'TEACHER' });
+    expect((await request(app).get('/api/staff/clock/people/888/history').set(authHeader(token))).status).toBe(403);
+  });
+
   it('reviews a flagged check-in and exports CSV', async () => {
     misPerson(110, 'Twin One', 'twin1@gmail.com');
     now = kigali('07:05', '2026-12-02');

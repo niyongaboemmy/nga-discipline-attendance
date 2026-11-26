@@ -515,7 +515,7 @@ export const RolesPermissions: React.FC = () => {
                       Discard
                     </button>
                     <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}>
-                      <Save size={14} /> {saving ? 'Saving…' : 'Save changes'}
+                      {saving ? <span className="btn-spin" aria-hidden /> : <Save size={14} />} {saving ? 'Saving…' : 'Save changes'}
                     </button>
                   </div>
                 </div>
@@ -556,7 +556,7 @@ export const RolesPermissions: React.FC = () => {
           <div className="flex justify-end gap-2 mt-2">
             <button className="btn btn-outline btn-sm" onClick={() => setCreating(false)}>Cancel</button>
             <button className="btn btn-primary btn-sm" onClick={createRole} disabled={!newName.trim() || saving}>
-              {saving ? 'Creating…' : 'Create role'}
+              {saving && <span className="btn-spin" aria-hidden />}{saving ? 'Creating…' : 'Create role'}
             </button>
           </div>
         </div>

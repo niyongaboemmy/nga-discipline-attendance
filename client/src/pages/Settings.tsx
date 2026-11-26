@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiGet, apiPut, ApiError } from '../api/client';
 import { User, Bell } from 'lucide-react';
+import { Skeleton } from '../components/common/Skeleton';
 
 interface NotifPrefs { emailNotifications: boolean; absenceAlerts: boolean; weeklySummary: boolean }
 const DEFAULT_PREFS: NotifPrefs = { emailNotifications: true, absenceAlerts: true, weeklySummary: false };
@@ -49,6 +50,7 @@ export const Settings: React.FC = () => {
   const [notif, setNotif] = useState<NotifPrefs>(DEFAULT_PREFS);
   const [savedNotif, setSavedNotif] = useState<NotifPrefs>(DEFAULT_PREFS);
   const [saving, setSaving] = useState(false);
+  const [notifLoaded, setNotifLoaded] = useState(false);
   const notifDirty = JSON.stringify(notif) !== JSON.stringify(savedNotif);
 
   useEffect(() => {
@@ -58,7 +60,7 @@ export const Settings: React.FC = () => {
         const p = { ...DEFAULT_PREFS, ...res.data?.preferences };
         setNotif(p);
         setSavedNotif(p);
-      } catch (err) { console.error('Error loading settings:', err); }
+      } catch (err) { console.error('Error loading settings:', err); } finally { setNotifLoaded(true); }
     })();
   }, []);
 
@@ -123,6 +125,16 @@ export const Settings: React.FC = () => {
             <>
               <span className="section-title">Notifications</span>
               <p className="text-sm text-secondary mt-1 mb-3">Choose what updates you receive.</p>
+              {!notifLoaded ? (
+                <div role="status" aria-busy="true" aria-label="Loading preferences" style={{ display: 'flex', flexDirection: 'column', gap: 18, padding: '8px 0' }}>
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                      <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}><Skeleton w={`${40 - i * 5}%`} h={13} /><Skeleton w="55%" h={11} /></span>
+                      <Skeleton w={44} h={24} r={999} />
+                    </div>
+                  ))}
+                </div>
+              ) : (<>
               <Row title="Email notifications" desc="Receive portal updates by email">
                 <Toggle checked={notif.emailNotifications} onChange={(v) => setNotif((n) => ({ ...n, emailNotifications: v }))} />
               </Row>
@@ -134,9 +146,10 @@ export const Settings: React.FC = () => {
               </Row>
               <div className="flex justify-end mt-4">
                 <button className="btn btn-primary" disabled={!notifDirty || saving} onClick={saveNotif}>
-                  {saving ? 'Saving…' : 'Save changes'}
+                  {saving && <span className="btn-spin" aria-hidden />}{saving ? 'Saving…' : 'Save changes'}
                 </button>
               </div>
+              </>)}
             </>
           )}
         </div>
