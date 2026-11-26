@@ -77,7 +77,7 @@ export function clockRules(): ClockRules {
     weakLocation: schoolSetting('STAFF_CLOCK_WEAK_LOCATION') === 'refuse' ? 'refuse' : 'review',
     weakMaxAccuracy: numberSetting('STAFF_CLOCK_WEAK_MAX_ACCURACY_M'),
     remindMinutes: Math.max(0, numberSetting('STAFF_CLOCK_REMIND_MINUTES') || 0),
-    nonSchoolDays: schoolSetting('STAFF_CLOCK_NON_SCHOOL_DAYS') === 'refuse' ? 'refuse' : 'allow_flag',
+    nonSchoolDays: schoolSetting('STAFF_CLOCK_NON_SCHOOL_DAYS') === 'allow_flag' ? 'allow_flag' : 'refuse',
     allowUnassignedStaff: schoolSetting('STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF') !== '0',
     retentionDays: numberSetting('STAFF_CLOCK_RETENTION_DAYS'),
     setupDone: schoolSetting('STAFF_CLOCK_SETUP').split(',').map((x) => x.trim()).filter(Boolean),
@@ -426,6 +426,13 @@ export async function personState(db: Database, device: DeviceRow) {
   }
 
   const label = (value: string | null) => safeClockLabel(value);
+  // The next day this person is expected (their week, skipping days the school is closed).
+  let nextDay: { date: string; start: string | null } | null = null;
+  for (let i = 1; i <= 14 && !nextDay; i++) {
+    const d = addDays(today, i);
+    const r = book.dayFor(device.user_id, d);
+    if (r.works && !(await isHoliday(db, d))) nextDay = { date: d, start: r.start };
+  }
   // A recent day left without a check-out that the person has not explained yet.
   const missed = await db.get<StaffDayRow & { out_claim: string | null }>(
     `SELECT * FROM staff_attendance WHERE staff_id = ? AND date < ? AND date >= ? AND clock_in IS NOT NULL AND clock_out IS NULL
@@ -434,6 +441,13 @@ export async function personState(db: Database, device: DeviceRow) {
   );
   return {
     missedOut: missed ? { date: missed.date, checkIn: label(missed.clock_in) } : null,
+    /** this person's working week as it stands today: keys '0'..'6' (0 = Sunday) */
+    myWeek: { own: book.hasOwn(device.user_id, today), days: book.weekFor(device.user_id, today) },
+    /** today is not a working day for this person (their week, or the school is closed) */
+    dayOff: !schoolDay,
+    /** check-in on a day off is closed by the school */
+    dayOffClosed: !schoolDay && rules.nonSchoolDays === 'refuse',
+    nextDay,
     serverNow: now.toISOString(),
     schoolDate: today,
     timezone: schoolTimezone(),
@@ -454,10 +468,14 @@ export async function personState(db: Database, device: DeviceRow) {
       : null,
     week: weekDates.map((d) => {
       const r = byDate.get(d);
+      const plan = book.dayFor(device.user_id, d);
       return {
         date: d,
         isToday: d === today,
         future: d > today,
+        /** the hours expected of them that day */
+        start: plan.start,
+        end: plan.end,
         checkIn: r ? label(r.clock_in) : null,
         checkOut: r ? label(r.clock_out) : null,
         status: r?.status ?? null,
@@ -588,9 +606,11 @@ export async function applyTap(
   const rule = (await loadPlanBook(db, t.userId)).dayFor(t.userId, today);
   const opens = opensFor(rules.opens, rule);
   const schoolDay = rule.works && !(await isHoliday(db, today));
-  if (!schoolDay && rules.nonSchoolDays === 'refuse') await refuse(403, 'NOT_SCHOOL_DAY', 'Attendance is closed today.', 'non_school_day');
-
   const row = await db.get<StaffDayRow>(`SELECT * FROM staff_attendance WHERE staff_id = ? AND date = ?`, t.userId, today);
+  // A day off: no check-in (someone already in may still check out).
+  if (!schoolDay && !row && rules.nonSchoolDays === 'refuse') {
+    await refuse(403, 'NOT_SCHOOL_DAY', 'Today is a day off for you, so check-in is closed. If you are working today, ask the office to add this day to your working hours.', 'non_school_day');
+  }
   if (row?.clock_out) await refuse(409, 'ALREADY_DONE', 'Already checked in and out today.', 'already_done');
   const action: 'check_in' | 'check_out' = row ? 'check_out' : 'check_in';
 

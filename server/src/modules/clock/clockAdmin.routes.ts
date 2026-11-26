@@ -14,6 +14,7 @@ import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, nee
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 import { buildReport, reportStaff } from './clockReport.js';
+import { sendNudges } from './reminders.js';
 import { loadPlanBook, parseWeekPlan, sameWeek, savePlan, schoolWeek, type DayRule, type PlanBook } from './workPlan.js';
 
 /**
@@ -289,6 +290,40 @@ function bucketsFor(rows: Array<{ clock_in: string | null; status?: string }>, o
   return out;
 }
 
+export type Moment = 'here' | 'left' | 'left_early' | 'due_now' | 'due_later' | 'missed' | 'day_off';
+
+/** Where one person stands at this minute of today. */
+export function momentOf(record: { clock_out: string | null } | null, expected: boolean, rule: DayRule, nowMin: number): Moment {
+  const covers = expected && rule.lateAfter != null && rule.earlyBefore != null && nowMin >= rule.lateAfter && nowMin < rule.earlyBefore;
+  if (record) return !record.clock_out ? 'here' : covers ? 'left_early' : 'left';
+  if (!expected) return 'day_off';
+  if (rule.lateAfter != null && nowMin < rule.lateAfter) return 'due_later';
+  if (rule.earlyBefore != null && nowMin >= rule.earlyBefore) return 'missed';
+  return 'due_now';
+}
+
+/** The school at this minute: who should be here, who is, who is not. */
+function nowSummary(rows: Array<{ moment: Moment | null; expected: boolean; status: string; plan: { works: boolean; start: string | null; end: string | null } }>, nowMin: number) {
+  const n = (m: Moment) => rows.filter((r) => r.moment === m).length;
+  const covers = (r: (typeof rows)[number]) => r.expected && !!r.plan.start && !!r.plan.end && nowMin >= timeToMinutes(r.plan.start) && nowMin < timeToMinutes(r.plan.end);
+  return {
+    at: `${String(Math.floor(nowMin / 60)).padStart(2, '0')}:${String(nowMin % 60).padStart(2, '0')}`,
+    /** expected today at all */
+    expectedToday: rows.filter((r) => r.expected).length,
+    /** their hours cover this minute */
+    shouldBeHere: rows.filter(covers).length,
+    here: n('here'),
+    /** should be here, never checked in */
+    notHere: n('due_now'),
+    startsLater: n('due_later'),
+    left: n('left'),
+    leftEarly: n('left_early'),
+    missed: n('missed'),
+    dayOff: n('day_off'),
+    late: rows.filter((r) => r.status === 'late').length,
+  };
+}
+
 function timeToMinutesOf(value: unknown): number | null {
   const label = safeClockLabel(value);
   return label ? timeToMinutes(label) : null;
@@ -351,6 +386,8 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const recordByUser = new Map(records.map((r) => [String(r.staff_id), r]));
     const ruleOf = new Map<string, DayRule>([...people.keys()].map((id) => [id, book.dayFor(id, date)]));
     const expected = (id: string) => !holiday && !!ruleOf.get(id)?.works;
+    let withReminders = new Set<string>();
+    try { withReminders = new Set((await db.all<any[]>(`SELECT DISTINCT user_id FROM staff_clock_push`)).map((x) => String(x.user_id))); } catch { /* older file */ }
     const rows = [...people.values()].map((p) => {
       const r = recordByUser.get(p.id);
       const d = activeByUser.get(p.id);
@@ -367,6 +404,10 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         status: r ? (r.review_state === 'invalid' ? 'invalid' : r.status) : expected(p.id) ? 'not_in' : 'day_off',
         expected: expected(p.id),
         plan: { own: rule.own, works: rule.works, start: rule.start, end: rule.end },
+        // Where this person stands at this minute (today only).
+        /** this person's phone gets reminders (a leader's nudge reaches them) */
+        reminders: withReminders.has(p.id),
+        moment: date !== today ? null : momentOf(r && r.review_state !== 'invalid' ? r : null, expected(p.id), rule, nowMin),
         outStatus: r?.out_status ?? null,
         distance: r?.in_distance_m ?? null,
         source: r?.source ?? null,
@@ -439,6 +480,7 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         rosterSource,
         rules: { lateAfter: rules.lateAfter, earlyLeaveBefore: rules.earlyLeaveBefore, opens: rules.opens, enabled: rules.enabled },
         ownPlans: book.ownCount(people.keys(), date),
+        now: date === today ? nowSummary(rows, nowMin) : null,
         holiday,
         kpis: {
           staff: counted.length,
@@ -773,6 +815,29 @@ router.post('/attendance/:id/checkout', authorizePermission('STAFF_DEVICES_MANAG
     await recordAudit(db, actor, 'STAFF_CLOCK_CHECKOUT_SET', 'staff_attendance', row.id,
       { staff: row.staff_name, date: row.date, time: b.time, saidByStaff: row.out_claim ?? undefined, note: b.note, outStatus }, { required: true });
     return res.json({ success: true, message: `Check-out saved: ${b.time}`, data: { outStatus } });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// "Please check in": a leader nudges the people who should be here and are not
+// (or who are still in after their day). Only phones with reminders on get it,
+// once per person, kind and day.
+// ---------------------------------------------------------------------------
+
+const NudgeBody = z.object({ kind: z.enum(['in', 'out']), userIds: z.array(z.string().min(1).max(64)).min(1, 'Choose at least one person.').max(300) });
+
+router.post('/nudge', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
+  try {
+    const b = NudgeBody.parse(req.body ?? {});
+    const db = getDb();
+    const tenant = currentTenant('nudge');
+    const r = await sendNudges(db, tenant.slug, b.kind, [...new Set(b.userIds)]);
+    await recordAudit(db, actorOf(req), 'STAFF_CLOCK_NUDGE_SENT', 'staff_attendance', null, { kind: b.kind, asked: b.userIds.length, ...r });
+    const s = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`;
+    const message = r.sent ? `Reminder sent to ${s(r.sent)}` : r.already ? 'Already reminded today' : 'Nobody could be reminded';
+    return res.json({ success: true, message, data: r });
   } catch (err) {
     return fail(res, err);
   }

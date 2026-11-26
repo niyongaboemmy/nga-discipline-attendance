@@ -90,6 +90,8 @@ async function settings(tid: number, values: Record<string, string>) {
 
 beforeAll(async () => {
   db = await setupTestDb();
+  // A fixed school list: the MIS-backed registry re-asks the network mid-run and made this suite flaky (random 404s).
+  __setTenants([primaryTenantCtx()]);
   ({ token: adminToken } = await createTestUser(db, { id: '900', name: 'Admin Office', email: 'admin@school.rw', roleLevel: 'ADMIN' }));
   __setGoogleVerifier(async (credential) => {
     if (!credential.startsWith('google:')) throw Object.assign(new (await import('../modules/clock/google.js')).GoogleTokenError('bad'), {});
@@ -706,14 +708,38 @@ describe("a person's own working week", () => {
     expect(wed.kpis.staff + wed.kpis.dayOff).toBe(wed.rows.length);
     expect(wed.kpis.notIn).toBe(wed.rows.filter((r: any) => r.status === 'not_in').length);
     expect(wed.ownPlans).toBe(1);
+    // Right now (11:00): the full-timer should be here and is not; the part-timer is off.
+    expect(row.moment).toBe('day_off');
+    expect(wed.rows.find((r: any) => r.userId === '133').moment).toBe('due_now');
+    expect(wed.now).toMatchObject({ at: '11:00', notHere: wed.rows.filter((r: any) => r.moment === 'due_now').length, dayOff: wed.kpis.dayOff });
+    expect(wed.now.shouldBeHere).toBe(wed.now.here + wed.now.notHere + wed.now.leftEarly);
+    // 07:00: nobody is due yet. 17:00: the day is over, the absent are "missed".
+    now = kigali('07:00', '2027-01-06');
+    expect((await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data.rows.find((r: any) => r.userId === '133').moment).toBe('due_later');
+    now = kigali('17:00', '2027-01-06');
+    const eve = (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+    expect(eve.rows.find((r: any) => r.userId === '133').moment).toBe('missed');
+    expect(eve.now).toMatchObject({ shouldBeHere: 0, notHere: 0 });
+    // A past day has no "now".
+    expect((await request(app).get('/api/staff/clock/overview?date=2027-01-05').set(authHeader(adminToken))).body.data.now).toBeNull();
 
     // Saturday: a working day for them only; late after their 09:00, and no "not a working day" flag.
     now = kigali('09:30', '2027-01-09');
     const sat = await tap('nga', phone, INSIDE);
     expect(sat.body.data).toMatchObject({ action: 'check_in', status: 'late' });
     expect(sat.body.data.flags).not.toContain('non_school_day');
+    // The full-timer has a day off: check-in is closed for them (the school's default), with the reason and their next day.
+    const closed = await tap('nga', phone2, INSIDE);
+    expect(closed.status).toBe(403);
+    expect(closed.body).toMatchObject({ code: 'NOT_SCHOOL_DAY', message: expect.stringContaining('day off') });
+    const meOff = (await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone2.token!)).body.data;
+    expect(meOff).toMatchObject({ next: 'closed', dayOff: true, dayOffClosed: true, nextDay: { date: '2027-01-11', start: '08:30' } });
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone.token!)).body.data).toMatchObject({ dayOff: false, dayOffClosed: false });
+    // A school may allow it instead: the check-in counts and is flagged.
+    await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ nonSchoolDays: 'allow_flag' });
     const satFull = await tap('nga', phone2, INSIDE);
     expect(satFull.body.data.flags).toContain('non_school_day');
+    await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ nonSchoolDays: 'refuse' });
 
     // History: Tue on time, Wed-Fri off, Sat late; nothing absent.
     const h = (await request(app).get('/api/staff/clock/people/132/history?days=7').set(authHeader(adminToken))).body.data;
@@ -833,11 +859,26 @@ describe('reminders and forgotten check-outs', () => {
     expect((await subscribe(phone, 1)).body.code).toBe('REMINDERS_OFF');
     await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ remindMinutes: 15 });
     expect((await request(app).delete('/api/clock/nga/push').set('X-Clock-Device', phone2.token!)).body.data).toEqual({ on: false });
+    // A leader nudges people who should be here: only those not in, with reminders on, once a day.
+    __setPushSender(async (sub, payload) => { sent.push({ ...payload, endpoint: sub.endpoint }); return 'ok'; });
+    now = kigali('09:00', '2027-02-04'); // Thursday: 140 (school hours) is due, has no subscription any more; 141 is off
+    await subscribe(phone, 1);
+    sent.length = 0;
+    const nudge = (body: unknown, token = adminToken) => request(app).post('/api/staff/clock/nudge').set(authHeader(token)).send(body as any);
+    const n1 = await nudge({ kind: 'in', userIds: ['140', '141', '999'] });
+    expect(n1.body).toMatchObject({ message: 'Reminder sent to 1 person', data: { sent: 1, noReminders: 2, already: 0, notNeeded: 0 } });
+    expect(sent[0]).toMatchObject({ title: 'Please check in', endpoint: 'https://fcm.googleapis.com/fcm/send/dev1' });
+    expect((await nudge({ kind: 'in', userIds: ['140'] })).body.data).toMatchObject({ sent: 0, already: 1 });
+    expect((await nudge({ kind: 'out', userIds: ['140'] })).body.data).toMatchObject({ sent: 0, notNeeded: 1 });
+    const ovN = (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+    expect(ovN.rows.find((r: any) => r.userId === '140')).toMatchObject({ reminders: true, moment: 'due_now' });
     __setPushSender(null);
 
     // 141 never checked out on Tuesday. On Wednesday their page asks when they left.
     now = kigali('09:00', '2027-02-03');
     const me = (await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone2.token!)).body.data;
+    expect(me.week.find((d: any) => d.date === '2027-02-02')).toMatchObject({ start: '10:00', end: '14:00' });
+    expect(me.myWeek).toMatchObject({ own: true, days: { '2': { works: true, start: '10:00', end: '14:00' }, '3': { works: false } } });
     expect(me.missedOut).toEqual({ date: '2027-02-02', checkIn: '09:45' });
     const claim = (body: unknown) => request(app).post('/api/clock/nga/missed-checkout').set('X-Clock-Device', phone2.token!).send(body as any);
     expect((await claim({ date: '2027-02-02', time: '09:00' })).status).toBe(400); // before the check-in

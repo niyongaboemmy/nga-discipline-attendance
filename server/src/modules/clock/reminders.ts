@@ -188,6 +188,39 @@ export async function sendTest(db: Database, device: DeviceRow, slug: string): P
   return r === 'ok';
 }
 
+const NUDGE_TEXT: Record<Lang, Record<'in' | 'out', [string, string]>> = {
+  en: { in: ['Please check in', 'Your school does not see you checked in yet. Check in if you are at school.'], out: ['Please check out', 'You are still checked in. Check out when you leave school.'] },
+  rw: { in: ['Iyandikishe', 'Ishuri ntirirabona ko wiyandikishije. Iyandikishe niba uri ku ishuri.'], out: ['Andika ko utashye', 'Uracyanditse ko uri ku ishuri. Andika ko utashye ugiye.'] },
+  fr: { in: ['Merci de pointer', 'Votre école ne voit pas encore votre pointage. Pointez si vous êtes à l’école.'], out: ['Merci de pointer la sortie', 'Vous êtes toujours pointé présent. Pointez la sortie en partant.'] },
+};
+
+/**
+ * A leader's nudge to named people, today: only those it still applies to (not in
+ * yet / still in), who have reminders on, and who were not nudged for this today.
+ */
+export async function sendNudges(db: Database, slug: string, kind: 'in' | 'out', userIds: string[]): Promise<{ sent: number; noReminders: number; already: number; notNeeded: number }> {
+  const now = new Date(clockNow());
+  const today = schoolDateString(now);
+  const out = { sent: 0, noReminders: 0, already: 0, notNeeded: 0 };
+  for (const userId of userIds) {
+    const row = await db.get<any>(`SELECT clock_in, clock_out FROM staff_attendance WHERE staff_id = ? AND date = ?`, userId, today);
+    if (kind === 'in' ? !!row?.clock_in : !row?.clock_in || !!row?.clock_out) { out.notNeeded += 1; continue; }
+    const s = await db.get<any>(`SELECT p.* FROM staff_clock_push p JOIN attendance_devices d ON d.id = p.device_id AND d.status = 'active' WHERE p.user_id = ?`, userId);
+    if (!s) { out.noReminders += 1; continue; }
+    const claim = await db.run(`INSERT OR IGNORE INTO staff_clock_reminders (user_id, date, kind, sent_at) VALUES (?, ?, ?, ?)`, userId, today, `nudge_${kind}`, now.toISOString());
+    if (!claim.changes) { out.already += 1; continue; }
+    try {
+      const [title, body] = (NUDGE_TEXT[(['en', 'rw', 'fr'].includes(s.lang) ? s.lang : 'en') as Lang])[kind];
+      const r = await sender({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }, { title, body, url: `/c/${slug}`, tag: kind === 'in' ? 'clock-in' : 'clock-out' });
+      if (r === 'gone') { await db.run(`DELETE FROM staff_clock_push WHERE id = ?`, s.id); out.noReminders += 1; } else out.sent += 1;
+    } catch (err) {
+      console.error('[clock] nudge not sent:', (err as Error).message);
+      out.noReminders += 1;
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The minute tick (one school, inside its tenant context)
 // ---------------------------------------------------------------------------
