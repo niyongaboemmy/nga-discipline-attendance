@@ -888,7 +888,14 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
               <div className="zc-drawer-body">
                 <RulesPanel rules={rules} canEdit={canEdit} onChange={patchRules} />
               </div>
-              {canEdit && <div className="zc-drawer-foot">Changes save with the areas</div>}
+              {canEdit && (
+                // The same save as the areas panel, here where the rules are edited.
+                <div className={`zc-drawer-foot zc-drawer-save${dirty ? ' is-dirty' : ''}`} data-testid="rules-save-bar">
+                  <span className="zc-drawer-state" role="status"><i className={`zc-dot${dirty ? ' warn' : ' on'}`} /><span className="sc-clip">{dirty ? 'Not saved yet' : 'Saved'}</span></span>
+                  <button className="sc-btn sc-btn-sm" disabled={!dirty || saving} onClick={() => void load()}>Discard</button>
+                  <button className="sc-btn sc-btn-primary sc-btn-sm" disabled={!dirty || saving} onClick={() => void save()} data-testid="rules-save">{saving && <Spinner />}{saving ? 'Saving…' : 'Save rules'}</button>
+                </div>
+              )}
             </div>
           )}
           {drawer === 'share' && (

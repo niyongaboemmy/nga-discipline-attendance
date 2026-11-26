@@ -524,8 +524,29 @@ async function run(browser, vp) {
     const fit = await page.locator('#zone-rules .zc-drawer-body').evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && [...el.querySelectorAll('.zr-label b, .zr-seg-pick button')].every((n) => n.scrollWidth <= n.clientWidth + 1));
     if (!fit) fail(`${tag}: a rule label or choice is cut off in the rules drawer`);
   }
+  // The rules have their own save bar: disabled until something changes, then "Unsaved changes" + Save rules.
+  await page.keyboard.press('Escape');
+  const bar = page.getByTestId('rules-save-bar');
+  if (!(await page.getByTestId('rules-save').isDisabled())) fail(`${tag}: Save rules is enabled with nothing changed`);
+  await page.getByLabel('Late after', { exact: true }).fill('08:45');
+  await bar.getByText('Not saved yet').waitFor({ timeout: 4000 }).catch(() => fail(`${tag}: the rules drawer does not say there are unsaved changes`));
+  if (await page.getByTestId('rules-save').isDisabled()) fail(`${tag}: Save rules stays disabled after a change`);
+  {
+    const cut = await page.locator('#zone-rules .zr-day figcaption span, #zone-rules .zc-drawer-state').evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 1).length);
+    if (cut) fail(`${tag}: ${cut} line(s) of the rules panel are cut off`);
+  }
+  {
+    const b = await page.getByTestId('rules-save').boundingBox();
+    const d = await page.locator('#zone-rules').boundingBox();
+    if (!b || !d || b.y + b.height > d.y + d.height + 1 || b.x + b.width > d.x + d.width + 1) fail(`${tag}: Save rules is not inside the rules drawer`);
+  }
+  await page.getByRole('button', { name: 'About Check-in opens' }).click();
   await page.waitForTimeout(250);
   await shot('03r-rules');
+  await page.keyboard.press('Escape');
+  await page.getByTestId('rules-save').click();
+  await expectText(page, 'Saved', `${tag} rules saved toast`);
+  for (const b of await page.locator('.toast-close').all()) await b.click().catch(() => {});
   await page.keyboard.press('Escape');
   if (await page.locator('.zr-tip').count()) fail(`${tag}: Escape did not close the rule tip`);
   await expectText(page, 'Edge tolerance', `${tag} edge tolerance rule`);
