@@ -1,12 +1,18 @@
-import React, { useMemo, useState } from 'react';
-import { ChevronRight, Search } from 'lucide-react';
-import { initialsOf, type Overview, type OverviewRow } from '../../api/staffClock';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, FileText, Search, X } from 'lucide-react';
+import { ApiError } from '../../api/client';
+import { initialsOf, staffClockApi, type Overview, type OverviewRow } from '../../api/staffClock';
+import { useToast } from '../../context/ToastContext';
+import { Spinner } from './StaffClockHeader';
+import { downloadDayPdf, downloadDayXlsx, type DayExportRow } from './dayReportExport';
 
 /**
- * The selected day's report: every staff member with their status (on time,
- * late, absent / not in yet, marked invalid), check-in and check-out times and
- * hours at school. Filters by status, search by name; a row opens the person's
- * history, with the visible rows as the list to step through.
+ * The selected day's staff, opened on request in a window over the dashboard:
+ * every staff member with their status (on time, late, absent / not in yet,
+ * marked invalid), check-in and check-out times and hours at school. Filters by
+ * status, search by name, step to the previous / next school day, download as a
+ * PDF or Excel file headed with the school's documents logo. A row opens the
+ * person's history, with the visible rows as the list to step through.
  */
 
 type Filter = 'all' | 'present' | 'late' | 'out' | 'stillIn' | 'noOut';
@@ -34,11 +40,37 @@ const STATUS: Record<OverviewRow['status'], { label: string; tone: string }> = {
 export const DayReport: React.FC<{
   overview: Overview | null;
   loading: boolean;
-  flash?: boolean;
+  /** the day shown (yyyy-mm-dd), known before its data arrives */
+  date: string;
   onOpen: (row: OverviewRow, list: OverviewRow[]) => void;
-}> = ({ overview, loading, flash, onOpen }) => {
+  onClose: () => void;
+  onStep: (n: -1 | 1) => void;
+  canPrev: boolean;
+  canNext: boolean;
+}> = ({ overview, loading, date, onOpen, onClose, onStep, canPrev, canNext }) => {
+  const toast = useToast();
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
+  const [busy, setBusy] = useState<null | 'pdf' | 'xlsx'>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+  const keys = useRef({ onClose, onStep, canPrev, canNext });
+  useEffect(() => { keys.current = { onClose, onStep, canPrev, canNext }; });
+  useEffect(() => {
+    // A person's history open on top takes Escape and the arrows first.
+    const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('.sh-overlay')) return;
+      const k = keys.current;
+      if (e.key === 'Escape') { k.onClose(); return; }
+      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (e.key === 'ArrowLeft' && k.canPrev) k.onStep(-1);
+      if (e.key === 'ArrowRight' && k.canNext) k.onStep(1);
+    };
+    window.addEventListener('keydown', onKey);
+    dialog.current?.focus();
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+  }, []);
   const rows = useMemo(() => overview?.rows ?? [], [overview]);
   const isToday = !!overview?.isToday;
   const checkoutOpen = overview?.missing?.checkoutOpen !== false;
@@ -68,21 +100,66 @@ export const DayReport: React.FC<{
     .filter((r) => !term || r.name.toLowerCase().includes(term) || (r.role ?? '').toLowerCase().includes(term))
     .sort((a, b) => (filter === 'all' ? order[a.status] - order[b.status] : 0) || (toMin(a.checkIn) ?? 9999) - (toMin(b.checkIn) ?? 9999) || a.name.localeCompare(b.name));
 
-  const dayLabel = overview ? new Date(`${overview.date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }) : '';
+  const dayLabel = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const filterLabel = tabs.find(([k]) => k === filter)?.[1] ?? 'Everyone';
+
+  const exportRows = (): DayExportRow[] => shown.map((r) => {
+    const absent = r.status === 'not_in' || r.status === 'invalid';
+    return {
+      name: r.name, role: r.role ?? '', status: r.status === 'not_in' ? absentWord : STATUS[r.status].label, tone: STATUS[r.status].tone as DayExportRow['tone'],
+      checkIn: r.checkIn ?? '—',
+      checkOut: r.checkOut ?? (absent ? '—' : r.outStatus === 'auto_closed' ? 'not checked out' : isToday ? 'still in' : 'no check-out'),
+      hours: hoursOf(r) ?? '—', how: r.source === 'card' ? 'Staff card' : r.device ?? (absent ? '—' : 'Phone'),
+    };
+  });
+  const download = async (kind: 'pdf' | 'xlsx') => {
+    if (!overview || !shown.length) return;
+    setBusy(kind);
+    try {
+      const brand = await staffClockApi.documentBrand().catch(() => ({ name: 'Staff attendance', logo: null }));
+      const meta = {
+        school: brand.name, logo: brand.logo, dateLabel: dayLabel, isToday,
+        filterLabel: `${filterLabel}${term ? ` · “${q.trim()}”` : ''} · ${shown.length} of ${rows.length} staff`,
+        counts: { staff: rows.length, onTime: rows.filter(test.present).length, late: rows.filter(test.late).length, absent: rows.filter(test.out).length },
+        fileStem: `staff-attendance-${overview.date}${filter === 'all' ? '' : `-${filterLabel.toLowerCase().replace(/[^a-z]+/g, '-')}`}`,
+      };
+      if (kind === 'pdf') await downloadDayPdf(exportRows(), meta);
+      else await downloadDayXlsx(exportRows(), meta);
+      toast.success(kind === 'pdf' ? 'PDF downloaded' : 'Excel file downloaded', `${shown.length} staff · ${dayLabel}`);
+    } catch (e) {
+      toast.error('Download failed', e instanceof ApiError ? e.message : 'Try again.');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
-    <section id="scr-day-report" className={`sc-card dr${flash ? ' dr-flash' : ''}`} aria-label="Day report">
-      <div className="dr-head">
-        <div>
-          <h2>{isToday ? 'Today, staff by staff' : 'Staff by staff'}</h2>
-          <p className="sc-card-sub">{dayLabel}{isToday ? ' · live' : ''} · click someone for their history</p>
+    <div className="dr-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="dr-dialog" id="scr-day-report" role="dialog" aria-modal="true" aria-label={`Staff on ${dayLabel}`} tabIndex={-1} ref={dialog} data-testid="day-report">
+      <header className="dr-top">
+        <div className="dr-daynav" role="group" aria-label="Day">
+          <button onClick={() => onStep(-1)} disabled={!canPrev} aria-label="Previous school day" title="Previous school day (←)"><ChevronLeft size={18} /></button>
+          <div className="dr-daytitle">
+            <span className="sc-card-sub">{isToday ? 'Today · live' : 'Staff on'}</span>
+            <h2>{dayLabel}</h2>
+          </div>
+          <button onClick={() => onStep(1)} disabled={!canNext} aria-label="Next school day" title="Next school day (→)"><ChevronRight size={18} /></button>
         </div>
+        <div className="dr-actions">
+          <button className="sc-btn" onClick={() => void download('pdf')} disabled={!!busy || loading || !shown.length} data-testid="day-pdf">{busy === 'pdf' ? <Spinner /> : <FileText size={16} />} PDF</button>
+          <button className="sc-btn" onClick={() => void download('xlsx')} disabled={!!busy || loading || !shown.length} data-testid="day-xlsx">{busy === 'xlsx' ? <Spinner /> : <FileSpreadsheet size={16} />} Excel</button>
+          <button className="sh-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+      </header>
+      <div className="dr-tools">
         <label className="sc-search dr-search">
           <Search size={16} />
           <span className="sr-only">Search staff</span>
           <input placeholder="Search staff" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
+        <span className="sc-card-sub">Click someone for their history</span>
       </div>
+      <div className="dr-body">
 
       <div className="dr-tabs" role="tablist" aria-label="Filter by status">
         {tabs.map(([key, label, tone]) => {
@@ -141,6 +218,8 @@ export const DayReport: React.FC<{
           <p className="sc-card-sub" style={{ margin: '10px 0 0' }}>{shown.length} of {rows.length} staff</p>
         </>
       )}
-    </section>
+      </div>
+    </div>
+    </div>
   );
 };
