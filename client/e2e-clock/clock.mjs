@@ -73,11 +73,11 @@ function mockServer(opts = {}) {
     missedOut: opts.missed && !st.claimed ? { date: '2026-11-23', checkIn: '07:35' } : null,
     today: st.checkIn ? { checkIn: st.checkIn, checkOut: st.checkOut, status: 'present', outStatus: st.checkOut ? 'on_time' : null, minutesAtSchool: st.checkOut ? 508 : 0 } : null,
     week: [
-      { date: '2026-11-23', isToday: false, future: false, checkIn: opts.fresh ? null : '07:35', checkOut: opts.fresh ? null : '16:05', status: opts.fresh ? null : 'present' },
-      { date: '2026-11-24', isToday: true, future: false, checkIn: st.checkIn, checkOut: st.checkOut, status: st.checkIn ? 'present' : null },
-      { date: '2026-11-25', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
-      { date: '2026-11-26', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
-      { date: '2026-11-27', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
+      { start: '08:30', end: '16:00', date: '2026-11-23', isToday: false, future: false, checkIn: opts.fresh ? null : '07:35', checkOut: opts.fresh ? null : '16:05', status: opts.fresh ? null : 'present' },
+      { start: '08:30', end: '16:00', date: '2026-11-24', isToday: true, future: false, checkIn: st.checkIn, checkOut: st.checkOut, status: st.checkIn ? 'present' : null },
+      { start: '08:30', end: '16:00', date: '2026-11-25', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
+      { start: '08:30', end: '16:00', date: '2026-11-26', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
+      { start: '08:30', end: '16:00', date: '2026-11-27', isToday: false, future: true, checkIn: null, checkOut: null, status: null },
     ],
   });
   const ok = (data) => ({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
@@ -243,6 +243,20 @@ async function fullFlow(browser, vp, theme) {
   if (!(await page.getByRole('button', { name: 'Help' }).isVisible())) fail(`${tag}: the help icon is missing`);
   if ((await page.locator('.ck-e-day').count()) !== 7) fail(`${tag}: the week should show seven day rings`);
   await shot(page, `${tag}-06-checked-in`);
+  // A day ring shows its details in a small popup (a tap pins it; Escape or a tap elsewhere closes it).
+  await page.locator('.ck-e-day.is-today').click();
+  const pop = page.getByTestId('day-pop');
+  await pop.waitFor({ timeout: 5000 }).catch(() => fail(`${tag}: no popup for a day ring`));
+  for (const text of ['At school 08:30', 'In 07:42']) if (!(await pop.getByText(text, { exact: false }).first().isVisible())) fail(`${tag}: the day popup lacks "${text}"`);
+  {
+    const box = await pop.boundingBox();
+    const vw = page.viewportSize().width;
+    if (box.x < 0 || box.x + box.width > vw + 1) fail(`${tag}: the day popup leaves the screen`);
+  }
+  await page.waitForTimeout(250);
+  await shot(page, `${tag}-06b-day-popup`);
+  await page.keyboard.press('Escape');
+  if (await page.getByTestId('day-pop').count()) fail(`${tag}: Escape did not close the day popup`);
 
   await page.getByRole('button', { name: /^Check out\./ }).click();
   await expectText(page, 'Check out now?', `${tag} confirm out`);
@@ -337,13 +351,14 @@ async function longName(browser, vp) {
   await shot(page, `${vp.name}-12-long-name-confirm`);
   await page.getByRole('button', { name: /Yes, this is my/ }).click();
   await expectText(page, 'Good morning, Jean-Baptiste-Emmanuel', `${vp.name} long greeting`);
-  // A brand-new staff member gets the first-day guide.
-  await expectText(page, 'How it works', `${vp.name} first-day guide`);
+  // "How it works" is not on the page any more: it lives in Help only.
   await page.waitForTimeout(300);
+  if (await page.getByText('How it works').count()) fail(`${vp.name}: "How it works" is still on the daily screen`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${vp.name}: daily screen scrolls sideways`);
   await shot(page, `${vp.name}-13-long-name-ready`);
-  await page.getByRole('button', { name: 'Got it' }).click();
-  if (await page.getByText('How it works').count()) fail(`${vp.name}: guide did not close`);
+  await page.getByRole('button', { name: 'Help' }).click();
+  await expectText(page, 'How it works', `${vp.name} how it works in Help`);
+  if (!(await page.getByTestId('help-how').getByText('tap Check in', { exact: false }).first().isVisible())) fail(`${vp.name}: the steps are missing in Help`);
   await ctx.close();
 }
 

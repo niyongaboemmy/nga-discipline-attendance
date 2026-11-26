@@ -19,8 +19,6 @@ const DayStrip: React.FC<{ rules: ClockRules }> = ({ rules }) => {
   const early = Math.max(late, mins(rules.earlyLeaveBefore));
   const start = Math.max(0, opens - 60);
   const end = Math.min(24 * 60, early + 60);
-  const span = Math.max(1, end - start);
-  const at = (m: number) => `${Math.max(0, Math.min(100, ((m - start) / span) * 100))}%`;
   return (
     <figure className="zr-day" aria-label={`The day: check-in opens at ${rules.opens}; a check-in after ${rules.lateAfter} is late; a check-out before ${rules.earlyLeaveBefore} is leaving early.`}>
       <div className="zr-day-bar" aria-hidden="true">
@@ -29,16 +27,11 @@ const DayStrip: React.FC<{ rules: ClockRules }> = ({ rules }) => {
         <i className="zr-seg zr-seg-mid" style={{ flex: Math.max(1, early - late) }} />
         <i className="zr-seg zr-seg-out" style={{ flex: Math.max(1, end - early) }} />
       </div>
-      <div className="zr-day-ticks" aria-hidden="true">
-        <span style={{ left: at(opens) }}><b>{rules.opens}</b>opens</span>
-        <span style={{ left: at(late) }}><b>{rules.lateAfter}</b>late after</span>
-        <span style={{ left: at(early) }}><b>{rules.earlyLeaveBefore}</b>early before</span>
-      </div>
       <figcaption>
-        <span><i className="zr-key zr-seg-closed" />Before {rules.opens}: check-in is closed</span>
-        <span><i className="zr-key zr-seg-ok" />{rules.opens} – {rules.lateAfter}: check-in is on time</span>
-        <span><i className="zr-key zr-seg-mid" />After {rules.lateAfter}: check-in is late · leaving before {rules.earlyLeaveBefore} is early</span>
-        <span><i className="zr-key zr-seg-out" />From {rules.earlyLeaveBefore}: leaving is on time</span>
+        <span><i className="zr-key zr-seg-closed" />Closed before <b>{rules.opens}</b></span>
+        <span><i className="zr-key zr-seg-ok" />On time until <b>{rules.lateAfter}</b></span>
+        <span><i className="zr-key zr-seg-mid" />Late after <b>{rules.lateAfter}</b></span>
+        <span><i className="zr-key zr-seg-out" />Early before <b>{rules.earlyLeaveBefore}</b></span>
       </figcaption>
     </figure>
   );
@@ -106,33 +99,33 @@ export const RulesPanel: React.FC<{ rules: ClockRules; canEdit: boolean; onChang
       <section className="zr-group" aria-label="The day">
         <h3>The day</h3>
         <Field id="opens" label="Check-in opens" {...f}
-          help="Before this time the check-in button is closed."
-          tip="Yes: nobody can check in before this time. It only stops very early taps (for example at midnight). Set it a little before your earliest staff arrive. It does not make anyone late.">
+          help="Earliest check-in."
+          tip="Yes: nobody can check in before this time. It only blocks very early taps and never makes anyone late. Set it just before your earliest staff arrive.">
           {time('opens', 'Check-in opens')}
         </Field>
         <Field id="lateAfter" label="Late after" {...f}
-          help="A check-in after this time is marked late."
-          tip="From “Check-in opens” until this time a check-in is on time. One minute later it is late. Someone with their own working hours is judged by their own start instead.">
+          help="Later is late."
+          tip="Between “opens” and this time a check-in is on time. People with their own working hours use their own start.">
           {time('lateAfter', 'Late after')}
         </Field>
         <Field id="earlyLeaveBefore" label="Early leave before" {...f}
-          help="A check-out before this time is marked as leaving early."
-          tip="From this time on, leaving is on time. Someone with their own working hours is judged by their own end instead.">
+          help="Earlier is leaving early."
+          tip="From this time on, leaving is on time. People with their own working hours use their own end.">
           {time('earlyLeaveBefore', 'Early leave before')}
         </Field>
         <Field id="minShiftMinutes" label="Check-out opens after" {...f}
-          help="Minutes after check-in before the same person can check out."
-          tip="Stops an accidental second tap from ending the day straight after check-in. 60 means: check-out is possible one hour after check-in.">
+          help="Wait after check-in."
+          tip="Stops a second tap from ending the day by accident. 60 = check-out is possible one hour after check-in.">
           {num('minShiftMinutes', 'Check-out opens after', 'min')}
         </Field>
         <Field id="remindMinutes" label="Reminders" {...f}
-          help="Phones are reminded this long before the start and the end."
-          tip="Staff who turned reminders on get a notification this many minutes before their own start (to check in) and their own end (to check out). 0 turns reminders off for the school.">
+          help="Before start and end. 0 = off."
+          tip="Staff with reminders on get a notification this many minutes before their own start and end. 0 turns reminders off for the school.">
           {num('remindMinutes', 'Reminders', 'min before')}
         </Field>
         <Field id="nonSchoolDays" label="Check-in on a day off" wide {...f}
-          help="A day off: a weekend, a person’s own day off, or a day the school is closed."
-          tip="Closed: on a day off the button is closed and the person sees when their next working day starts. Allowed: the check-in counts and is flagged “not a working day” for you to see.">
+          help="Weekend, own day off, school closed."
+          tip="Closed: no check-in on a day off; the person sees their next working day. Allowed: it counts and is flagged for you.">
           {pick('Check-in on a day off', rules.nonSchoolDays === 'allow_flag' ? 'allow_flag' : 'refuse', [['refuse', 'Closed'], ['allow_flag', 'Allowed, flagged', 'dayoff-allow']], (v) => onChange({ nonSchoolDays: v }))}
         </Field>
       </section>
@@ -140,23 +133,23 @@ export const RulesPanel: React.FC<{ rules: ClockRules; canEdit: boolean; onChang
       <section className="zr-group" aria-label="Location">
         <h3>Location</h3>
         <Field id="maxAccuracy" label="Location precision" {...f}
-          help="A phone reading vaguer than this is not trusted on its own."
-          tip="Every phone says how sure it is of its position, in metres. 100 m suits most schools. A smaller number is stricter and refuses more readings taken indoors.">
+          help="Vaguer readings are not trusted."
+          tip="How sure the phone must be of its position. 100 m suits most schools; a smaller number refuses more indoor readings.">
           {num('maxAccuracy', 'Location precision', 'm')}
         </Field>
         <Field id="allowance" label="Edge tolerance" {...f}
-          help="How far outside the school’s edge still counts."
-          tip="A phone standing just outside the drawn area still counts when it is within its own error, up to this many metres. 50 m forgives a phone at the gate; 0 means the drawn edge exactly.">
+          help="Just outside still counts."
+          tip="A phone just outside the area counts, within its own error, up to this distance. 50 m forgives the gate; 0 is the exact edge.">
           {num('allowance', 'Edge tolerance', 'm')}
         </Field>
         <Field id="weakLocation" label="Weak GPS on own network" wide {...f}
-          help="On mobile data indoors, GPS can be vaguer than the precision above."
-          tip="Accept, review: the check-in counts while the reading still reaches the school, and waits in “Needs review” for you to confirm. Refuse: only precise readings count, so some staff on mobile data must step outside.">
+          help="Vague GPS on mobile data."
+          tip="Accept: it counts if the reading still reaches the school, and waits in “Needs review”. Refuse: only precise readings count.">
           {pick('Weak GPS on a person’s own network', rules.weakLocation === 'refuse' ? 'refuse' : 'review', [['review', 'Accept, review'], ['refuse', 'Refuse', 'weak-refuse']], (v) => onChange({ weakLocation: v }))}
         </Field>
         <Field id="schoolNetworks" label="School Wi-Fi" wide {...f}
-          help="Optional. A check-in from the school’s own internet address counts as at school."
-          tip="Type the school’s fixed public address or range, for example 41.186.10.0/24 (ask your internet provider). Leave it empty if the address changes: location alone is then used.">
+          help="Optional. Counts as at school."
+          tip="The school’s fixed internet address or range, for example 41.186.10.0/24. Leave empty if it changes.">
           <input className="zr-input zr-input-text" aria-label="School network" placeholder="41.186.10.0/24" disabled={!canEdit} value={rules.schoolNetworks} onChange={(e) => onChange({ schoolNetworks: e.target.value })} />
         </Field>
       </section>
@@ -164,18 +157,18 @@ export const RulesPanel: React.FC<{ rules: ClockRules; canEdit: boolean; onChang
       <section className="zr-group" aria-label="Accounts and phones">
         <h3>Accounts and phones</h3>
         <Field id="googleDomains" label="Google accounts" wide {...f}
-          help="Which Google accounts may sign in. Empty: any account linked to a staff profile."
-          tip="To allow only some accounts, list their endings, for example: gmail.com, school.rw. A person still needs that Google address on their Amashuri profile.">
+          help="Empty = any linked account."
+          tip="To limit sign-in, list endings such as gmail.com, school.rw. The address must also be on the person’s Amashuri profile.">
           <input className="zr-input zr-input-text" aria-label="Allowed Google domains" placeholder="Any" disabled={!canEdit} value={rules.googleDomains} onChange={(e) => onChange({ googleDomains: e.target.value })} />
         </Field>
         <Field id="selfReplaceDays" label="New phone approval" {...f}
-          help="A second new phone within this many days waits for your approval."
-          tip="A person may move to a new phone by themselves once in this period. Another change inside it shows under Phones & cards for you to approve. This stops a phone being passed around.">
+          help="A second phone waits for approval."
+          tip="A person may change phone once in this period by themselves. Another change waits under Phones & cards.">
           {num('selfReplaceDays', 'New phone approval', 'days')}
         </Field>
       </section>
 
-      <p className="zr-note">These rules are for everyone. Someone with different days or times? Open them on the <Link to="/staff/clock/people">Staff</Link> tab, then Working hours.</p>
+      <p className="zr-note">Different hours for one person? <Link to="/staff/clock/people">Staff</Link> › Working hours.</p>
     </div>
   );
 };
