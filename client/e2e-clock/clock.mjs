@@ -521,6 +521,11 @@ async function installedFlow(browser, theme) {
   // 1. In the browser: the install manifest is this school's, and carries a sign-in code once signed in.
   const a = await newPage(browser, vp, theme, { server });
   await a.page.goto(`${BASE}/c/nga`);
+  // Something is on screen before the app's script runs: the loading mark is part of the page itself.
+  {
+    const raw = await (await fetch(`${BASE}/c/nga`)).text();
+    if (!/id="clock-root"><div data-ck-boot/.test(raw) || !raw.includes('Opening…')) fail(`${tag}: the page has no instant loading mark`);
+  }
   const href0 = await a.page.locator('#ck-manifest').getAttribute('href');
   if (href0 !== '/api/clock/nga/manifest') fail(`${tag}: the install manifest is not this school's (${href0})`);
   await a.page.getByTestId('gis').click();

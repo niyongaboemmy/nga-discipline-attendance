@@ -43,7 +43,7 @@
         }
         function recover() {
           var root = document.getElementById('clock-root');
-          if (root && root.childElementCount) return;
+          if (root && root.childElementCount && !root.querySelector('[data-ck-boot]')) return;
           var tried = 0;
           try { tried = Number(sessionStorage.getItem(KEY) || 0); } catch (e) { /* private mode */ }
           if (!tried || Date.now() - tried > 120000) return fresh();
@@ -68,9 +68,23 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <title>Staff attendance</title>
+    <style>
+      /* The first thing on screen, before any script: a quiet loading mark in the page's own colours. */
+      html, body { margin: 0; background: #ffffff; }
+      html[data-theme='dark'], html[data-theme='dark'] body { background: #030712; }
+      .ck-boot { min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; color: #111827; }
+      html[data-theme='dark'] .ck-boot { color: #f9fafb; }
+      .ck-boot b { font-size: 18px; font-weight: 600; margin-top: 8px; }
+      .ck-boot span:last-child { font-size: 15px; opacity: .65; }
+      .ck-boot-ring { width: 54px; height: 54px; border-radius: 999px; border: 4px solid rgba(37, 99, 235, .22); border-top-color: #2563eb; animation: ck-boot-spin .9s linear infinite; }
+      @keyframes ck-boot-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .ck-boot-ring { animation-duration: 2.4s; } }
+    </style>
   </head>
   <body>
-    <div id="clock-root"></div>
+    <!-- Shown at once, before the page's script has loaded (a Home Screen app opens to this, never to an
+         empty screen); the app replaces it when it starts. -->
+    <div id="clock-root"><div data-ck-boot class="ck-boot" role="status" aria-live="polite"><span class="ck-boot-ring" aria-hidden="true"></span><b>Staff attendance</b><span>Opening…</span></div></div>
     <script type="module" src="/src/clock/main.tsx"></script>
   </body>
 </html>
