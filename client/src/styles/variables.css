@@ -152,8 +152,6 @@
   --z-toast: 1100;         /* above dialogs, so confirmations are readable */
 
   --navbar-height: 64px;
-  --sidebar-width: 256px;      /* w-64 */
-  --sidebar-width-collapsed: 80px; /* w-20 */
 
   /* --- Motion --- */
   --transition-fast: 160ms cubic-bezier(0.22, 1, 0.36, 1);

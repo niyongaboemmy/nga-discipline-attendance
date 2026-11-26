@@ -47,19 +47,7 @@ export const NavSearch: React.FC = () => {
     if (isOpen) inputRef.current?.focus();
   }, [isOpen]);
 
-  // Global "/" shortcut opens search, like most search-heavy apps.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const typing = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-      if (e.key === '/' && !typing) {
-        e.preventDefault();
-        open();
-      }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, []);
+  // "/" belongs to the menu search in the sidebar (as in Amashuri); this one opens on click.
 
   const handleSelect = (path: string) => {
     navigate(path);
@@ -84,7 +72,7 @@ export const NavSearch: React.FC = () => {
         className="icon-btn"
         onClick={() => (isOpen ? close() : open())}
         aria-label="Search"
-        title="Search (press /)"
+        title="Search"
       >
         <Search size={18} />
       </button>

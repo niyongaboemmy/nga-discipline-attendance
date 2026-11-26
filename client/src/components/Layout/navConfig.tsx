@@ -1,85 +1,22 @@
-import {
-  LayoutDashboard,
-  CalendarClock,
-  History,
-  Clock,
-  FileText,
-  BarChart3,
-  Table2,
-  Users,
-  ShieldCheck,
-  Gavel,
-  ScrollText,
-  ClipboardCheck,
-  History as AuditIcon,
-  Award,
-  KeyRound,
-  BookOpen,
-  Settings as SettingsIcon,
-  CreditCard,
-  MapPin,
-  ScanLine,
-  type LucideIcon,
-} from 'lucide-react';
+import { Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
+import { NAV_AREAS, placeLinks, type Role } from './navModel';
 
-export type Role = 'admin' | 'teacher' | 'student' | 'unassigned';
+export type { Role };
 
 export interface NavItem {
   label: string;
   path: string;
   icon: LucideIcon;
   roles: Role[];
-  /** Labeled section this item belongs to; consecutive items sharing a
-      section render under one small heading. Unsectioned items stand alone. */
+  /** The menu area the page sits in (Attendance, Discipline…). */
   section?: string;
   /** Also require one of these permissions (in addition to the role). */
   anyPermission?: string[];
 }
 
-/* Items are ordered so that, after filtering by role, every section's items
-   are consecutive — the sidebar renders one heading per run. */
+/** Every menu page as a flat list (Welcome's quick links). The menu itself is
+ *  drawn from navModel's areas; this list is derived from it so the two never disagree. */
 export const navItems: NavItem[] = [
-  // Dashboard first: it's the overview you land on.
-  { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'teacher', 'student'] },
-
-  // Admin — Discipline Rules lives here, not under Discipline: it's catalog
-  // governance (admin job). Teachers pick rules inline from the same catalog
-  // while logging an incident, so they don't need a standalone nav entry.
-  { label: 'Admin Console', path: '/admin', icon: ShieldCheck, roles: ['admin'], section: 'Administration' },
-  { label: 'Roles & Permissions', path: '/admin/roles', icon: KeyRound, roles: ['admin'], section: 'Administration' },
-  { label: 'Discipline Rules', path: '/discipline/rules', icon: BookOpen, roles: ['admin'], section: 'Administration' },
-  { label: 'Audit Log', path: '/admin/audit', icon: AuditIcon, roles: ['admin'], section: 'Administration' },
-
-  // Attendance (staff) — taking a register now happens inside the Attendance
-  // Calendar (open a lesson) or its "Record a session" action; the standalone
-  // /attendance/mark page stays reachable from there for the full-screen view.
-  { label: 'Attendance Calendar', path: '/attendance', icon: CalendarClock, roles: ['admin', 'teacher', 'student'], section: 'Attendance' },
-  { label: 'Attendance History', path: '/attendance/records', icon: History, roles: ['admin', 'teacher'], section: 'Attendance' },
-  { label: 'Attendance Report', path: '/attendance/report', icon: Table2, roles: ['admin', 'teacher', 'student'], section: 'Attendance' },
-  // Card attendance: the card tap stands in for the teacher marking the register.
-  { label: 'Attendance Cards', path: '/attendance/cards', icon: CreditCard, roles: ['admin'], section: 'Attendance' },
-  { label: 'Staff Attendance', path: '/staff/attendance', icon: Clock, roles: ['admin', 'teacher'], section: 'Attendance' },
-  { label: 'Staff Check-in', path: '/staff/clock', icon: MapPin, roles: ['admin', 'teacher'], section: 'Attendance', anyPermission: ['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL', 'STAFF_DEVICES_MANAGE'] },
-  { label: 'Scan Staff Card', path: '/staff/clock/scan', icon: ScanLine, roles: ['admin', 'teacher'], section: 'Attendance', anyPermission: ['STAFF_CLOCK_SCAN'] },
-
-  // Attendance (student) — deliberately just the calendar (tick/cross, no
-  // record/history browsing) and the report above; no separate "My
-  // Attendance" history page.
-  { label: 'Leaves & Excuses', path: '/excuses', icon: FileText, roles: ['student'], section: 'Attendance' },
-
-  // Discipline (staff)
-  { label: 'Log Conduct Record', path: '/discipline/log', icon: Gavel, roles: ['admin', 'teacher'], section: 'Discipline' },
-  { label: 'Discipline Records', path: '/discipline/records', icon: ScrollText, roles: ['admin', 'teacher'], section: 'Discipline' },
-  { label: 'Excuse Review', path: '/excuses/review', icon: ClipboardCheck, roles: ['admin', 'teacher'], section: 'Discipline' },
-
-  // Discipline (student)
-  { label: 'My Conduct', path: '/discipline/me', icon: Award, roles: ['student'], section: 'Discipline' },
-
-  // Insights — Analytics removed: its content now lives in Attendance Report / My Conduct.
-  { label: 'Reports', path: '/reports', icon: BarChart3, roles: ['admin', 'teacher'], section: 'Insights' },
-  { label: 'Directory', path: '/directory', icon: Users, roles: ['admin', 'teacher'], section: 'Insights' },
-
-  // Common
+  ...placeLinks(NAV_AREAS).map(({ link, area, group }) => ({ ...link, section: group ? area.label : undefined })),
   { label: 'Settings', path: '/settings', icon: SettingsIcon, roles: ['admin', 'teacher', 'student'] },
 ];
-

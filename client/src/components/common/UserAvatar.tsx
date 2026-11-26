@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { UserRound } from 'lucide-react';
 import { avatarSrc, initialsOf, type MisAvatar } from '../../utils/avatar';
 import { useMisAvatar } from '../../utils/avatarDirectory';
 
@@ -14,10 +15,13 @@ interface UserAvatarProps {
   className?: string;
   /** Hidden from screen readers -- for avatars beside a visible name, so it isn't read twice. */
   decorative?: boolean;
+  /** Without a photo: the person's initials (lists, so people stay tellable apart) or a
+   *  gray person icon (one person's own view: the account menu). */
+  fallback?: 'initials' | 'person';
 }
 
 /** A `.avatar`-styled circle showing the user's NGA profile picture or initials. */
-export const UserAvatar: React.FC<UserAvatarProps> = ({ name, avatar, userId, px = 28, className = 'avatar avatar-sm', decorative = false }) => {
+export const UserAvatar: React.FC<UserAvatarProps> = ({ name, avatar, userId, px = 28, className = 'avatar avatar-sm', decorative = false, fallback = 'initials' }) => {
   const looked = useMisAvatar(avatar ? null : userId);
   const src = avatarSrc(avatar ?? looked ?? null, px);
   const [failed, setFailed] = useState(false);
@@ -27,6 +31,13 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ name, avatar, userId, px
     return (
       <div className={`${className} avatar--photo`}>
         <img src={src} alt={decorative ? '' : name} aria-hidden={decorative || undefined} width={px} height={px} loading="lazy" decoding="async" onError={() => setFailed(true)} />
+      </div>
+    );
+  }
+  if (fallback === 'person') {
+    return (
+      <div className={`${className} avatar--person`} {...(decorative ? { 'aria-hidden': true } : { role: 'img', 'aria-label': name })}>
+        <UserRound aria-hidden />
       </div>
     );
   }
