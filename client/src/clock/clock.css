@@ -689,3 +689,48 @@ span.ck-cal-cell { cursor: default; }
   .ck-quick-btn { flex: 0 1 auto; padding: 0 20px; }
   .ck-quick-btn.warn { flex-basis: auto; }
 }
+
+/* Compact popups: short phone screens must see the whole month without scrolling far */
+.ck-sheet-bar { min-height: 0; padding: 14px 12px 0; height: 0; z-index: 1; }
+.ck-sheet-close { width: 34px; height: 34px; margin-top: 44px; background: var(--ck-bg); }
+.ck-sheet-body { padding: 18px 14px 14px; }
+.ck-sheet .ck-cal-head, .ck-sheet .ck-x-head { padding-right: 42px; min-height: 34px; }
+.ck-sheet .ck-x-icon { width: 30px; height: 30px; }
+.ck-cal { gap: 8px; }
+.ck-cal-seg button { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.ck-cal-nav button { width: 34px; height: 34px; }
+.ck-cal-nav b { font-size: 15px; }
+.ck-cal-chips { flex-wrap: nowrap; overflow-x: auto; gap: 5px; min-height: 24px; scrollbar-width: none; }
+.ck-cal-chips::-webkit-scrollbar { display: none; }
+.ck-cal-chips span { height: 24px; padding: 0 10px; font-size: 12px; white-space: nowrap; flex: none; }
+.ck-cal-grid { gap: 4px; }
+.ck-cal-wd { font-size: 11px; padding-bottom: 0; }
+.ck-cal-cell { aspect-ratio: auto; height: 42px; border-radius: 12px; }
+.ck-cal-n { font-size: 14px; }
+.ck-cal-t { font-size: 10px; min-height: 10px; }
+.ck-cal-day { padding: 9px 12px; gap: 5px; border-radius: 14px; }
+.ck-cal-day-head b { font-size: 14px; }
+.ck-cal-pill { height: 22px; font-size: 12px; padding: 0 8px; }
+.ck-cal-facts { font-size: 13px; gap: 4px 12px; }
+.ck-cal-legend { flex-wrap: nowrap; overflow-x: auto; gap: 10px; font-size: 11px; white-space: nowrap; scrollbar-width: none; }
+.ck-cal-legend::-webkit-scrollbar { display: none; }
+.ck-hours li { min-height: 34px; font-size: 14px; }
+.ck-sheet .ck-x { gap: 6px; }
+.ck-time { height: 42px; }
+.ck-x-row .ck-x-btn { height: 42px; }
+@media (max-height: 700px) {
+  .ck-cal-cell { height: 36px; }
+  .ck-cal-t { font-size: 9.5px; }
+  .ck-cal-legend { display: none; }
+  .ck-sheet { max-height: 96dvh; }
+  .ck-quick-btn { height: 40px; font-size: 13px; }
+  .ck-quick { margin-top: 8px; }
+}
+/* Popup: the close button sits on the title's own row */
+.ck-sheet { position: relative; }
+.ck-sheet-bar { position: static; height: 0; min-height: 0; padding: 0; }
+.ck-sheet-grip { top: 6px; }
+.ck-sheet-close { position: absolute; top: 16px; right: 14px; margin: 0; z-index: 2; }
+.ck-sheet-body { padding: 16px 14px 14px; }
+.ck-sheet .ck-cal-head, .ck-sheet .ck-x-head { padding-right: 44px; min-height: 34px; }
+.ck-sheet .ck-cal-head .ck-x-icon { display: none; }

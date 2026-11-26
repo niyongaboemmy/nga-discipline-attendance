@@ -457,6 +457,20 @@ async function extrasFlow(browser, theme) {
   await page.waitForTimeout(200);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: calendar scrolls sideways`);
   await shot(page, `${tag}-41-my-calendar`);
+  // A short phone (360 x 640): the month and the picked day's detail fit without scrolling the popup.
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.waitForTimeout(250);
+  {
+    const fits = await page.evaluate(() => {
+      const body = document.querySelector('.ck-sheet-body');
+      const day = document.querySelector('.ck-cal-day');
+      return !!body && !!day && body.scrollHeight <= body.clientHeight + 1 && day.getBoundingClientRect().bottom <= window.innerHeight;
+    });
+    if (!fits) fail(`${tag}: the calendar popup does not fit a 360 x 640 phone`);
+    if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: calendar scrolls sideways on a short phone`);
+  }
+  await shot(page, `${tag}-41c-my-calendar-short-phone`);
+  await page.setViewportSize({ width: vp.width, height: vp.height });
   await calendar.getByRole('button', { name: 'Next month' }).click();
   await expectText(page, 'December 2026', `${tag} next month`);
   await page.getByTestId('cal-weekly').click();
