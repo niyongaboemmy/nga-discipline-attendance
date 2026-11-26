@@ -174,6 +174,7 @@ async function context(browser, { width, height, theme, mobile = false }) {
     if (p === '/api/roles-permissions/me') return ok({ permissionKeys: PERMS });
     if (p === '/api/staff/clock/overview') { const d = u.searchParams.get('date'); return ok(d && d !== OVERVIEW.date ? { ...OVERVIEW, date: d, isToday: false } : OVERVIEW); }
     if (p === '/api/staff/clock/report') return ok(REPORT);
+    if (p === '/api/staff/clock/document-brand') { globalThis.__docBrandCalls = (globalThis.__docBrandCalls || 0) + 1; return ok({ name: 'New Generation Academy', logo: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGNkYPhfzwAEjAwM/xkYGAAZBgP+oSDdTQAAAABJRU5ErkJggg==' }); }
     if (p === '/api/staff/clock/report/staff') return ok(reportStaff(u.searchParams.get('group')));
     { const m = p.match(/^\/api\/staff\/clock\/people\/([^/]+)\/history$/); if (m) return ok(history(m[1])); }
     if (p === '/api/staff/clock/config') return ok(CONFIG);
@@ -228,18 +229,14 @@ async function run(browser, vp) {
   if (await page.getByText('Set up staff check-in').count()) fail(`${tag}: setup card still on the dashboard with check-in on`);
   if (await page.locator('#sc-staff-list').count()) fail(`${tag}: staff list still on the dashboard`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
-  // First look is today: 8 of 10 in. Names appear only in the day report (staff by staff).
+  // First look is today: 8 of 10 in. The page shows numbers; names open in a window on request.
   if ((await page.getByTestId('scr-headline').innerText()).trim() !== '80%') fail(`${tag}: headline is not today's rate`);
   await expectText(page, '8 of 10 staff checked in', `${tag} today headline`);
   await expectText(page, 'The term on the calendar', `${tag} term calendar`);
   await expectText(page, 'Need a conversation', `${tag} staff groups`);
   for (const name of ['Olivier Mugisha', 'Emmanuel Nkurunziza', 'Grace Mukamana']) {
-    const outside = await page.evaluate((n) => [...document.querySelectorAll('main *')].some((el) => el.children.length === 0 && el.textContent?.trim() === n && !el.closest('#scr-day-report')), name);
-    if (outside) fail(`${tag}: "${name}" is listed outside the day report`);
+    if (await page.getByText(name).count()) fail(`${tag}: "${name}" is listed on the dashboard`);
   }
-  // Today's staff, all statuses, below the calendar.
-  await expectText(page, 'Today, staff by staff', `${tag} day report`);
-  if ((await page.locator('#scr-day-report tbody tr').count()) !== 10) fail(`${tag}: day report should list all 10 staff`);
   await shot('01-dashboard');
   // Attention strip: only what needs fixing, each a tap to the fix.
   // One short line each; the phone waiting for approval is the warning, and comes first.
@@ -253,23 +250,50 @@ async function run(browser, vp) {
   await page.locator('[data-attn="tested"]').waitFor();
   await page.locator('[data-attn="phones"]').waitFor();
   await page.locator('[data-attn="review"]').waitFor();
-  // "See all staff" brings the day report into view; filters by status; a row opens the history,
-  // and the arrows step through the rows on screen.
+  // "See all staff" opens the day's staff in a window: every status, filters, search, downloads.
   await page.getByTestId('see-day-staff').click();
-  const rep = page.locator('#scr-day-report');
+  const rep = page.getByTestId('day-report');
+  await rep.waitFor();
+  if ((await rep.locator('tbody tr').count()) !== 10) fail(`${tag}: the day window should list all 10 staff`);
   await rep.getByRole('tab', { name: /Late/ }).click();
   if ((await rep.locator('tbody tr').count()) !== 2) fail(`${tag}: the Late filter should show 2 staff`);
-  await expectText(page, '08:44', `${tag} late check-in time`);
+  await rep.getByText('08:44').locator('visible=true').first().waitFor().catch(async () => { await rep.getByText(/In 08:44/).locator('visible=true').first().waitFor(); });
   await rep.getByRole('tab', { name: /Not in yet/ }).click();
-  await expectText(page, 'Olivier Mugisha', `${tag} not in yet listed`);
+  await rep.getByText('Olivier Mugisha').locator('visible=true').first().waitFor();
   await rep.getByRole('tab', { name: /Everyone/ }).click();
   await rep.getByPlaceholder('Search staff').fill('emman');
-  if ((await rep.locator('tbody tr').count()) !== 1) fail(`${tag}: search should narrow the day report to 1`);
+  if ((await rep.locator('tbody tr').count()) !== 1) fail(`${tag}: search should narrow the day window to 1`);
   await rep.getByPlaceholder('Search staff').fill('');
-  await shot('01a-day-report');
+  await shot('01a-day-window');
+  // Downloads: a real PDF and a real Excel file, named after the day.
+  {
+    const fs = await import('node:fs');
+    const [pdf] = await Promise.all([page.waitForEvent('download'), rep.getByTestId('day-pdf').click()]);
+    if (!/^staff-attendance-2026-11-24\.pdf$/.test(pdf.suggestedFilename())) fail(`${tag}: PDF name ${pdf.suggestedFilename()}`);
+    if (fs.readFileSync(await pdf.path()).subarray(0, 4).toString() !== '%PDF') fail(`${tag}: the PDF download is not a PDF`);
+    // Chrome holds a second automatic download from the same tab for a permission prompt:
+    // the Excel file is checked from a fresh tab.
+    const p2 = await ctx.newPage();
+    await p2.goto(`${BASE}/staff/clock`);
+    await dismissInstall(p2);
+    await p2.getByTestId('see-day-staff').click();
+    const rep2 = p2.getByTestId('day-report');
+    await rep2.waitFor();
+    const [xl] = await Promise.all([p2.waitForEvent('download'), rep2.getByTestId('day-xlsx').click()]);
+    if (!/\.xlsx$/.test(xl.suggestedFilename())) fail(`${tag}: Excel name ${xl.suggestedFilename()}`);
+    if (fs.readFileSync(await xl.path()).subarray(0, 2).toString() !== 'PK') fail(`${tag}: the Excel download is not an .xlsx`);
+    await p2.close();
+    if (globalThis.__docBrandCalls < 1) fail(`${tag}: the documents logo was not asked for`);
+  }
+  // A row opens the history ON TOP of the window; arrows step through the rows.
   await rep.locator('tbody tr, .sc-list .sc-item').locator('visible=true').first().click();
   const hist = page.getByTestId('staff-history');
   await hist.waitFor();
+  {
+    const box = await hist.boundingBox();
+    const onTop = await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-testid="staff-history"]'), [box.x + box.width / 2, box.y + 40]);
+    if (!onTop) fail(`${tag}: the history opened behind the day window`);
+  }
   await expectText(page, '1 / 10', `${tag} history position`);
   const firstName = (await hist.locator('.sh-who b').innerText()).trim();
   await page.keyboard.press('ArrowRight');
@@ -279,6 +303,12 @@ async function run(browser, vp) {
   await expectText(page, '1 / 10', `${tag} history previous button`);
   await page.keyboard.press('Escape');
   if (await page.getByTestId('staff-history').count()) fail(`${tag}: history did not close`);
+  if (!(await page.getByTestId('day-report').count())) fail(`${tag}: Escape closed the day window with the history`);
+  // The window steps to the previous school day.
+  await rep.getByRole('button', { name: 'Previous school day' }).click();
+  await rep.getByText('Monday, 23 November 2026').waitFor();
+  await page.keyboard.press('Escape');
+  if (await page.getByTestId('day-report').count()) fail(`${tag}: the day window did not close`);
   // A day on the calendar opens in the day panel; the date field and the arrows follow.
   await page.getByRole('button', { name: /^Wed,? 7 Oct · 60% in/ }).first().click();
   await expectText(page, '7 October 2026', `${tag} picked day`);

@@ -157,6 +157,8 @@ const range = (from?: string, to?: string, group?: string) => {
 };
 
 export const staffClockApi = {
+  /** the school's name and documents logo (a data URL) for exported reports */
+  documentBrand: () => data(apiGet<{ name: string; logo: string | null }>('/api/staff/clock/document-brand')),
   report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
   reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),
   history: (id: string, days = 365) => data(apiGet<PersonHistory>(`/api/staff/clock/people/${encodeURIComponent(id)}/history?days=${days}`)),

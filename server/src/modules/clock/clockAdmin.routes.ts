@@ -9,6 +9,7 @@ import { addDays, dayOfWeekFor, safeClockLabel, schoolDateString, schoolMinutesO
 import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
 import { currentTenant } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
+import { schoolBranding } from '../../routes/sso.js';
 import { ClockError, clockNow, clockRules, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
@@ -622,6 +623,33 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
   } catch (err) {
     return fail(res, err);
   }
+});
+
+// ---------------------------------------------------------------------------
+// The school's name and documents logo for exported reports (PDF / Excel).
+// Served from here (same origin) as a data URL so the browser can draw it.
+// ---------------------------------------------------------------------------
+
+const docBrandCache = new Map<number, { at: number; value: { name: string; logo: string | null } }>();
+const IMAGE_TYPES = /^image\/(png|jpe?g|webp|gif|svg\+xml)$/;
+
+router.get('/document-brand', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (_req, res) => {
+  const tenant = currentTenant('document-brand');
+  const hit = docBrandCache.get(tenant.tid);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return res.json({ success: true, data: hit.value });
+  const brand = await schoolBranding(tenant.tid).catch(() => null);
+  const value: { name: string; logo: string | null } = { name: brand?.name || tenant.name, logo: null };
+  const url = brand?.documentsLogoUrl || brand?.logoUrl;
+  if (url) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const type = (r.headers.get('content-type') || '').split(';')[0].trim();
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (r.ok && IMAGE_TYPES.test(type) && buf.length <= 2_000_000) value.logo = `data:${type};base64,${buf.toString('base64')}`;
+    } catch { /* no logo: the document carries the name only */ }
+  }
+  docBrandCache.set(tenant.tid, { at: url && !value.logo ? Date.now() - 9 * 60_000 : Date.now(), value });
+  return res.json({ success: true, data: value });
 });
 
 const ReviewBody = z.object({ decision: z.enum(['accepted', 'invalid']), note: z.string().max(500).optional() });

@@ -470,16 +470,19 @@ export interface SchoolBranding {
   tid: number;
   name: string | null;
   logoUrl: string | null;
+  /** the school's documents logo (report headers), when it has one */
+  documentsLogoUrl?: string | null;
 }
 
-/** MIS `/tenant/branding` (Appendix A.5): `data.school_name`, `data.logoUrl`. */
+/** MIS `/tenant/branding` (Appendix A.5): `data.school_name`, `data.logoUrl`, `data.logos.documents`. */
 export function brandingOf(body: any, tid: number): SchoolBranding | null {
   const d = body?.data ?? body;
   if (!d || typeof d !== 'object') return null;
   const name = [d.school_name, d.name].find((v) => typeof v === 'string' && v.trim());
   const logo = [d.logoUrl, d.logo_url].find((v) => typeof v === 'string' && /^https?:\/\//.test(v));
+  const docs = [d.logos?.documents, d.documents_logo_url].find((v) => typeof v === 'string' && /^https?:\/\//.test(v));
   if (!name && !logo) return null;
-  return { tid, name: name ? String(name).trim() : null, logoUrl: logo ?? null };
+  return { tid, name: name ? String(name).trim() : null, logoUrl: logo ?? null, documentsLogoUrl: docs ?? null };
 }
 
 const brandingCache = new Map<number, { at: number; value: SchoolBranding | null }>();
