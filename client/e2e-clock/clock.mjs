@@ -86,7 +86,7 @@ function mockServer(opts = {}) {
     const body = req.postData() ? JSON.parse(req.postData()) : {};
     if (p === '/bootstrap') {
       return route.fulfill(ok({ school: { name: 'New Generation Academy', slug: 'nga', logoUrl: 'https://mis.example/logo.svg' }, open: true, googleClientId: 'test.apps.googleusercontent.com', serverNow: st.now, schoolDate: '2026-11-24', timezone: 'Africa/Kigali', profileUrl: 'https://mis.example/profile#staff-attendance',
-        rules: { opens: '05:00', lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60, maxAccuracy: 100, requireZone: true },
+        rules: { opens: '05:00', lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60, maxAccuracy: 100, requireZone: true, weakMaxAccuracy: opts.weak ? 500 : 0 },
         zones: [{ id: 1, name: 'Main campus', kind: 'circle', lat: SCHOOL.lat, lng: SCHOOL.lng, radius: 150 }] }));
     }
     if (p === '/register') {
@@ -99,7 +99,7 @@ function mockServer(opts = {}) {
     if (p === '/me') {
       return route.fulfill(ok({ ...day(), school: { name: 'New Generation Academy', slug: 'nga' }, open: true, person, email: 'grace.mukamana@gmail.com',
         device: { status: st.deviceStatus, label: opts.formFactor === 'desktop' ? 'MacBook · Chrome' : 'Samsung A15 · Chrome', formFactor: opts.formFactor || 'phone', registeredAt: '2026-11-24T05:40:00.000Z' },
-        rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60 } }));
+        rules: opts.own ? { lateAfter: '10:00', earlyLeaveBefore: '14:00', minShiftMinutes: 60, own: true } : { lateAfter: '08:30', earlyLeaveBefore: '16:00', minShiftMinutes: 60 } }));
     }
     if (p === '/challenge') return route.fulfill(ok({ nonce: 'n' + Math.random().toString(36).slice(2), expiresIn: 60, serverNow: st.now }));
     if (p === '/punch') {
@@ -335,7 +335,8 @@ async function phoneTapFlow(browser, theme) {
   phone.on('pageerror', (e) => fail(`phone page error: ${e.message}`));
   await phone.goto(`${BASE}/c/nga/tap/ptapcode12345678`);
   await expectText(phone, 'Tuyishimire', `${tag} phone shows whose tap`);
-  await expectText(phone, 'Location is not precise', `${tag} phone vague`);
+  // The phone gives GPS up to 20 s to settle before it reports a vague reading.
+  await phone.getByText('Location is not precise').first().waitFor({ timeout: 30000 });
   await expectText(page, 'Phone location not precise', `${tag} laptop sees the phone's problem`);
   await shot(phone, `${tag}-22-phone-vague`);
   await shot(page, `${tag}-23-laptop-phone-vague`);
@@ -350,6 +351,29 @@ async function phoneTapFlow(browser, theme) {
   await phone.goto(`${BASE}/c/nga/tap/ptapcode12345678`);
   await expectText(phone, 'Code expired', `${tag} used code`);
   await phoneCtx.close();
+  await ctx.close();
+}
+
+/** A phone on its own network (mobile data): GPS only reaches ± 240 m. The page waits for it, then lets
+ *  the person check in with a "Weak GPS" notice (the school reviews it). Their own hours show too. */
+async function weakGpsFlow(browser, theme) {
+  const tag = `own-network-${theme}`;
+  const vp = VIEWPORTS[0];
+  const server = mockServer({ weak: true, own: true });
+  const { ctx, page } = await newPage(browser, vp, theme, { server, geo: { ...INSIDE, accuracy: 240 } });
+  await page.goto(`${BASE}/c/nga`);
+  await page.getByTestId('gis').click();
+  await page.getByRole('button', { name: /Yes, this is my/ }).click();
+  const allow = page.getByRole('button', { name: 'Allow location' });
+  if (await allow.isVisible().catch(() => false)) await allow.click();
+  await expectText(page, 'GPS is settling', `${tag} waits for GPS instead of giving up`);
+  await shot(page, `${tag}-30-gps-settling`);
+  await page.getByText('Weak GPS (± 240 m)').waitFor({ timeout: 30000 });
+  await expectText(page, 'Your school will confirm this one', `${tag} weak notice`);
+  await shot(page, `${tag}-31-weak-ready`);
+  await page.getByRole('button', { name: /Check in/ }).first().click();
+  await expectText(page, 'On time', `${tag} checked in on a weak reading`);
+  await shot(page, `${tag}-32-weak-checked-in`);
   await ctx.close();
 }
 
@@ -372,6 +396,8 @@ async function main() {
       await longName(browser, vp);
       console.log(`ok ${vp.name}`);
     }
+    for (const theme of ['light', 'dark']) await weakGpsFlow(browser, theme);
+    console.log('ok own network, weak GPS');
     for (const theme of ['light', 'dark']) await phoneTapFlow(browser, theme);
     console.log('ok laptop + phone QR');
     await browser.close();

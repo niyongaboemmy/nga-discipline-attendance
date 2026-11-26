@@ -125,6 +125,8 @@ router.get('/bootstrap', async (req: Request, res: Response) => {
           minShiftMinutes: rules.minShiftMinutes,
           maxAccuracy: rules.maxAccuracy,
           requireZone: rules.requireZone,
+          // A weaker reading still counts (flagged for review) up to this many metres; 0 = never.
+          weakMaxAccuracy: rules.weakLocation === 'review' ? rules.weakMaxAccuracy : 0,
         },
         zones,
       },
@@ -320,7 +322,7 @@ router.get('/me', async (req: Request, res: Response) => {
         person: personView(device.user_name, user?.role === 'admin' ? 'Administrator' : user?.role === 'teacher' ? 'Teacher' : 'Staff'),
         email: device.google_email,
         device: { status: device.status, label: device.label, formFactor: device.form_factor, registeredAt: device.registered_at },
-        rules: { lateAfter: rules.lateAfter, earlyLeaveBefore: rules.earlyLeaveBefore, minShiftMinutes: rules.minShiftMinutes },
+        // `rules` (today's times for this person) comes with the state.
         ...(await personState(db, device)),
       },
     });

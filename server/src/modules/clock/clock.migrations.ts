@@ -93,6 +93,19 @@ export async function migrateStaffClock(db: Database): Promise<void> {
       last_used_at TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS ux_clock_card_user_active ON staff_clock_cards(user_id) WHERE status = 'active';
+
+    /* A person's own working week (workPlan.ts): dated versions, days NULL = the school's rules. */
+    CREATE TABLE IF NOT EXISTS staff_work_plans (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      effective_from TEXT NOT NULL,
+      days TEXT,
+      note TEXT,
+      updated_by TEXT,
+      updated_by_name TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, effective_from)
+    );
   `);
 
   const cols = new Set((await db.all(`PRAGMA table_info(staff_attendance)`)).map((c: any) => c.name));

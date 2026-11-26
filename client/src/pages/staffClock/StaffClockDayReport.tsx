@@ -35,6 +35,7 @@ const STATUS: Record<OverviewRow['status'], { label: string; tone: string }> = {
   late: { label: 'Late', tone: 'late' },
   not_in: { label: 'Absent', tone: 'abs' },
   invalid: { label: 'Marked invalid', tone: 'abs' },
+  day_off: { label: 'Day off', tone: 'off' },
 };
 
 export const DayReport: React.FC<{
@@ -94,7 +95,7 @@ export const DayReport: React.FC<{
     isToday ? ['stillIn', checkoutOpen ? 'No check-out yet' : 'At school now', 'in'] : ['noOut', 'No check-out', 'in'],
   ];
   const term = q.trim().toLowerCase();
-  const order: Record<OverviewRow['status'], number> = { late: 0, not_in: 1, invalid: 2, present: 3 };
+  const order: Record<OverviewRow['status'], number> = { late: 0, not_in: 1, invalid: 2, present: 3, day_off: 4 };
   const shown = rows
     .filter(test[filter])
     .filter((r) => !term || r.name.toLowerCase().includes(term) || (r.role ?? '').toLowerCase().includes(term))
@@ -104,7 +105,7 @@ export const DayReport: React.FC<{
   const filterLabel = tabs.find(([k]) => k === filter)?.[1] ?? 'Everyone';
 
   const exportRows = (): DayExportRow[] => shown.map((r) => {
-    const absent = r.status === 'not_in' || r.status === 'invalid';
+    const absent = r.status === 'not_in' || r.status === 'invalid' || r.status === 'day_off';
     return {
       name: r.name, role: r.role ?? '', status: r.status === 'not_in' ? absentWord : STATUS[r.status].label, tone: STATUS[r.status].tone as DayExportRow['tone'],
       checkIn: r.checkIn ?? '—',
@@ -186,11 +187,11 @@ export const DayReport: React.FC<{
               <tbody>
                 {shown.map((r) => {
                   const s = STATUS[r.status];
-                  const absent = r.status === 'not_in' || r.status === 'invalid';
+                  const absent = r.status === 'not_in' || r.status === 'invalid' || r.status === 'day_off';
                   return (
                     <tr key={r.userId} className="sc-row-btn" tabIndex={0} data-person={r.userId}
                       onClick={() => onOpen(r, shown)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(r, shown); } }}>
-                      <td><span className="sc-who"><span className="sc-avatar">{initialsOf(r.name)}</span><span><b className="sc-clip" title={r.name}>{r.name}</b><small className="sc-clip">{r.role}</small></span></span></td>
+                      <td><span className="sc-who"><span className="sc-avatar">{initialsOf(r.name)}</span><span><b className="sc-clip" title={r.name}>{r.name}</b><small className="sc-clip">{r.role}{r.plan?.own ? (r.plan.works ? ` · own hours ${r.plan.start} – ${r.plan.end}` : ' · own hours') : ''}</small></span></span></td>
                       <td><span className={`dr-pill dr-${s.tone}`}><i />{r.status === 'not_in' ? absentWord : s.label}</span>{r.needsReview && <span className="dr-pill dr-late" style={{ marginLeft: 6 }}>Review</span>}</td>
                       <td className="sc-num" style={{ fontWeight: 600 }}>{r.checkIn ?? '—'}</td>
                       <td className="sc-num">{r.checkOut ?? (absent ? '—' : r.outStatus === 'auto_closed' ? <span className="dr-warn">not checked out</span> : isToday ? <span className="sc-muted">still in</span> : <span className="dr-warn">no check-out</span>)}{r.outStatus === 'early' ? <span className="dr-warn"> · early</span> : null}</td>

@@ -23,15 +23,15 @@ export interface DayExportRow {
   name: string;
   role: string;
   status: string;
-  tone: 'on' | 'late' | 'abs';
+  tone: 'on' | 'late' | 'abs' | 'off';
   checkIn: string;
   checkOut: string;
   hours: string;
   how: string;
 }
 
-const TONE_RGB: Record<DayExportRow['tone'], [number, number, number]> = { on: [37, 99, 235], late: [217, 119, 6], abs: [220, 38, 38] };
-const TONE_ARGB: Record<DayExportRow['tone'], string> = { on: 'FF2563EB', late: 'FFD97706', abs: 'FFDC2626' };
+const TONE_RGB: Record<DayExportRow['tone'], [number, number, number]> = { on: [37, 99, 235], late: [217, 119, 6], abs: [220, 38, 38], off: [100, 116, 139] };
+const TONE_ARGB: Record<DayExportRow['tone'], string> = { on: 'FF2563EB', late: 'FFD97706', abs: 'FFDC2626', off: 'FF64748B' };
 
 /** Any image data URL -> a PNG data URL with its size (jsPDF and exceljs take PNG). */
 async function asPng(src: string | null): Promise<{ data: string; w: number; h: number } | null> {

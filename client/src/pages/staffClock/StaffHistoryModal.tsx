@@ -4,6 +4,8 @@ import { ApiError } from '../../api/client';
 import { staffClockApi, initialsOf, type HistoryDay, type HistoryKind, type PersonHistory } from '../../api/staffClock';
 import { Skeleton } from '../../components/common/Skeleton';
 import { Ring } from './StaffClockAttention';
+import { StaffPlanPanel } from './StaffPlanPanel';
+import { usePermissions } from '../../hooks/usePermissions';
 
 /**
  * One staff member's attendance over the last year: two rings, a few numbers,
@@ -41,22 +43,30 @@ export const StaffHistoryModal: React.FC<{
   onNav?: (p: HistoryNavPerson) => void;
   /** opened by stepping from another person: no entrance animation */
   instant?: boolean;
-}> = ({ personId, name, role, onClose, list, onNav, instant }) => {
+  /** open on the working hours instead of the history */
+  initialTab?: 'history' | 'hours';
+  /** the person's hours were changed: lists behind this window are out of date */
+  onChanged?: () => void;
+}> = ({ personId, name, role, onClose, list, onNav, instant, initialTab, onChanged }) => {
+  const { can } = usePermissions();
+  const canEditPlan = can('STAFF_ATTENDANCE_ZONES_MANAGE');
+  const [tab, setTab] = useState<'history' | 'hours'>(initialTab ?? 'history');
   const [data, setData] = useState<PersonHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [month, setMonth] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [tip, setTip] = useState<{ d: HistoryDay; x: number; y: number } | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const dialog = useRef<HTMLDivElement>(null);
   const gridScroll = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let live = true;
     staffClockApi.history(personId)
-      .then((h) => { if (live) { setData(h); setMonth(monthKey(h.to)); setPicked(h.to); } })
+      .then((h) => { if (live) { setData(h); setMonth((m) => m ?? monthKey(h.to)); setPicked((p) => p ?? h.to); } })
       .catch((e) => { if (live) setError(e instanceof ApiError ? e.message : 'Could not load the history.'); });
     return () => { live = false; };
-  }, [personId]);
+  }, [personId, reloadKey]);
 
   const at = list ? list.findIndex((p) => p.id === personId) : -1;
   const prevP = at > 0 ? list![at - 1] : null;
@@ -161,6 +171,12 @@ export const StaffHistoryModal: React.FC<{
           <button className="sh-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </header>
         {list && at >= 0 && list[at].note && <div className="sh-context">{list[at].note}</div>}
+        <div className="sh-tabs" role="tablist" aria-label="Sections">
+          <button role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')}>History</button>
+          <button role="tab" aria-selected={tab === 'hours'} onClick={() => setTab('hours')} data-testid="tab-hours">
+            Working hours{data?.plan?.own && <i className="sh-tab-dot" title="Own hours" />}
+          </button>
+        </div>
 
         {error ? (
           <div className="sc-empty">{error}</div>
@@ -170,6 +186,13 @@ export const StaffHistoryModal: React.FC<{
             <div className="sh-stats">{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={64} r={16} />)}</div>
             <Skeleton h={128} r={16} />
             <Skeleton h={260} r={16} />
+          </div>
+        ) : tab === 'hours' ? (
+          <div className="sh-body">
+            {data.plan ? (
+              <StaffPlanPanel key={`${personId}:${data.plan.effectiveFrom ?? 'school'}:${data.plan.updatedAt ?? ''}`} personId={personId} name={data.person.name} plan={data.plan} today={data.today} canEdit={canEditPlan}
+                onSaved={() => { setReloadKey((k) => k + 1); onChanged?.(); }} />
+            ) : <div className="sc-empty">Working hours are not available.</div>}
           </div>
         ) : (
           <div className="sh-body">
@@ -266,7 +289,7 @@ export const StaffHistoryModal: React.FC<{
                 {sel ? (
                   <>
                     <span className="sh-label">{fmtDay(sel.date, { weekday: 'long', day: 'numeric', month: 'long' })}</span>
-                    <span className={`sh-pill ${KIND[sel.kind].cls}`}><i />{KIND[sel.kind].label || '—'}</span>
+                    <span className={`sh-pill ${KIND[sel.kind].cls}`}><i />{sel.kind === 'off' && data.plan?.own ? 'Day off' : KIND[sel.kind].label || '—'}</span>
                     <div className="sh-times">
                       <div><span>In</span><b>{sel.in ?? '—'}</b></div>
                       <div className="sh-times-line"><i style={{ width: sel.minutes ? `${Math.min(100, (sel.minutes / 600) * 100)}%` : 0 }} /></div>
@@ -274,8 +297,10 @@ export const StaffHistoryModal: React.FC<{
                     </div>
                     <div className="sh-tags">
                       {sel.minutes != null && <span><CalendarCheck size={14} />{hours(sel.minutes)} at school</span>}
-                      {sel.kind === 'late' && data.rules.lateAfter && <span data-tone="amber"><TimerOff size={14} />after {data.rules.lateAfter}</span>}
-                      {sel.early && <span data-tone="amber"><LogOut size={14} />left before {data.rules.earlyLeaveBefore}</span>}
+                      {sel.start && sel.end && <span><Clock size={14} />expected {sel.start} – {sel.end}</span>}
+                      {sel.extra && <span><CalendarCheck size={14} />came on a day off</span>}
+                      {sel.kind === 'late' && (sel.start ?? data.rules.lateAfter) && <span data-tone="amber"><TimerOff size={14} />after {sel.start ?? data.rules.lateAfter}</span>}
+                      {sel.early && <span data-tone="amber"><LogOut size={14} />left before {sel.end ?? data.rules.earlyLeaveBefore}</span>}
                       {sel.noOut && <span data-tone="amber"><LogOut size={14} />no check-out</span>}
                       {sel.card && <span><CreditCard size={14} />staff card</span>}
                     </div>
@@ -287,7 +312,7 @@ export const StaffHistoryModal: React.FC<{
             </div>
           </div>
         )}
-        {tip && (
+        {tip && tab === 'history' && (
           <div className="sh-tip" style={{ left: tip.x, top: tip.y }} role="tooltip">
             <b>{fmtDay(tip.d.date, { weekday: 'short', day: 'numeric', month: 'short' })}</b>
             <span className={`sh-pill ${KIND[tip.d.kind].cls}`}><i />{KIND[tip.d.kind].label || '—'}</span>

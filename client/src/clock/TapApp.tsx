@@ -24,7 +24,7 @@ export function TapApp({ slug, code }: { slug: string; code: string }) {
     setPhase('locating');
     setDetail('');
     try {
-      const { best, samples } = await sampleLocation({ maxMs: 15000, goodEnough: 20 });
+      const { best, samples } = await sampleLocation({ maxMs: 20000, goodEnough: 20, patientUntil: 100 });
       setPhase('sending');
       const r = await clockApi.tapSend(slug, code, { position: best, samples, clientTime: new Date().toISOString() });
       setResult(r);

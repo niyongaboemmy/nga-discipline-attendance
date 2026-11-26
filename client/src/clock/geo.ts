@@ -37,7 +37,14 @@ const round = (n: number, d: number) => Math.round(n * 10 ** d) / 10 ** d;
  * Watch up to `maxMs` (default 8 s) or until a fix of `goodEnough` metres arrives.
  * Resolves with the best fix and up to 5 samples; rejects with a GeoError.
  */
-export function sampleLocation(opts: { maxMs?: number; goodEnough?: number } = {}): Promise<{ best: Fix; samples: Fix[] }> {
+export function sampleLocation(opts: {
+  maxMs?: number;
+  goodEnough?: number;
+  /** Keep waiting (up to maxMs) while the best reading is vaguer than this many metres:
+   *  a phone on mobile data starts with a cell-tower guess and needs GPS to settle. */
+  patientUntil?: number;
+  onProgress?: (best: Fix) => void;
+} = {}): Promise<{ best: Fix; samples: Fix[] }> {
   const maxMs = opts.maxMs ?? 8000;
   const goodEnough = opts.goodEnough ?? 20;
   if (!('geolocation' in navigator)) return Promise.reject(new GeoError('unsupported'));
@@ -65,7 +72,9 @@ export function sampleLocation(opts: { maxMs?: number; goodEnough?: number } = {
         if (!best || fix.accuracy < best.accuracy - 1) {
           best = !best || fix.accuracy < best.accuracy ? fix : best;
           clearTimeout(stall);
-          stall = setTimeout(() => finish(), 3000);
+          // Usable already: stop once it no longer improves. Still too vague: give GPS the full time.
+          if (opts.patientUntil == null || best.accuracy <= opts.patientUntil) stall = setTimeout(() => finish(), 3000);
+          opts.onProgress?.(best);
         } else if (fix.accuracy < best.accuracy) best = fix;
         // A good reading: take one more if it comes quickly, else go with this one.
         if (fix.accuracy <= goodEnough) {
@@ -95,6 +104,14 @@ export interface ZoneHint {
   distance: number;
   /** metres to walk before the zone */
   outsideBy: number;
+  /** metres from the reading to the zone's edge before any tolerance (0 inside) */
+  edge: number;
+}
+
+/** A reading too vague for the normal rule that the school still accepts (and reviews): same rule as the server. */
+export function weakButPlausible(fix: Fix, hint: ZoneHint | null, rules: { maxAccuracy: number; weakMaxAccuracy?: number }): boolean {
+  const cap = rules.weakMaxAccuracy ?? 0;
+  return !!hint && cap > 0 && fix.accuracy > rules.maxAccuracy && fix.accuracy <= cap && hint.edge <= fix.accuracy;
 }
 
 /** A school area: a circle (centre + radius) or an outline of [lng, lat] corners. */
@@ -158,7 +175,7 @@ export function zoneHint(fix: Fix, zones: ZoneShape[], rules: { maxAccuracy: num
     const g = zoneGap(fix, z, allowance);
     if (!g) continue;
     if (!best || g.outsideBy < best.outsideBy || (g.outsideBy === best.outsideBy && g.distance < best.distance)) {
-      best = { inside: g.outsideBy === 0 && fix.accuracy <= rules.maxAccuracy, preciseEnough: fix.accuracy <= rules.maxAccuracy, distance: g.distance, outsideBy: g.outsideBy };
+      best = { inside: g.outsideBy === 0 && fix.accuracy <= rules.maxAccuracy, preciseEnough: fix.accuracy <= rules.maxAccuracy, distance: g.distance, outsideBy: g.outsideBy, edge: g.edge };
     }
   }
   return best;

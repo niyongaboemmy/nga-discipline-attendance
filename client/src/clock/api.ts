@@ -38,7 +38,7 @@ export interface Bootstrap {
   serverNow: string;
   schoolDate: string;
   timezone: string;
-  rules: { allowance?: number; opens: string; lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; maxAccuracy: number; requireZone: boolean };
+  rules: { allowance?: number; opens: string; lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; maxAccuracy: number; requireZone: boolean; weakMaxAccuracy?: number };
   zones: Zone[];
 }
 
@@ -68,6 +68,8 @@ export interface DayState {
   opensAt: string;
   today: { checkIn: string | null; checkOut: string | null; status: string; outStatus: string | null; minutesAtSchool: number } | null;
   week: WeekDay[];
+  /** today's times for this person: their own hours (own) or the school's */
+  rules: { lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number; own?: boolean };
 }
 
 export interface Me extends DayState {
@@ -76,7 +78,6 @@ export interface Me extends DayState {
   person: Person;
   email: string;
   device: { status: 'active' | 'pending'; label: string | null; formFactor: string; registeredAt: string };
-  rules: { lateAfter: string; earlyLeaveBefore: string; minShiftMinutes: number };
 }
 
 export interface RegisterPreview {

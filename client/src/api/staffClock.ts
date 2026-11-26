@@ -14,6 +14,9 @@ export interface ClockRules {
   selfReplaceDays: number;
   googleDomains: string;
   schoolNetworks: string;
+  /** off the school network with an imprecise reading: accept it for review, or refuse it */
+  weakLocation?: 'review' | 'refuse';
+  weakMaxAccuracy?: number;
   nonSchoolDays: 'allow_flag' | 'refuse';
   allowUnassignedStaff: boolean;
   setupDone?: string[];
@@ -73,7 +76,11 @@ export interface OverviewRow {
   role: string;
   checkIn: string | null;
   checkOut: string | null;
-  status: 'present' | 'late' | 'not_in' | 'invalid';
+  /** day_off: not expected that day (their own week, or the school is closed) and did not come */
+  status: 'present' | 'late' | 'not_in' | 'invalid' | 'day_off';
+  expected?: boolean;
+  /** the hours that apply to this person that day; own = their own week, not the school's rules */
+  plan?: { own: boolean; works: boolean; start: string | null; end: string | null };
   outStatus: string | null;
   distance: number | null;
   source: string | null;
@@ -89,7 +96,10 @@ export interface Overview {
   serverNow: string;
   rosterSource: 'mis' | 'local';
   rules: { lateAfter: string; earlyLeaveBefore: string; opens: string; enabled: boolean };
-  kpis: { staff: number; checkedIn: number; onTime: number; late: number; notIn: number; checkedOut: number; earlyLeave: number; needsReview: number; medianLateMinutes: number | null };
+  /** staff who follow their own working week on this day */
+  ownPlans?: number;
+  holiday?: boolean;
+  kpis: { staff: number; checkedIn: number; onTime: number; late: number; notIn: number; dayOff?: number; checkedOut: number; earlyLeave: number; needsReview: number; medianLateMinutes: number | null };
   arrivals: Array<{ from: string; to: string; onTime: number; late: number }>;
   rows: OverviewRow[];
   review: Array<{ recordId: number; userId: string; name: string; at: string | null; flags: string[]; flagText: string[]; distance: number | null; accuracy: number | null }>;
@@ -120,11 +130,34 @@ export interface ScanResult {
 const data = async <T>(p: Promise<{ data?: T }>) => (await p).data as T;
 
 export type HistoryKind = 'on_time' | 'late' | 'absent' | 'invalid' | 'off' | 'today' | 'future' | 'untracked';
-export interface HistoryDay { date: string; kind: HistoryKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean }
+export interface HistoryDay {
+  date: string; kind: HistoryKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean;
+  /** the hours expected of this person that day (null: not a working day for them) */
+  start?: string | null; end?: string | null;
+  /** came on a day they were not expected */
+  extra?: boolean;
+}
+
+export interface DayPlan { works: boolean; start: string; end: string }
+/** Keys '0'..'6', 0 = Sunday. */
+export type WeekPlan = Record<string, DayPlan>;
+/** A person's working week: their own, or the school's rules. */
+export interface StaffPlan {
+  own: boolean;
+  days: WeekPlan;
+  school: WeekPlan;
+  effectiveFrom: string | null;
+  note: string | null;
+  updatedByName: string | null;
+  updatedAt: string | null;
+  upcoming: { effectiveFrom: string; days: WeekPlan | null; note: string | null } | null;
+  versions: Array<{ effectiveFrom: string; own: boolean; updatedByName: string | null; updatedAt: string }>;
+}
 export interface PersonHistory {
   person: { id: string; name: string; role: string | null };
   from: string; to: string; today: string; trackingFrom: string;
   rules: { lateAfter: string | null; earlyLeaveBefore: string };
+  plan?: StaffPlan;
   days: HistoryDay[];
   summary: { schoolDays: number; attended: number; onTime: number; late: number; absent: number; noOut: number; early: number; rate: number | null; punctuality: number | null; avgIn: string | null; streak: number; bestStreak: number };
 }
@@ -135,6 +168,7 @@ export interface ReportDay { date: string; kind: ReportDayKind; onTime: number; 
 export interface ReportGroup { key: 'conversation' | 'often_late' | 'rarely_absent' | 'on_time'; label: string; rule: string; count: number }
 export interface ClockReport {
   today: string; from: string; to: string; trackingFrom: string; staff: number; countedDays: number; lateAfter: string;
+  ownPlans?: number;
   term: { name: string; start: string; end: string } | null;
   rosterSource: 'mis' | 'local';
   /** whole months covering the period */
@@ -161,6 +195,9 @@ export const staffClockApi = {
   documentBrand: () => data(apiGet<{ name: string; logo: string | null }>('/api/staff/clock/document-brand')),
   report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
   reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),
+  /** Save a person's own week from a day on (days null: the school's hours again). */
+  savePlan: (id: string, body: { days: WeekPlan | null; effectiveFrom?: string; note?: string }) =>
+    apiPut<{ plan: StaffPlan; rejudged: number }>(`/api/staff/clock/people/${encodeURIComponent(id)}/plan`, body),
   history: (id: string, days = 365) => data(apiGet<PersonHistory>(`/api/staff/clock/people/${encodeURIComponent(id)}/history?days=${days}`)),
   config: () => data(apiGet<ClockConfig>('/api/staff/clock/config')),
   saveRules: (rules: Partial<ClockRules>) => data(apiPut<{ rules: ClockRules }>('/api/staff/clock/config', rules)),

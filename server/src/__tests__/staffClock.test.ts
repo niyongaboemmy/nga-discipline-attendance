@@ -239,9 +239,9 @@ describe('the public page', () => {
     expect(far.status).toBe(403);
     expect(far.body.code).toBe('OUTSIDE_ZONE');
     expect(far.body.distance).toBeGreaterThan(1100);
-    const vague = await tap('nga', phone, { ...INSIDE, accuracy: 240 });
+    const vague = await tap('nga', phone, { ...INSIDE, accuracy: 900 });
     expect(vague.status).toBe(422);
-    expect(vague.body).toMatchObject({ code: 'LOW_ACCURACY', accuracy: 240 });
+    expect(vague.body).toMatchObject({ code: 'LOW_ACCURACY', accuracy: 900 });
     const events = await db.all(`SELECT reason FROM attendance_events WHERE user_id = '103' AND kind = 'refused'`);
     expect(events.map((e: any) => e.reason)).toEqual(['outside_zone', 'low_accuracy']);
     expect(await db.get(`SELECT 1 FROM staff_attendance WHERE staff_id = '103'`)).toBeUndefined();
@@ -588,7 +588,7 @@ describe('check in from a computer with a phone (QR code)', () => {
     // The phone (no sign-in) sees whose tap it is, then sends a vague reading: refused, the code stays usable.
     const preview = await request(app).get(`/api/clock/nga/tap/${code}`);
     expect(preview.body.data).toMatchObject({ firstName: 'Aline', next: 'check_in' });
-    const vague = await request(app).post(`/api/clock/nga/tap/${code}`).send({ position: { lat: INSIDE.lat, lng: INSIDE.lng, accuracy: 400 } });
+    const vague = await request(app).post(`/api/clock/nga/tap/${code}`).send({ position: { lat: INSIDE.lat, lng: INSIDE.lng, accuracy: 900 } });
     expect(vague.status).toBe(422);
     const seen = await request(app).get(`/api/clock/nga/phone-tap/${code}`).set('X-Clock-Device', laptop.token!);
     expect(seen.body.data).toMatchObject({ state: 'failed', error: { code: 'LOW_ACCURACY' } });
@@ -620,6 +620,139 @@ describe('check in from a computer with a phone (QR code)', () => {
     const out2 = (await phoneCode(laptop)).body.data.code;
     const out = await request(app).post(`/api/clock/nga/tap/${out2}`).send({ position: INSIDE });
     expect(out.body.data).toMatchObject({ action: 'check_out' });
+  });
+});
+
+describe('on their own network (mobile data): a weak GPS reading', () => {
+  it('counts while its circle still reaches the school, flagged for review; a school can refuse it instead', async () => {
+    misPerson(130, 'Weak Signal', 'weak@gmail.com');
+    misPerson(131, 'Strict School', 'strict@gmail.com');
+    const phone = await newDevice();
+    const phone2 = await newDevice();
+    now = kigali('07:30', '2027-01-05');
+    await register('nga', 'weak@gmail.com', phone);
+    await register('nga', 'strict@gmail.com', phone2);
+    expect((await request(app).get('/api/clock/nga/bootstrap')).body.data.rules.weakMaxAccuracy).toBe(500);
+
+    // ±240 m around a point inside the school: beyond the 100 m rule, still plausible.
+    const res = await tap('nga', phone, { ...INSIDE, accuracy: 240 });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({ action: 'check_in', status: 'present' });
+    expect(res.body.data.flags).toContain('weak_location');
+    const ov = (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+    expect(ov.review).toEqual(expect.arrayContaining([expect.objectContaining({ userId: '130', flags: expect.arrayContaining(['weak_location']) })]));
+    expect(ov.rows.find((r: any) => r.userId === '130').needsReview).toBe(true);
+
+    // A coarse reading whose circle cannot reach the school is still refused.
+    expect((await tap('nga', phone2, { ...FAR, accuracy: 240 })).status).toBe(422);
+    // The school turns it off: precise readings only.
+    const saved = await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ weakLocation: 'refuse' });
+    expect(saved.body.data.rules.weakLocation).toBe('refuse');
+    expect((await request(app).get('/api/clock/nga/bootstrap')).body.data.rules.weakMaxAccuracy).toBe(0);
+    expect((await tap('nga', phone2, { ...INSIDE, accuracy: 240 })).body.code).toBe('LOW_ACCURACY');
+    await request(app).put('/api/staff/clock/config').set(authHeader(adminToken)).send({ weakLocation: 'review' });
+  });
+});
+
+describe("a person's own working week", () => {
+  const week = (over: Record<string, { works: boolean; start?: string; end?: string }>) =>
+    Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, { start: '08:00', end: '17:00', ...(over[d] ?? { works: false }) }]));
+  const plan = (id: string, body: unknown, token = adminToken) => request(app).put(`/api/staff/clock/people/${id}/plan`).set(authHeader(token)).send(body as any);
+
+  it('judges late, early, days off and absences by the plan, everywhere', async () => {
+    misPerson(132, 'Part Timer', 'part@gmail.com');
+    misPerson(133, 'Full Timer', 'full@gmail.com');
+    const phone = await newDevice();
+    const phone2 = await newDevice();
+    now = kigali('07:00', '2027-01-05'); // Tuesday
+    await register('nga', 'part@gmail.com', phone);
+    await register('nga', 'full@gmail.com', phone2);
+
+    // Validation, permissions, and "the same as the school" is not an own plan.
+    expect((await plan('132', { days: week({ 2: { works: true, start: '14:00', end: '10:00' } }) })).status).toBe(400);
+    const { token: teacher } = await createTestUser(db, { id: '956', name: 'T7', email: 't7@x', roleLevel: 'TEACHER' });
+    expect((await plan('132', { days: week({}) }, teacher)).status).toBe(403);
+    const school = (await request(app).get('/api/staff/clock/people/132/plan').set(authHeader(adminToken))).body.data;
+    expect(school).toMatchObject({ own: false });
+    expect(school.days['2']).toEqual({ works: true, start: '08:30', end: '16:00' });
+    expect((await plan('132', { days: school.days })).body.data.plan.own).toBe(false);
+
+    // Tuesday 10:00-14:00 and Saturday 09:00-12:00, nothing else.
+    const saved = await plan('132', { days: week({ 2: { works: true, start: '10:00', end: '14:00' }, 6: { works: true, start: '09:00', end: '12:00' } }), note: 'Part time' });
+    expect(saved.status).toBe(200);
+    expect(saved.body.data.plan).toMatchObject({ own: true, effectiveFrom: '2027-01-05', note: 'Part time' });
+
+    // 09:45: late for the school (08:30), on time for them.
+    now = kigali('09:45', '2027-01-05');
+    const me = (await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone.token!)).body.data;
+    expect(me.rules).toMatchObject({ lateAfter: '10:00', earlyLeaveBefore: '14:00', own: true });
+    // Monday was before the plan started (the school's rules); from Tuesday on, their own days.
+    expect(me.week.map((d: any) => d.date)).toEqual(['2027-01-04', '2027-01-05', '2027-01-09']);
+    expect((await tap('nga', phone, INSIDE)).body.data).toMatchObject({ action: 'check_in', status: 'present' });
+    expect((await tap('nga', phone2, INSIDE)).body.data).toMatchObject({ action: 'check_in', status: 'late' });
+    // 14:05: early for the school (16:00), on time for them.
+    now = kigali('14:05', '2027-01-05');
+    expect((await tap('nga', phone, INSIDE)).body.data).toMatchObject({ action: 'check_out', status: 'on_time' });
+    expect((await tap('nga', phone2, INSIDE)).body.data).toMatchObject({ action: 'check_out', status: 'early' });
+
+    // Wednesday: their day off. Not "not in", not absent.
+    now = kigali('11:00', '2027-01-06');
+    const wed = (await request(app).get('/api/staff/clock/overview').set(authHeader(adminToken))).body.data;
+    const row = wed.rows.find((r: any) => r.userId === '132');
+    expect(row).toMatchObject({ status: 'day_off', expected: false, plan: { own: true, works: false } });
+    expect(wed.rows.find((r: any) => r.userId === '133')).toMatchObject({ status: 'not_in', expected: true, plan: { own: false, start: '08:30', end: '16:00' } });
+    expect(wed.kpis.staff + wed.kpis.dayOff).toBe(wed.rows.length);
+    expect(wed.kpis.notIn).toBe(wed.rows.filter((r: any) => r.status === 'not_in').length);
+    expect(wed.ownPlans).toBe(1);
+
+    // Saturday: a working day for them only; late after their 09:00, and no "not a working day" flag.
+    now = kigali('09:30', '2027-01-09');
+    const sat = await tap('nga', phone, INSIDE);
+    expect(sat.body.data).toMatchObject({ action: 'check_in', status: 'late' });
+    expect(sat.body.data.flags).not.toContain('non_school_day');
+    const satFull = await tap('nga', phone2, INSIDE);
+    expect(satFull.body.data.flags).toContain('non_school_day');
+
+    // History: Tue on time, Wed-Fri off, Sat late; nothing absent.
+    const h = (await request(app).get('/api/staff/clock/people/132/history?days=7').set(authHeader(adminToken))).body.data;
+    // (Monday the 4th is before the plan started: the school's rules, an absence.)
+    expect(h.days.slice(-5).map((d: any) => [d.date, d.kind])).toEqual([
+      ['2027-01-05', 'on_time'], ['2027-01-06', 'off'], ['2027-01-07', 'off'], ['2027-01-08', 'off'], ['2027-01-09', 'late'],
+    ]);
+    expect(h.days[2]).toMatchObject({ start: '10:00', end: '14:00', extra: false });
+    expect(h.days[1]).toMatchObject({ date: '2027-01-04', kind: 'absent', start: '08:30' });
+    expect(h.summary).toMatchObject({ schoolDays: 3, attended: 2, absent: 1 });
+    expect(h.plan).toMatchObject({ own: true });
+    // The full-timer came on a Saturday: it counts for them, Wed-Fri are absences.
+    const hf = (await request(app).get('/api/staff/clock/people/133/history?days=7').set(authHeader(adminToken))).body.data;
+    expect(hf.days[6]).toMatchObject({ kind: 'late', extra: true });
+    expect(hf.summary).toMatchObject({ schoolDays: 6, attended: 2, absent: 4 });
+
+    // The period report: Saturday is a day because somebody is expected, and each person has their own days.
+    const rep = (await request(app).get('/api/staff/clock/report?from=2027-01-05&to=2027-01-09').set(authHeader(adminToken))).body.data;
+    expect(rep.days.find((d: any) => d.date === '2027-01-09')).toMatchObject({ kind: 'school', staff: 2, late: 2, absent: 0 });
+    expect(rep.ownPlans).toBe(1);
+    const staff = (await request(app).get('/api/staff/clock/report/staff?from=2027-01-05&to=2027-01-08').set(authHeader(adminToken))).body.data.people;
+    expect(staff.find((p: any) => p.userId === '132')).toBeUndefined(); // never late or absent on their own days
+    expect(staff.find((p: any) => p.userId === '133')).toMatchObject({ schoolDays: 4, attended: 1, absent: 3 });
+    // The export says which hours applied.
+    const csv = await request(app).get('/api/staff/clock/export?from=2027-01-05&to=2027-01-05').set(authHeader(adminToken));
+    expect(csv.text).toContain('10:00-14:00 (own)');
+
+    // Changing the hours from a past day judges the recorded days again.
+    const earlier = await plan('132', { effectiveFrom: '2027-01-05', days: week({ 2: { works: true, start: '09:00', end: '15:00' }, 6: { works: true, start: '10:00', end: '12:00' } }) });
+    expect(earlier.body.data.rejudged).toBe(2);
+    const rows = await db.all(`SELECT date, status, out_status FROM staff_attendance WHERE staff_id = '132' AND date >= '2027-01-05' ORDER BY date`);
+    expect(rows).toEqual([{ date: '2027-01-05', status: 'late', out_status: 'early' }, { date: '2027-01-09', status: 'present', out_status: null }]);
+
+    // Back to the school's rules from next Monday: this week keeps the plan.
+    const back = await plan('132', { days: null, effectiveFrom: '2027-01-11' });
+    expect(back.body.message).toContain("school's hours");
+    expect(back.body.data.plan).toMatchObject({ own: true, upcoming: { effectiveFrom: '2027-01-11', days: null } });
+    now = kigali('07:00', '2027-01-12');
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone.token!)).body.data.rules).toMatchObject({ lateAfter: '08:30', own: false });
+    const audit = await db.get(`SELECT COUNT(*) AS n FROM audit_log WHERE action LIKE 'STAFF_CLOCK_PLAN_%'`).catch(() => null);
+    if (audit) expect(audit.n).toBeGreaterThanOrEqual(3);
   });
 });
 

@@ -19,6 +19,7 @@ const STATUS: Record<OverviewRow['status'], [string, string]> = {
   present: ['On time', 'sc-tone-green'],
   late: ['Late', 'sc-tone-amber'],
   not_in: ['Not in yet', 'sc-tone-muted'],
+  day_off: ['Day off', 'sc-tone-muted'],
   invalid: ['Marked invalid', 'sc-tone-red'],
 };
 const addDays = (date: string, n: number) => {
@@ -82,6 +83,9 @@ export const StaffClockPeople: React.FC = () => {
       setBusyId(null);
     }
   };
+  // A past day: someone expected who never came was absent.
+  const label = (r: OverviewRow) => (r.status === 'not_in' && data && !data.isToday ? 'Absent' : STATUS[r.status][0]);
+  const hoursText = (r: OverviewRow) => (!r.plan ? '—' : r.plan.works && r.plan.start && r.plan.end ? `${r.plan.start} – ${r.plan.end}` : 'Day off');
   const open = (r: OverviewRow) => setPerson({ id: r.userId, name: r.name, role: r.role });
   const dayText = data ? new Date(`${data.date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }) : '';
 
@@ -90,7 +94,7 @@ export const StaffClockPeople: React.FC = () => {
       <div className="sc-page">
         <StaffClockHeader
           title="Staff"
-          lead={data ? `${dayText} · tap someone to see their history` : 'Everyone and their day'}
+          lead={data ? `${dayText} · tap someone for their history and working hours${data.ownPlans ? ` · ${data.ownPlans} with own hours` : ''}` : 'Everyone and their day'}
           pending={data?.phones.pending.length}
           actions={
             <div className="sc-seg" role="group" aria-label="Day">
@@ -122,7 +126,7 @@ export const StaffClockPeople: React.FC = () => {
           </div>
 
           {loading && !data ? (
-            <SkeletonTable rows={8} cols={6} label="Loading staff" />
+            <SkeletonTable rows={8} cols={7} label="Loading staff" />
           ) : !data ? null : tab === 'review' ? (
             data.review.length === 0 ? (
               <div className="sc-empty">Nothing to review. Every check-in looks normal.</div>
@@ -157,13 +161,14 @@ export const StaffClockPeople: React.FC = () => {
             <>
               <div className="sc-table-wrap sc-responsive">
                 <table className="sc-table">
-                  <thead><tr><th>Staff</th><th>In</th><th>Status</th><th>Out</th><th>Distance</th><th>How</th><th aria-label="History" /></tr></thead>
+                  <thead><tr><th>Staff</th><th>Hours</th><th>In</th><th>Status</th><th>Out</th><th>Distance</th><th>How</th><th aria-label="History" /></tr></thead>
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.userId} className="sc-row-btn" tabIndex={0} onClick={() => open(r)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(r); } }} data-person={r.userId}>
                         <td><span className="sc-who"><span className="sc-avatar">{initialsOf(r.name)}</span><span><b className="sc-clip" title={r.name}>{r.name}</b><small className="sc-clip">{r.role}</small></span></span></td>
+                        <td className="sc-num sc-muted" style={{ whiteSpace: 'nowrap' }}>{hoursText(r)}{r.plan?.own && <span className="sc-pill sc-tone-blue sc-own" title="This person has their own working hours">Own</span>}</td>
                         <td className="sc-num" style={{ fontWeight: 600 }}>{r.checkIn ?? '—'}</td>
-                        <td><span className={`sc-pill ${STATUS[r.status][1]}`}><i />{STATUS[r.status][0]}</span>{r.needsReview && <span className="sc-pill sc-tone-amber" style={{ marginLeft: 6 }}>Review</span>}</td>
+                        <td><span className={`sc-pill ${STATUS[r.status][1]}`}><i />{label(r)}</span>{r.needsReview && <span className="sc-pill sc-tone-amber" style={{ marginLeft: 6 }}>Review</span>}</td>
                         <td className="sc-num sc-muted">{r.checkOut ?? (r.outStatus === 'auto_closed' ? 'Not checked out' : '—')}{r.outStatus === 'early' ? ' · early' : ''}</td>
                         <td className="sc-num">{r.distance != null ? `${Math.round(r.distance)} m` : '—'}</td>
                         <td className="sc-muted">{r.source === 'card' ? 'Staff card' : r.device ?? (r.source ? 'Phone' : 'Not registered')}</td>
@@ -179,11 +184,11 @@ export const StaffClockPeople: React.FC = () => {
                     <span className="sc-avatar" style={{ width: 38, height: 38 }}>{initialsOf(r.name)}</span>
                     <span className="sc-item-main">
                       <b className="sc-clip" title={r.name}>{r.name}</b>
-                      <small className="sc-clip sc-muted">{r.role}{r.distance != null ? ` · ${Math.round(r.distance)} m` : ''}</small>
+                      <small className="sc-clip sc-muted">{r.role} · {hoursText(r)}{r.plan?.own ? ' (own)' : ''}{r.distance != null ? ` · ${Math.round(r.distance)} m` : ''}</small>
                     </span>
                     <span className="sc-item-side">
                       <b className="sc-num">{r.checkIn ?? '—'}</b>
-                      <span className={`sc-pill ${STATUS[r.status][1]}`} style={{ height: 24, fontSize: 12 }}><i />{STATUS[r.status][0]}</span>
+                      <span className={`sc-pill ${STATUS[r.status][1]}`} style={{ height: 24, fontSize: 12 }}><i />{label(r)}</span>
                     </span>
                   </button>
                 ))}
@@ -192,7 +197,7 @@ export const StaffClockPeople: React.FC = () => {
           )}
         </section>
       </div>
-      {person && <StaffHistoryModal personId={person.id} name={person.name} role={person.role} onClose={() => setPerson(null)} />}
+      {person && <StaffHistoryModal personId={person.id} name={person.name} role={person.role} onClose={() => setPerson(null)} onChanged={() => void load(date)} />}
     </DashboardLayout>
   );
 };
