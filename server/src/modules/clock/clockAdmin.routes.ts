@@ -12,6 +12,7 @@ import { fullName, loadStaffRoster } from '../../routes/mis.js';
 import { ClockError, clockNow, clockRules, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
+import { buildReport, reportStaff } from './clockReport.js';
 
 /**
  * School admin side of the staff clock (Tendo -> Staff attendance): zone and rules,
@@ -288,6 +289,33 @@ function timeToMinutesOf(value: unknown): number | null {
 const rosterCache = new Map<number, { at: number; roster: Array<{ id: string; name: string; role?: string }> }>();
 const ROSTER_TTL_MS = 60_000;
 
+/** Everyone who should be here: the MIS staff list (needs the viewer's MIS token and
+ *  MANAGE_USERS there), else the people Tendo already knows as staff. */
+async function staffRoster(req: any, db: ReturnType<typeof getDb>, site: string): Promise<{ roster: Array<{ id: string; name: string; role?: string }>; rosterSource: 'mis' | 'local' }> {
+  let roster: Array<{ id: string; name: string; role?: string }> = [];
+  let rosterSource: 'mis' | 'local' = 'local';
+  const misToken = (req as AuthenticatedRequest).user?.misToken;
+  const tid = currentTenant(site).tid;
+  const cached = rosterCache.get(tid);
+  if (cached && Date.now() - cached.at < ROSTER_TTL_MS) {
+    roster = cached.roster;
+    rosterSource = 'mis';
+  } else if (misToken) {
+    try {
+      roster = (await loadStaffRoster(misToken)).map((s: any) => ({ id: String(s.id), name: s.name, role: s.role || s.user_type || undefined }));
+      rosterSource = 'mis';
+      if (roster.length) rosterCache.set(tid, { at: Date.now(), roster });
+    } catch {
+      roster = [];
+    }
+  }
+  if (roster.length === 0) {
+    roster = (await db.all<any[]>(`SELECT id, name, role FROM users WHERE role IN ('teacher','admin') AND COALESCE(status,'active') <> 'inactive'`)).map((u) => ({ id: String(u.id), name: u.name, role: u.role }));
+    rosterSource = 'local';
+  }
+  return { roster, rosterSource };
+}
+
 router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
   try {
     const db = getDb();
@@ -300,29 +328,7 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const devices = await db.all<any[]>(`SELECT ${DEVICE_COLS} FROM attendance_devices WHERE status IN ('active','pending')`);
     const activeByUser = new Map(devices.filter((d) => d.status === 'active').map((d) => [String(d.user_id), d]));
 
-    // Everyone who should be here: the MIS staff list (needs the viewer's MIS token and
-    // MANAGE_USERS there), else the people Tendo already knows as staff.
-    let roster: Array<{ id: string; name: string; role?: string }> = [];
-    let rosterSource: 'mis' | 'local' = 'local';
-    const misToken = (req as AuthenticatedRequest).user?.misToken;
-    const tid = currentTenant('overview').tid;
-    const cached = rosterCache.get(tid);
-    if (cached && Date.now() - cached.at < ROSTER_TTL_MS) {
-      roster = cached.roster;
-      rosterSource = 'mis';
-    } else if (misToken) {
-      try {
-        roster = (await loadStaffRoster(misToken)).map((s: any) => ({ id: String(s.id), name: s.name, role: s.role || s.user_type || undefined }));
-        rosterSource = 'mis';
-        if (roster.length) rosterCache.set(tid, { at: Date.now(), roster });
-      } catch {
-        roster = [];
-      }
-    }
-    if (roster.length === 0) {
-      roster = (await db.all<any[]>(`SELECT id, name, role FROM users WHERE role IN ('teacher','admin') AND COALESCE(status,'active') <> 'inactive'`)).map((u) => ({ id: String(u.id), name: u.name, role: u.role }));
-      rosterSource = 'local';
-    }
+    const { roster, rosterSource } = await staffRoster(req, db, 'overview');
     const roleOf = new Map((await db.all<any[]>(`SELECT id, role FROM users`)).map((u) => [String(u.id), u.role]));
     const people = new Map<string, { id: string; name: string; role: string | null }>();
     for (const p of roster) people.set(p.id, { id: p.id, name: p.name, role: p.role ?? roleOf.get(p.id) ?? null });
@@ -424,6 +430,90 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         health,
       },
     });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A period: the term (or any dates) as calendar days, weeks, weekdays and groups.
+// ---------------------------------------------------------------------------
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const monthStart = (d: string) => `${d.slice(0, 7)}-01`;
+const monthEnd = (d: string) => addDays(monthStart(addDays(monthStart(d), 32)), -1);
+
+/** The term the school is in today (the local copy of the MIS term calendar), if its dates are set. */
+async function currentTerm(db: ReturnType<typeof getDb>, today: string): Promise<{ name: string; start: string; end: string } | null> {
+  try {
+    const t = await db.get<{ name: string; start_date: string | null; end_date: string | null }>(
+      `SELECT name, start_date, end_date FROM academic_terms
+        WHERE start_date IS NOT NULL AND end_date IS NOT NULL AND substr(start_date, 1, 10) <= ? AND substr(end_date, 1, 10) >= ?
+        ORDER BY is_current DESC, start_date DESC LIMIT 1`, today, today);
+    return t?.start_date && t.end_date ? { name: t.name, start: String(t.start_date).slice(0, 10), end: String(t.end_date).slice(0, 10) } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadReport(req: any) {
+  const db = getDb();
+  const today = schoolDateString(new Date(clockNow()));
+  const term = await currentTerm(db, today);
+  const q = (k: string) => (ISO_DATE.test(String(req.query[k] || '')) ? String(req.query[k]) : null);
+  // Default: the current term so far, else the last 90 days.
+  let to = q('to') ?? today;
+  if (to > today) to = today;
+  let from = q('from') ?? (term ? term.start : addDays(today, -89));
+  if (from > to) from = to;
+  if (from < addDays(to, -370)) from = addDays(to, -370);
+
+  // The calendars show whole months.
+  const calFrom = monthStart(from);
+  const calTo = monthEnd(to);
+  const spanDays = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+  const loadFrom = addDays(calFrom, -(spanDays + 14));
+
+  const lateAfter = staffLateCutoffMinutes();
+  const rows = await db.all<any[]>(
+    `SELECT staff_id, staff_name, date, clock_in, status FROM staff_attendance
+      WHERE date >= ? AND date <= ? AND clock_in IS NOT NULL AND COALESCE(review_state,'') <> 'invalid'`, loadFrom, calTo);
+  const first = await db.get<{ d: string | null }>(`SELECT MIN(date) AS d FROM staff_attendance WHERE source IN ('device','card')`);
+  let offDays = new Set<string>();
+  try {
+    offDays = new Set((await db.all<{ session_date: string }[]>(`SELECT session_date FROM rfid_days_off WHERE session_date >= ? AND session_date <= ?`, loadFrom, calTo)).map((r) => r.session_date));
+  } catch { /* no days-off table */ }
+  const { roster, rosterSource } = await staffRoster(req, db, 'report');
+
+  const report = buildReport({
+    from, to, calFrom, calTo, today,
+    trackingFrom: first?.d && first.d <= today ? first.d : today,
+    weekdays: schoolDays(),
+    offDays,
+    roster: roster.map((p) => ({ id: p.id, name: fullName(...String(p.name).split(/\s+/)) || p.name })),
+    records: rows.map((r) => ({ staffId: String(r.staff_id), name: r.staff_name, date: String(r.date), inMinutes: timeToMinutesOf(r.clock_in), late: r.status === 'late' })),
+    lateAfter,
+    opens: timeToMinutes(clockRules().opens),
+  });
+  return { report, term, rosterSource };
+}
+
+router.get('/report', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
+  try {
+    const { report, term, rosterSource } = await loadReport(req);
+    // Names are never part of the report: a group's staff are asked for on their own.
+    const { persons: _persons, ...data } = report;
+    return res.json({ success: true, data: { ...data, term, rosterSource } });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+router.get('/report/staff', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
+  try {
+    const { report } = await loadReport(req);
+    const group = typeof req.query.group === 'string' ? req.query.group : undefined;
+    return res.json({ success: true, data: { from: report.from, to: report.to, schoolDays: report.countedDays, people: reportStaff(report.persons, report.countedDays, group) } });
   } catch (err) {
     return fail(res, err);
   }

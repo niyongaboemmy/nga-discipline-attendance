@@ -73,6 +73,38 @@ const OVERVIEW = {
   },
   health: { google: true, zones: 1, enabled: true, tested: false, shared: false, unregistered: 3, staff: 10 },
 };
+/** The term so far, as the report endpoint answers it: numbers per calendar day, no names. */
+function report() {
+  const today = '2026-11-24', from = '2026-09-07', staff = 10;
+  const days = [];
+  for (let d = new Date('2026-09-01T12:00:00Z'); d <= new Date('2026-11-30T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
+    const date = d.toISOString().slice(0, 10);
+    const wd = d.getUTCDay();
+    const n = Math.round((d - new Date('2026-09-01T12:00:00Z')) / 86400000);
+    const kind = date > today ? 'future' : wd === 0 || wd === 6 ? 'off' : date < from ? 'untracked' : 'school';
+    const absent = kind !== 'school' ? 0 : date === today ? 2 : date === '2026-10-07' ? 4 : n % 7 === 0 ? 2 : n % 3 === 0 ? 1 : 0;
+    const late = kind !== 'school' ? 0 : date === today ? 2 : n % 4 === 1 ? 2 : n % 5 === 0 ? 1 : 0;
+    days.push({ date, kind, onTime: kind === 'school' ? staff - absent - late : 0, late, absent, staff: kind === 'school' ? staff : 0, today: date === today });
+  }
+  const school = days.filter((d) => d.kind === 'school' && d.date >= from);
+  const sum = (list) => { const t = { schoolDays: list.length, onTime: 0, late: 0, absent: 0, staffDays: 0 }; for (const d of list) { t.onTime += d.onTime; t.late += d.late; t.absent += d.absent; t.staffDays += d.staff; } return { ...t, rate: t.staffDays ? Math.round(((t.onTime + t.late) / t.staffDays) * 1000) / 10 : null }; };
+  const monday = (date) => { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); };
+  const weeks = [...new Set(school.map((d) => monday(d.date)))].map((start, i) => { const t = sum(school.filter((d) => monday(d.date) === start)); return { start, rate: t.rate, late: t.late, prevRate: 84 + (i % 4) * 1.5 }; });
+  return {
+    today, from, to: today, trackingFrom: from, staff, countedDays: school.length - 1, lateAfter: '08:30', term: { name: 'Term 1', start: from, end: '2026-12-18' }, rosterSource: 'mis', days,
+    totals: { ...sum(school), prevRate: 86.2 }, weeks,
+    weekdays: [1, 2, 3, 4, 5].map((dow) => ({ dow, rate: sum(school.filter((d) => new Date(`${d.date}T12:00:00Z`).getUTCDay() === dow)).rate })),
+    arrivals: [['06:30', 4, 0], ['06:45', 18, 0], ['07:00', 61, 0], ['07:15', 120, 0], ['07:30', 142, 0], ['07:45', 96, 0], ['08:00', 51, 0], ['08:15', 22, 0], ['08:30', 3, 14], ['08:45', 0, 31], ['09:00', 0, 12], ['09:15', 0, 4]].map(([f, onTime, late]) => ({ from: f, to: f, onTime, late })),
+    groups: [
+      { key: 'conversation', label: 'Need a conversation', rule: 'Absent 6 days or more, or late 11 days or more', count: 2 },
+      { key: 'often_late', label: 'Often late', rule: 'Late on 9 days or more', count: 3 },
+      { key: 'rarely_absent', label: 'Rarely absent', rule: 'Absent 2 days or fewer', count: 4 },
+      { key: 'on_time', label: 'On time 90% of days', rule: 'On time at least nine days in ten they came', count: 5 },
+    ],
+  };
+}
+const REPORT = report();
+const reportStaff = (group) => ({ from: REPORT.from, to: REPORT.to, schoolDays: REPORT.countedDays, people: people.slice(group ? 4 : 2, group ? 7 : 9).map(([userId, name], i) => ({ userId, name, schoolDays: 55, attended: 55 - i, late: 3 + i, absent: i, rate: 100 - i * 2, punctuality: 90 - i })) });
 /** A year of days for one person: mostly on time, some late, a few absences, weekends off. */
 function history(id) {
   const days = [];
@@ -140,7 +172,9 @@ async function context(browser, { width, height, theme, mobile = false }) {
     const ok = (data) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
     if (p === '/api/sso/verify-mis') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
     if (p === '/api/roles-permissions/me') return ok({ permissionKeys: PERMS });
-    if (p === '/api/staff/clock/overview') return ok(OVERVIEW);
+    if (p === '/api/staff/clock/overview') { const d = u.searchParams.get('date'); return ok(d && d !== OVERVIEW.date ? { ...OVERVIEW, date: d, isToday: false } : OVERVIEW); }
+    if (p === '/api/staff/clock/report') return ok(REPORT);
+    if (p === '/api/staff/clock/report/staff') return ok(reportStaff(u.searchParams.get('group')));
     { const m = p.match(/^\/api\/staff\/clock\/people\/([^/]+)\/history$/); if (m) return ok(history(m[1])); }
     if (p === '/api/staff/clock/config') return ok(CONFIG);
     if (p === '/api/staff/clock/devices') return ok(DEVICES);
@@ -187,22 +221,62 @@ async function run(browser, vp) {
   await page.goto(`${BASE}/staff/clock`);
   await dismissInstall(page);
   await expectText(page, 'Staff attendance', `${tag} dashboard`);
-  await expectText(page, 'Arrivals', `${tag} arrivals`);
+  await expectText(page, 'When staff arrive', `${tag} arrivals`);
   await expectText(page, 'New phone waiting', `${tag} pending phone`);
   // Check-in is on: the setup checklist stays on its own tab, not the dashboard; the staff list moved to Staff.
   await page.waitForTimeout(300);
   if (await page.getByText('Set up staff check-in').count()) fail(`${tag}: setup card still on the dashboard with check-in on`);
   if (await page.locator('#sc-staff-list').count()) fail(`${tag}: staff list still on the dashboard`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
+  // First look is today: 8 of 10 in. The page shows numbers, never a list of staff.
+  if ((await page.getByTestId('scr-headline').innerText()).trim() !== '80%') fail(`${tag}: headline is not today's rate`);
+  await expectText(page, '8 of 10 staff checked in', `${tag} today headline`);
+  await expectText(page, 'The term on the calendar', `${tag} term calendar`);
+  await expectText(page, 'Need a conversation', `${tag} staff groups`);
+  for (const name of ['Olivier Mugisha', 'Emmanuel Nkurunziza', 'Grace Mukamana']) {
+    if (await page.getByText(name).count()) fail(`${tag}: "${name}" is listed on the dashboard`);
+  }
   await shot('01-dashboard');
   // Attention strip: only what needs fixing, each a tap to the fix.
   await page.locator('[data-attn="tested"]').waitFor();
   await page.locator('[data-attn="phones"]').waitFor();
   await page.locator('[data-attn="review"]').waitFor();
-  // Tap tiles open the lists: not in, no check-out today, missed check-outs (grouped by day).
-  await page.locator('[data-kpi="notIn"]').click();
-  await expectText(page, 'Copy names', `${tag} not-in sheet`);
+  // Today's details: the late and not-in staff open in the side sheet, on request.
+  await page.getByRole('button', { name: "View today's details" }).click();
+  await page.getByRole('button', { name: /View the 4 late or not-in staff/ }).click();
+  await expectText(page, 'Copy names', `${tag} day sheet`);
+  await expectText(page, 'Olivier Mugisha', `${tag} day sheet names`);
+  await expectText(page, 'Late · in at 08:44', `${tag} day sheet late time`);
+  await shot('01a-day-sheet');
   await page.getByRole('button', { name: 'Close' }).click();
+  // A day on the calendar opens in the day panel; the date field and the arrows follow.
+  await page.getByRole('button', { name: /^Wed,? 7 Oct · 60% in/ }).first().click();
+  await expectText(page, '7 October 2026', `${tag} picked day`);
+  await page.getByRole('button', { name: 'Next school day' }).click();
+  await expectText(page, '8 October 2026', `${tag} next school day`);
+  // Whole term: the average, and the staff of the period only when asked.
+  await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Whole term' }).click();
+  await expectText(page, 'average over 57 school days', `${tag} term headline`);
+  await page.getByRole('button', { name: 'View late or absent staff' }).click();
+  await expectText(page, 'Claudine Uwase', `${tag} term staff sheet`);
+  await page.keyboard.press('Escape');
+  // A range of dates: From / to fields, days outside it dimmed.
+  await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Date range' }).click();
+  await page.locator('.sc-head-actions input.scr-date').nth(0).fill('2026-10-05');
+  await page.locator('.sc-head-actions input.scr-date').nth(1).fill('2026-10-16');
+  await expectText(page, 'average over 10 school days', `${tag} range headline`);
+  if ((await page.locator('button.scr-day.is-out').count()) < 20) fail(`${tag}: days outside the range are not dimmed`);
+  await shot('01b-range');
+  // A group shows a count; "View staff" lists it.
+  await page.locator('.scr-group').filter({ hasText: 'Often late' }).getByRole('button', { name: 'View staff' }).click();
+  await expectText(page, 'Emmanuel Nkurunziza', `${tag} group sheet`);
+  await page.keyboard.press('Escape');
+  // Custom date, then back to today.
+  await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Custom date' }).click();
+  await page.locator('.sc-head-actions input.scr-date').first().fill('2026-10-10');
+  await expectText(page, 'No school day on that date', `${tag} weekend date`);
+  await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Today' }).click();
+  await expectText(page, '8 of 10 staff checked in', `${tag} back to today`);
   await page.locator('[data-kpi="noOut"]').click();
   await expectText(page, 'In at 07:51', `${tag} no check-out sheet`);
   await page.keyboard.press('Escape');
