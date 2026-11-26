@@ -238,6 +238,14 @@ async function run(browser, vp) {
   }
   await shot('01-dashboard');
   // Attention strip: only what needs fixing, each a tap to the fix.
+  // One short line each; the phone waiting for approval is the warning, and comes first.
+  if ((await page.locator('.sc-attn-item').first().getAttribute('data-attn')) !== 'pending') fail(`${tag}: the waiting phone is not the first reminder`);
+  await expectText(page, 'phone waiting', `${tag} waiting phone reminder`);
+  if (!(await page.locator('[data-attn="pending"] .sc-attn-pulse').count())) fail(`${tag}: the waiting phone does not pulse`);
+  for (const it of await page.locator('.sc-attn-item').all()) {
+    const box = await it.boundingBox();
+    if (box && box.height > 48) fail(`${tag}: a reminder wraps onto two lines`);
+  }
   await page.locator('[data-attn="tested"]').waitFor();
   await page.locator('[data-attn="phones"]').waitFor();
   await page.locator('[data-attn="review"]').waitFor();

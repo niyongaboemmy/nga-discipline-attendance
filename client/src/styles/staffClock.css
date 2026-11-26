@@ -399,16 +399,24 @@ html:has(.sc-savebar) { scroll-padding-top: calc(var(--navbar-height, 64px) + 16
 .sc-phone-wait .sc-spin { width: 14px; height: 14px; flex: none; }
 
 /* ---------- dashboard: attention strip, ring, tap tiles, list sheet ---------- */
-.sc-attn { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-.sc-attn-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 18px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); text-decoration: none; font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, transform .15s; }
-.sc-attn-item:hover { border-color: var(--primary); transform: translateY(-1px); }
-.sc-attn-ico { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; flex: none; }
-.sc-attn-red { background: var(--danger-light); color: var(--danger); }
-.sc-attn-amber { background: var(--status-late-bg); color: var(--status-late); }
-.sc-attn-blue { background: var(--primary-light); color: var(--primary-text); }
-.sc-attn-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; font-size: 14px; font-weight: 600; line-height: 1.25; }
-.sc-attn-text b { font-size: 22px; letter-spacing: -0.5px; }
+.sc-attn { display: flex; flex-wrap: wrap; gap: 8px; }
+.sc-attn-item { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px 0 6px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-primary); text-decoration: none; font: inherit; cursor: pointer; white-space: nowrap; transition: border-color .15s; }
+.sc-attn-item:hover { border-color: var(--primary); }
+.sc-attn-ico { width: 32px; height: 32px; border-radius: 999px; display: grid; place-items: center; flex: none; }
+.sc-attn-red .sc-attn-ico { background: var(--danger-light); color: var(--danger); }
+.sc-attn-amber .sc-attn-ico { background: var(--status-late-bg); color: var(--status-late); }
+.sc-attn-text { display: inline-flex; align-items: baseline; gap: 5px; font-size: 14px; font-weight: 600; line-height: 1; }
+.sc-attn-text b { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sc-attn-go { color: var(--text-tertiary); flex: none; }
+/* A phone waiting for approval: a warning that keeps asking until someone decides. */
+.sc-attn-warn { border-color: var(--status-late); background: var(--status-late-bg); padding-left: 12px; }
+.sc-attn-warn:hover { border-color: var(--status-late); }
+.sc-attn-warn .sc-attn-ico { width: 24px; height: 24px; color: var(--status-late); }
+.sc-attn-warn .sc-attn-go { color: var(--status-late); }
+.sc-attn-pulse { position: relative; width: 10px; height: 10px; border-radius: 999px; background: var(--status-late); flex: none; }
+.sc-attn-pulse::after { content: ''; position: absolute; inset: 0; border-radius: 999px; border: 2px solid var(--status-late); animation: sc-attn-ping 1.6s ease-out infinite; }
+@keyframes sc-attn-ping { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(2.6); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sc-attn-pulse::after { animation: none; } }
 .sc-ready { display: inline-flex; align-self: flex-start; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 999px; background: var(--status-present-bg); color: var(--status-present); font-size: 14px; font-weight: 600; }
 
 .sc-kpi-hero { display: flex; align-items: center; gap: 16px; }

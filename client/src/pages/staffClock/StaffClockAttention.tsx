@@ -9,21 +9,24 @@ import { useToast } from '../../context/ToastContext';
  * Dashboard "Attention": only what stops or spoils staff check-in, one tile each,
  * one tap to the fix. Nothing to fix -> a single "Ready" pill.
  */
-type Tone = 'red' | 'amber' | 'blue';
-interface Item { key: string; tone: Tone; icon: React.ReactNode; value?: number; label: string; to?: string; onClick?: () => void }
+type Tone = 'red' | 'amber' | 'warn';
+interface Item { key: string; tone: Tone; icon: React.ReactNode; value?: number; label: string; hint: string; to?: string; onClick?: () => void }
 
 export const AttentionStrip: React.FC<{ data: Overview; canSetup: boolean; onReview: () => void; onPhones: () => void }> = ({ data, canSetup, onReview, onPhones }) => {
   const h = data.health;
   const items: Item[] = [];
+  const waiting = data.phones.pending.length;
+  // A phone waiting for approval comes first and keeps pulsing until someone decides:
+  // that person cannot check in meanwhile.
+  if (waiting) items.push({ key: 'pending', tone: 'warn', icon: <Smartphone size={16} />, value: waiting, label: waiting === 1 ? 'phone waiting' : 'phones waiting', hint: `${waiting} new ${waiting === 1 ? 'phone is' : 'phones are'} waiting for approval. Until you decide, ${waiting === 1 ? 'that person' : 'those people'} cannot check in.`, onClick: onPhones });
   if (h) {
-    if (!h.google) items.push({ key: 'google', tone: 'red', icon: <KeyRound size={18} />, label: 'Google sign-in not set up', to: canSetup ? '/staff/clock/setup?step=google' : undefined });
-    if (!h.zones) items.push({ key: 'zone', tone: 'red', icon: <MapPin size={18} />, label: 'No school zone', to: canSetup ? '/staff/clock/setup?step=zone' : undefined });
-    if (!h.enabled) items.push({ key: 'open', tone: 'red', icon: <Power size={18} />, label: 'Check-in is off', to: canSetup ? '/staff/clock/setup?step=open' : undefined });
-    if (h.zones && !h.tested) items.push({ key: 'tested', tone: 'amber', icon: <ClipboardCheck size={18} />, label: 'Zone not tested', to: canSetup ? '/staff/clock/setup?step=test' : undefined });
-    if (h.unregistered > 0) items.push({ key: 'phones', tone: 'amber', icon: <Smartphone size={18} />, value: h.unregistered, label: h.unregistered === 1 ? 'staff without a phone' : 'staff without a phone', to: '/staff/clock/devices' });
+    if (!h.google) items.push({ key: 'google', tone: 'red', icon: <KeyRound size={16} />, label: 'Set up Google', hint: 'Google sign-in is not set up', to: canSetup ? '/staff/clock/setup?step=google' : undefined });
+    if (!h.zones) items.push({ key: 'zone', tone: 'red', icon: <MapPin size={16} />, label: 'Add a zone', hint: 'The school has no check-in zone', to: canSetup ? '/staff/clock/setup?step=zone' : undefined });
+    if (!h.enabled) items.push({ key: 'open', tone: 'red', icon: <Power size={16} />, label: 'Check-in is off', hint: 'Staff check-in is switched off', to: canSetup ? '/staff/clock/setup?step=open' : undefined });
+    if (h.zones && !h.tested) items.push({ key: 'tested', tone: 'amber', icon: <ClipboardCheck size={16} />, label: 'Test the zone', hint: 'The zone has not been tested yet', to: canSetup ? '/staff/clock/setup?step=test' : undefined });
+    if (h.unregistered > 0) items.push({ key: 'phones', tone: 'amber', icon: <Smartphone size={16} />, value: h.unregistered, label: 'no phone', hint: `${h.unregistered} staff have not registered a phone`, to: '/staff/clock/devices' });
   }
-  if (data.phones.pending.length) items.push({ key: 'pending', tone: 'blue', icon: <Smartphone size={18} />, value: data.phones.pending.length, label: 'phone waiting approval', onClick: onPhones });
-  if (data.kpis.needsReview) items.push({ key: 'review', tone: 'amber', icon: <ShieldAlert size={18} />, value: data.kpis.needsReview, label: 'unusual check-in', onClick: onReview });
+  if (data.kpis.needsReview) items.push({ key: 'review', tone: 'amber', icon: <ShieldAlert size={16} />, value: data.kpis.needsReview, label: 'to review', hint: `${data.kpis.needsReview} unusual check-in${data.kpis.needsReview === 1 ? '' : 's'} to review`, onClick: onReview });
 
   if (!items.length) {
     return (
@@ -35,19 +38,18 @@ export const AttentionStrip: React.FC<{ data: Overview; canSetup: boolean; onRev
   return (
     <section className="sc-attn" aria-label="Needs attention">
       {items.map((it) => {
+        const cls = `sc-attn-item sc-attn-${it.tone}`;
         const body = (
           <>
-            <span className={`sc-attn-ico sc-attn-${it.tone}`}>{it.icon}</span>
-            <span className="sc-attn-text">
-              {it.value != null && <b>{it.value}</b>}
-              <span>{it.label}</span>
-            </span>
-            {(it.to || it.onClick) && <ArrowRight size={16} className="sc-attn-go" />}
+            {it.tone === 'warn' && <i className="sc-attn-pulse" aria-hidden="true" />}
+            <span className="sc-attn-ico">{it.icon}</span>
+            <span className="sc-attn-text">{it.value != null && <b>{it.value}</b>}{it.label}</span>
+            {(it.to || it.onClick) && <ArrowRight size={15} className="sc-attn-go" />}
           </>
         );
-        if (it.to) return <Link key={it.key} to={it.to} className="sc-attn-item" data-attn={it.key}>{body}</Link>;
-        if (it.onClick) return <button key={it.key} type="button" onClick={it.onClick} className="sc-attn-item" data-attn={it.key}>{body}</button>;
-        return <div key={it.key} className="sc-attn-item" data-attn={it.key}>{body}</div>;
+        if (it.to) return <Link key={it.key} to={it.to} className={cls} data-attn={it.key} title={it.hint} aria-label={it.hint}>{body}</Link>;
+        if (it.onClick) return <button key={it.key} type="button" onClick={it.onClick} className={cls} data-attn={it.key} title={it.hint} aria-label={it.hint} role={it.tone === 'warn' ? 'alert' : undefined}>{body}</button>;
+        return <div key={it.key} className={cls} data-attn={it.key} title={it.hint}>{body}</div>;
       })}
     </section>
   );
