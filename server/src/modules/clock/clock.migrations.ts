@@ -94,6 +94,27 @@ export async function migrateStaffClock(db: Database): Promise<void> {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS ux_clock_card_user_active ON staff_clock_cards(user_id) WHERE status = 'active';
 
+    /* Reminders (reminders.ts): the phone's Web Push subscription, and what was already sent. */
+    CREATE TABLE IF NOT EXISTS staff_clock_push (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      device_id INTEGER NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      lang TEXT NOT NULL DEFAULT 'en',
+      created_at TEXT NOT NULL,
+      last_ok_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ix_clock_push_device ON staff_clock_push(device_id);
+    CREATE TABLE IF NOT EXISTS staff_clock_reminders (
+      user_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, date, kind)
+    );
+
     /* A person's own working week (workPlan.ts): dated versions, days NULL = the school's rules. */
     CREATE TABLE IF NOT EXISTS staff_work_plans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,6 +155,9 @@ export async function migrateStaffClock(db: Database): Promise<void> {
     ['client_skew_ms', 'INTEGER'],
     ['in_by', 'TEXT'],
     ['out_by', 'TEXT'],
+    /* a forgotten check-out: the time the person says they left (HH:MM), for the office to confirm */
+    ['out_claim', 'TEXT'],
+    ['out_claim_at', 'TEXT'],
   ];
   for (const [name, type] of add) {
     if (!cols.has(name)) await db.run(`ALTER TABLE staff_attendance ADD COLUMN ${name} ${type}`);

@@ -47,6 +47,9 @@ export const SCHOOL_SETTING_DEFAULTS = {
    *  review while its circle still reaches the school, or refuse it. */
   STAFF_CLOCK_WEAK_LOCATION: 'review',
   STAFF_CLOCK_WEAK_MAX_ACCURACY_M: '500',
+  /** Minutes before a person's own start / end that their phone reminds them to check
+   *  in / out (modules/clock/reminders.ts). 0 = no reminders. */
+  STAFF_CLOCK_REMIND_MINUTES: '15',
   /** allow_flag | refuse -- a tap on a day outside SCHOOL_DAYS or an RFID day off. */
   STAFF_CLOCK_NON_SCHOOL_DAYS: 'allow_flag',
   /** Staff the MIS knows as non-students but who hold no Tendo role may still clock. */

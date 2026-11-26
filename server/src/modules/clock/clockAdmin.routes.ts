@@ -10,7 +10,7 @@ import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettin
 import { currentTenant } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
 import { schoolBranding } from '../../routes/sso.js';
-import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
+import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, needsReview, scanCard, setManualCheckout } from './clock.service.js';
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 import { buildReport, reportStaff } from './clockReport.js';
@@ -74,6 +74,7 @@ const RulesBody = z.object({
   googleDomains: z.string().max(400).regex(/^[a-z0-9.,\s@-]*$/i, 'List domains like gmail.com, school.rw').optional(),
   schoolNetworks: z.string().max(400).refine((v) => validCidrList(v), 'List IPv4 addresses or ranges like 41.186.10.0/24').optional(),
   weakLocation: z.enum(['review', 'refuse']).optional(),
+  remindMinutes: z.number().int().min(0, 'Use 0 to turn reminders off.').max(120, 'Remind at most 120 minutes before.').optional(),
   nonSchoolDays: z.enum(['allow_flag', 'refuse']).optional(),
   allowUnassignedStaff: z.boolean().optional(),
   /** Mark setup checklist steps done (merged with the ones already done). */
@@ -103,6 +104,7 @@ router.put('/config', authorizePermission('STAFF_ATTENDANCE_ZONES_MANAGE'), asyn
       ['googleDomains', 'STAFF_CLOCK_GOOGLE_DOMAINS', (v) => String(v).trim()],
       ['schoolNetworks', 'STAFF_CLOCK_SCHOOL_NETWORKS', (v) => String(v).trim()],
       ['weakLocation', 'STAFF_CLOCK_WEAK_LOCATION', String],
+      ['remindMinutes', 'STAFF_CLOCK_REMIND_MINUTES', String],
       ['nonSchoolDays', 'STAFF_CLOCK_NON_SCHOOL_DAYS', String],
       ['allowUnassignedStaff', 'STAFF_CLOCK_ALLOW_UNASSIGNED_STAFF', (v) => (v ? '1' : '0')],
     ];
@@ -265,6 +267,7 @@ const FLAG_TEXT: Record<string, string> = {
   clock_skew: 'Device clock is wrong',
   non_school_day: 'Not a working day for them',
   on_school_network: 'On the school network',
+  manual: 'Check-out time entered by the office',
   weak_location: 'Imprecise location on their own network: check they were at school',
   phone_location: 'Used a phone’s location (QR code on a computer)',
 };
@@ -406,14 +409,14 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const endOf = (id: string) => ruleOf.get(id)?.earlyBefore ?? timeToMinutes(rules.earlyLeaveBefore);
     const outOpen = date !== today || nowMin >= Math.min(timeToMinutes(rules.earlyLeaveBefore), ...valid.filter((r) => r.clock_in && !r.clock_out).map((r) => endOf(String(r.staff_id))));
     const noCheckoutToday = outOpen
-      ? valid.filter((r) => r.clock_in && !r.clock_out && (date !== today || nowMin >= endOf(String(r.staff_id)))).map((r) => ({ userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed' }))
+      ? valid.filter((r) => r.clock_in && !r.clock_out && (date !== today || nowMin >= endOf(String(r.staff_id)))).map((r) => ({ recordId: r.id, userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed', claim: r.out_claim ?? null }))
       : [];
     const recentNoCheckout = (await db.all<any[]>(
-      `SELECT staff_id, staff_name, date, clock_in, out_status FROM staff_attendance
+      `SELECT id, staff_id, staff_name, date, clock_in, out_status, out_claim FROM staff_attendance
         WHERE date >= ? AND date < ? AND clock_in IS NOT NULL AND clock_out IS NULL AND COALESCE(review_state,'') <> 'invalid'
         ORDER BY date DESC, staff_name`,
       addDays(date, -7), date
-    )).map((r) => ({ userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed' }));
+    )).map((r) => ({ recordId: r.id, userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed', claim: r.out_claim ?? null }));
 
     // What still stops staff from checking in, for the setup-health strip.
     const zones = await loadZones(db, true);
@@ -566,7 +569,7 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
     const lateAfter = staffLateCutoffMinutes();
 
     const records = await db.all<any[]>(
-      `SELECT date, clock_in, clock_out, status, out_status, review_state, source, flags, staff_name FROM staff_attendance WHERE staff_id = ? AND date >= ? AND date <= ? ORDER BY date`,
+      `SELECT id, date, clock_in, clock_out, status, out_status, review_state, source, flags, staff_name, out_claim FROM staff_attendance WHERE staff_id = ? AND date >= ? AND date <= ? ORDER BY date`,
       id, from, to
     );
     // Before the school's first staff check-in there is nothing to count as absent.
@@ -584,7 +587,7 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
     const rawName = cachedRoster?.name || user?.name || records[records.length - 1]?.staff_name || 'Staff member';
     const name = fullName(...String(rawName).split(/\s+/)) || 'Staff member';
 
-    const out: Array<{ date: string; kind: DayKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean; start: string | null; end: string | null; extra: boolean }> = [];
+    const out: Array<{ date: string; kind: DayKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean; start: string | null; end: string | null; extra: boolean; recordId: number | null; claim: string | null; manualOut: boolean }> = [];
     const sum = { schoolDays: 0, attended: 0, onTime: 0, late: 0, absent: 0, noOut: 0, early: 0 };
     const inMinutes: number[] = [];
     for (let d = from; d <= to; d = addDays(d, 1)) {
@@ -606,7 +609,8 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
       const minutes = r?.clock_in && r?.clock_out ? Math.max(0, Math.round((Date.parse(r.clock_out) - Date.parse(r.clock_in)) / 60000)) : null;
       // Came on a day they were not expected: it counts for them, never against.
       const extra = !schoolDay && (kind === 'on_time' || kind === 'late');
-      out.push({ date: d, kind, in: inLabel, out: outLabel, early, noOut, minutes, card: r?.source === 'card', start: schoolDay ? rule.start : null, end: schoolDay ? rule.end : null, extra });
+      out.push({ date: d, kind, in: inLabel, out: outLabel, early, noOut, minutes, card: r?.source === 'card', start: schoolDay ? rule.start : null, end: schoolDay ? rule.end : null, extra,
+        recordId: r?.id ?? null, claim: r?.out_claim ?? null, manualOut: !!r?.flags && String(r.flags).includes('out:manual') });
       if (schoolDay && d >= trackingFrom && d < today) sum.schoolDays += 1;
       else if (schoolDay && d === today && r?.clock_in) sum.schoolDays += 1;
       else if (extra || (schoolDay && d < trackingFrom && (kind === 'on_time' || kind === 'late'))) sum.schoolDays += 1;
@@ -755,6 +759,23 @@ router.get('/document-brand', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), 
   }
   docBrandCache.set(tenant.tid, { at: url && !value.logo ? Date.now() - 9 * 60_000 : Date.now(), value });
   return res.json({ success: true, data: value });
+});
+
+/** The office records when someone left on a day they forgot to check out. */
+const CheckoutBody = z.object({ time: TIME, note: z.string().max(300).optional() });
+
+router.post('/attendance/:id/checkout', authorizePermission('STAFF_DEVICES_MANAGE'), async (req: any, res) => {
+  try {
+    const b = CheckoutBody.parse(req.body ?? {});
+    const db = getDb();
+    const actor = actorOf(req);
+    const { row, outStatus } = await setManualCheckout(db, Number(req.params.id), b.time, actor.id);
+    await recordAudit(db, actor, 'STAFF_CLOCK_CHECKOUT_SET', 'staff_attendance', row.id,
+      { staff: row.staff_name, date: row.date, time: b.time, saidByStaff: row.out_claim ?? undefined, note: b.note, outStatus }, { required: true });
+    return res.json({ success: true, message: `Check-out saved: ${b.time}`, data: { outStatus } });
+  } catch (err) {
+    return fail(res, err);
+  }
 });
 
 const ReviewBody = z.object({ decision: z.enum(['accepted', 'invalid']), note: z.string().max(500).optional() });
