@@ -320,7 +320,7 @@ async function staffRoster(req: any, db: ReturnType<typeof getDb>, site: string)
     }
   }
   if (roster.length === 0) {
-    roster = (await db.all<any[]>(`SELECT id, name, role FROM users WHERE role IN ('teacher','admin') AND COALESCE(status,'active') <> 'inactive'`)).map((u) => ({ id: String(u.id), name: u.name, role: u.role }));
+    roster = (await db.all<any[]>(`SELECT id, name, role FROM users WHERE role IN ('teacher','admin') AND COALESCE(status,'active') <> 'inactive' AND COALESCE(school_member, 1) = 1`)).map((u) => ({ id: String(u.id), name: u.name, role: u.role }));
     rosterSource = 'local';
   }
   return { roster, rosterSource };
@@ -343,10 +343,13 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const activeByUser = new Map(devices.filter((d) => d.status === 'active').map((d) => [String(d.user_id), d]));
 
     const { roster, rosterSource } = await staffRoster(req, db, 'overview');
-    const roleOf = new Map((await db.all<any[]>(`SELECT id, role FROM users`)).map((u) => [String(u.id), u.role]));
+    const locals = await db.all<any[]>(`SELECT id, role, school_member FROM users`);
+    const roleOf = new Map(locals.map((u) => [String(u.id), u.role]));
+    // People this school's MIS no longer lists (school_member = 0) never come back through old records.
+    const otherSchool = new Set(locals.filter((u) => u.school_member === 0).map((u) => String(u.id)));
     const people = new Map<string, { id: string; name: string; role: string | null }>();
     for (const p of roster) people.set(p.id, { id: p.id, name: p.name, role: p.role ?? roleOf.get(p.id) ?? null });
-    for (const r of records) if (!people.has(String(r.staff_id))) people.set(String(r.staff_id), { id: String(r.staff_id), name: r.staff_name, role: roleOf.get(String(r.staff_id)) ?? null });
+    for (const r of records) if (!people.has(String(r.staff_id)) && !otherSchool.has(String(r.staff_id))) people.set(String(r.staff_id), { id: String(r.staff_id), name: r.staff_name, role: roleOf.get(String(r.staff_id)) ?? null });
 
     const recordByUser = new Map(records.map((r) => [String(r.staff_id), r]));
     const ruleOf = new Map<string, DayRule>([...people.keys()].map((id) => [id, book.dayFor(id, date)]));

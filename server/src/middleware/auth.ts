@@ -72,7 +72,11 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       message: 'This session carries no school. Please sign in again.',
     });
   }
-  if (misTid != null && misTid !== gate.tenant.tid) {
+  // A token naming no school is answered by the MIS in its legacy school (1):
+  // compare with that, so a school-2 session can never carry it and read
+  // school 1's people (the "other school's staff in my lists" bug).
+  const misSchool = decoded.misToken ? (misTid ?? legacyDefaultTid()) : null;
+  if (misSchool != null && misSchool !== gate.tenant.tid) {
     return res.status(401).json({
       success: false,
       code: 'TENANT_MISMATCH',
