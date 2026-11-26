@@ -36,6 +36,10 @@ export const searchCatalog: SearchItem[] = [
     roles: ['admin'], keywords: ['staff attendance', 'staff clock', 'check-ins', 'late staff', 'teachers attendance'],
   },
   {
+    label: 'Gate view', description: 'Live at the gate: who is in, who is still expected, who just arrived, remind them', path: '/staff/clock/gate',
+    roles: ['admin'], keywords: ['gate', 'live', 'arrivals', 'who is here', 'monitor staff', 'staff attendance now', 'late staff', 'remind staff', 'entrance'],
+  },
+  {
     label: 'Staff phones & QR cards', description: 'Approve or remove staff phones; print QR cards for staff without a smartphone', path: '/staff/clock/devices',
     roles: ['admin'], keywords: ['devices', 'phones', 'tablets', 'qr cards', 'staff cards', 'approve phone'],
   },

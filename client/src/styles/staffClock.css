@@ -1263,3 +1263,16 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
 .zc-drawer-state { overflow: hidden; }
 /* Narrow panel: the day's four short lines stack, so a time never touches the next label. */
 @media (max-width: 720px) { .zr-day figcaption { grid-template-columns: minmax(0, 1fr); } }
+
+/* Ways into the Gate view: the dashboard's "Right now" card, the tabs, Tendo Home */
+.now-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.now-gate { height: 44px; }
+.sc-tab-live { width: 7px; height: 7px; border-radius: 999px; background: var(--primary); }
+.sc-home-gate { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 18px 8px 10px; border-radius: 999px; background: var(--primary); color: #fff; text-decoration: none; }
+.sc-home-gate:hover { background: var(--primary-hover); }
+.sc-home-gate:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sc-home-gate-ico { width: 40px; height: 40px; border-radius: 999px; background: rgba(255, 255, 255, 0.18); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.sc-home-gate-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.sc-home-gate-text b { font-size: 15.5px; font-weight: 700; }
+.sc-home-gate-text small { font-size: 13px; color: #fff; opacity: 0.92; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) { .now-head-actions { width: 100%; } .now-gate { flex: 1; } }
