@@ -90,6 +90,8 @@ async function context(browser, { width, height, theme, mobile = false }) {
     if (p === '/api/sso/verify-mis') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
     if (p === '/api/roles-permissions/me') return ok({ permissionKeys: PERMS });
     if (p === '/api/staff/clock/overview') return ok(overview(state));
+    // The push connection: "something changed" when the test says someone just checked in.
+    if (p === '/api/staff/clock/stream') { const push = state.push; state.push = false; return route.fulfill({ status: 200, contentType: 'text/event-stream', body: push ? 'event: check_in\ndata: {"type":"check_in"}\n\n' : 'event: ready\ndata: {}\n\n' }); }
     if (p === '/api/staff/clock/nudge') {
       const body = route.request().postDataJSON();
       state.nudges.push(body);
@@ -180,10 +182,47 @@ async function run(browser, vp) {
     await page.locator('.gt-chips button', { hasText: 'Late 2' }).click();
     check((await page.locator('[data-testid="gate-waiting"] .gt-row').count()) === 2, `${tag}: Late filter`);
     await page.locator('.gt-chips button', { hasText: 'All 7' }).click();
+    // The numbers on the left are filters: each one opens the people behind it.
+    const nEvents = () => page.locator('[data-testid="gate-events"] .gt-event').count();
+    const count = (k) => page.locator(`[data-count="${k}"]`);
+    check((await page.locator('[data-testid="gate-counts"] button').count()) === 5, `${tag}: the five numbers are not buttons`);
+    await count('ok').click();
+    check((await nEvents()) === 6 && !(await texts(page, '[data-testid="gate-events"] .gt-tag')).some((t) => t.includes('late')), `${tag}: On time filter shows ${await nEvents()}`);
+    check(!(await visible(page, '[data-testid="gate-checks"]')), `${tag}: checks shown under the On time filter`);
+    await count('warn').click();
+    check(JSON.stringify(await texts(page, '[data-testid="gate-events"] .gt-tag')) === JSON.stringify(['8 min late']), `${tag}: Arrived late filter`);
+    check((await count('warn').getAttribute('aria-pressed')) === 'true', `${tag}: the chosen number is not marked`);
+    await count('warn').click(); // again: everyone
+    check((await nEvents()) === 7, `${tag}: second click does not show everyone`);
+    await count('check').click();
+    check((await nEvents()) === 0 && await visible(page, '[data-testid="gate-confirm"]'), `${tag}: To check filter`);
+    await shot('2-number-filter');
+    await page.getByTestId('gate-feed-all').click();
+    check((await nEvents()) === 7, `${tag}: Show everyone`);
+    await count('off').click();
+    check((await page.locator('[data-testid="gate-waiting"] .gt-row[data-kind="off"]').count()) === 1, `${tag}: Day off number`);
+    await count('wait').click();
+    check((await page.locator('[data-testid="gate-waiting"] .gt-row').count()) === 7, `${tag}: Still expected number`);
+  }
+
+  // Real time: someone checks in, the server pushes, the screen follows within seconds (not at the 20 s refresh).
+  state.arrived.add('3');
+  state.push = true;
+  const t0 = Date.now();
+  await page.locator('.gt-ring-text', { hasText: '8' }).waitFor({ timeout: 12000 }).catch(() => fail(`${tag}: a pushed check-in did not reach the screen`));
+  check(Date.now() - t0 < 12000, `${tag}: push took ${Date.now() - t0} ms`);
+  check((await texts(page, '[data-testid="gate-waiting"] .gt-tag')).length === 6, `${tag}: the person who checked in is still listed as expected`);
+  state.arrived.delete('3');
+  await page.reload();
+  await page.getByTestId('gate-waiting').waitFor();
+  if (phone) {
+    // Each tab label keeps room on both sides and stays on one line.
+    const tabs = await page.evaluate(() => [...document.querySelectorAll('.gt-tabs button')].map((b) => { const r = document.createRange(); r.selectNodeContents(b); const t = r.getBoundingClientRect(); const o = b.getBoundingClientRect(); return { left: Math.round(t.left - o.left), right: Math.round(o.right - t.right), lines: Math.round(t.height / 20) }; }));
+    check(tabs.length === 4 && tabs.every((x) => x.left >= 7 && x.right >= 7 && x.lines <= 1), `${tag}: tab padding ${JSON.stringify(tabs)}`);
   }
 
   // Day off today: the list behind the number (a tab on a phone, the count or a filter on a desktop).
-  await page.getByTestId(phone ? 'gate-tab-off' : 'gate-off-count').click();
+  await (phone ? page.getByTestId('gate-tab-off') : page.locator('[data-count="off"]')).click();
   const offRows = await texts(page, '[data-testid="gate-waiting"] .gt-row[data-kind="off"] .gt-row-text b');
   check(JSON.stringify(offRows) === JSON.stringify(['Person Fifteen Oscar']), `${tag}: day-off list ${JSON.stringify(offRows)}`);
   check((await page.locator('[data-testid="gate-waiting"] .gt-row').count()) === 1, `${tag}: day-off list mixes in other people`);

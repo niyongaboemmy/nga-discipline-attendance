@@ -257,3 +257,31 @@
   .gt-tabs button { padding: 0 4px; font-size: 14px; }
   .gt-mini button { min-height: 32px; text-decoration: underline; text-underline-offset: 3px; }
 }
+
+/* The live dot turns amber while the push connection is being restored */
+.gt-live[data-state="wait"] { color: var(--g-warn); }
+.gt-live[data-state="wait"] i { background: var(--g-amber); }
+
+/* Phone tabs: sized by their words, with room left and right of each label */
+@media (max-width: 899px) {
+  .gt-tabs { gap: 0; }
+  .gt-tabs button { flex: 1 1 auto; padding: 0 12px; font-size: 14px; }
+  .gt-live[data-state="wait"] { color: #fcd34d; }
+  .gt-live[data-state="wait"] b { color: #fcd34d; }
+}
+@media (max-width: 374px) {
+  .gt-tabs button { padding: 0 8px; font-size: 13.5px; }
+}
+
+/* The numbers on the left are buttons: each opens the people behind it */
+.gt-counts { padding: 8px; gap: 2px; }
+.gt-counts button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 46px; padding: 0 10px 0 12px; border: 0; border-radius: 16px; background: transparent; color: var(--g-ink); font: inherit; text-align: left; cursor: pointer; }
+.gt-counts button:hover { background: var(--g-hover); }
+.gt-counts button[aria-pressed="true"] { background: var(--g-blue-soft); }
+.gt-counts button span { flex: 1; white-space: nowrap; }
+.gt-counts button b { font-size: 18px; font-weight: 700; }
+.gt-counts button svg { color: var(--g-ink2); flex: none; }
+.gt-counts button[aria-pressed="true"] svg { color: var(--g-blue-ink); }
+.gt-clear { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px 0 14px; border-radius: 999px; border: 0; background: var(--g-ink); color: var(--g-bg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.gt-checks[hidden] { display: none; }
+@media (min-width: 900px) { .gt-checks[data-only] .gt-empty-check { display: flex; } }

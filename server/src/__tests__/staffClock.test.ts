@@ -16,6 +16,7 @@ import { __resetPhoneTaps, phoneTapMessage } from '../modules/clock/phoneTap.js'
 import { __setPushSender, dueReminders, type PushPayload } from '../modules/clock/reminders.js';
 import { runReminderTick } from '../modules/clock/clock.scheduler.js';
 import { haversine, judge, onSchoolNetwork, plausibilityFlags, edgeDistance } from '../modules/clock/geofence.js';
+import { clockLive, type ClockLiveEvent } from '../modules/clock/clockLive.js';
 
 /**
  * Staff attendance clock (STAFF_ATTENDANCE_CLOCK_PLAN.md): device registration with
@@ -1017,5 +1018,33 @@ describe('another school, another timezone', () => {
     expect(r.body.data.state.schoolDate).toBe('2026-11-25');
     // The NGA file has no row for this person: data stays in its school.
     expect(await db.get(`SELECT 1 FROM staff_attendance WHERE staff_id = '201'`)).toBeUndefined();
+  });
+});
+
+describe('live changes for the Gate view', () => {
+  it('announces a check-in the moment it is saved, stamped with its school, without names', async () => {
+    now = kigali('07:20', '2026-12-01'); // a Tuesday no other test uses
+    misPerson(310, 'Live Tester', 'live.tester@gmail.com');
+    const phone = await newDevice();
+    expect((await register('nga', 'live.tester@gmail.com', phone)).status).toBe(200);
+    const seen: ClockLiveEvent[] = [];
+    const listen = (e: ClockLiveEvent) => seen.push(e);
+    clockLive.on('event', listen);
+    try {
+      const refused = await tap('nga', phone, FAR);
+      expect(refused.status).not.toBe(200);
+      expect(seen).toEqual([]); // a refused tap changes nothing
+      const ok = await tap('nga', phone, INSIDE);
+      expect(ok.status).toBe(200);
+      expect(seen.map((e) => [e.type, e.userId, e.tid])).toEqual([['check_in', '310', 1]]);
+    } finally {
+      clockLive.off('event', listen);
+    }
+  });
+
+  it('the stream needs the right to see all staff attendance', async () => {
+    expect((await request(app).get('/api/staff/clock/stream')).status).toBe(401);
+    const { token } = await createTestUser(db, { id: '311', name: 'Plain Teacher', email: 'plain@school.rw', roleLevel: 'TEACHER' });
+    expect((await request(app).get('/api/staff/clock/stream').set(authHeader(token))).status).toBe(403);
   });
 });
