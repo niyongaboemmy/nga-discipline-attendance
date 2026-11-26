@@ -4,7 +4,7 @@ import { signSession } from '../auth/sessionToken.js';
 import { config } from '../config.js';
 import { ensureTenantDb, getDb, tenantDbExists } from '../database.js';
 import {
-  gateTenant, normalizeTenant, parseTid, runWithTenant, tenantOfMisPayload, tenantRegistry, tidOfMisToken,
+  gateTenant, legacyDefaultTid, normalizeTenant, parseTid, runWithTenant, tenantOfMisPayload, tenantRegistry, tidOfMisToken,
   type TenantCtx,
 } from '../tenancy/index.js';
 import { Role, authMiddleware, AuthenticatedRequest } from '../middleware/auth.js';
@@ -290,7 +290,9 @@ router.post('/exchange', async (req: Request, res: Response) => {
     // session never lands in school 1 by accident.
     const bodyTenant = tenantOfMisPayload(result.data);
     const tokenTid = tidOfMisToken(misToken);
-    if (bodyTenant && tokenTid != null && bodyTenant.tid !== tokenTid) {
+    // A token naming no school is answered in the legacy school (1) by the MIS.
+    const tokenSchool = tokenTid ?? legacyDefaultTid();
+    if (bodyTenant && tokenSchool != null && bodyTenant.tid !== tokenSchool) {
       return res.status(401).json({ success: false, code: 'TENANT_MISMATCH', message: 'The MIS answered for two different schools.' });
     }
     const gate = await gateTenant(bodyTenant?.tid ?? tokenTid ?? null);
