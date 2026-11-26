@@ -16,7 +16,48 @@
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/clock.webmanifest" />
+    <link rel="manifest" id="ck-manifest" href="/clock.webmanifest" />
+    <script>
+      // The Home Screen icon must open THIS school: point the install manifest at the school in the address.
+      (function () {
+        try {
+          var m = location.pathname.match(/^\/c\/([A-Za-z0-9-]{1,63})\/?$/);
+          if (m) document.getElementById('ck-manifest').setAttribute('href', '/api/clock/' + m[1].toLowerCase() + '/manifest.webmanifest');
+        } catch (e) { /* keep the shared manifest */ }
+      })();
+      // Never a blank page. If the page's script cannot load (an old copy asking for a file a new
+      // release removed) or nothing appears in a few seconds: drop the saved copies and load again,
+      // once; after that, say so with a button.
+      (function () {
+        var KEY = 'tendo.clock.recovered';
+        function fresh() {
+          var done = function () { location.replace(location.pathname + location.search); };
+          try {
+            sessionStorage.setItem(KEY, String(Date.now()));
+            var jobs = [];
+            if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+            if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+            Promise.all(jobs).then(done, done);
+            setTimeout(done, 3000);
+          } catch (e) { done(); }
+        }
+        function recover() {
+          var root = document.getElementById('clock-root');
+          if (root && root.childElementCount) return;
+          var tried = 0;
+          try { tried = Number(sessionStorage.getItem(KEY) || 0); } catch (e) { /* private mode */ }
+          if (!tried || Date.now() - tried > 120000) return fresh();
+          if (!root) return;
+          root.innerHTML = '<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:32px;text-align:center;font-family:system-ui,sans-serif">'
+            + '<b style="font-size:22px">The check-in page could not open</b>'
+            + '<span style="font-size:16px;opacity:.75;max-width:320px">Check your internet connection, then try again.</span>'
+            + '<button id="ck-retry" style="height:56px;padding:0 28px;border-radius:999px;border:0;background:#2563eb;color:#fff;font-size:17px;font-weight:600">Try again</button></div>';
+          document.getElementById('ck-retry').onclick = fresh;
+        }
+        window.addEventListener('error', function (e) { var t = e && e.target; if (t && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) recover(); }, true);
+        window.addEventListener('load', function () { setTimeout(recover, 7000); });
+      })();
+    </script>
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#030712" media="(prefers-color-scheme: dark)" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />

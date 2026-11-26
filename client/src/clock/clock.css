@@ -919,3 +919,18 @@ span.ck-cal-cell { cursor: default; }
 .ck-sheet h2 { letter-spacing: -0.4px; }
 
 .ck-sheet .ck-stat { border: 0; background: var(--ck-fill); }
+
+/* Help: sign this device out */
+.ck-signout { align-items: center; gap: 12px; }
+.ck-signout-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ck-signout-who small { font-size: 13px; color: var(--ck-faint); }
+.ck-signout-actions { display: inline-flex; gap: 8px; flex: none; }
+.ck-pill-danger { color: #dc2626; border-color: rgba(220, 38, 38, .4); font-weight: 600; }
+[data-theme='dark'] .ck-pill-danger { color: #ff6961; border-color: rgba(255, 105, 97, .45); }
+
+/* Opened without a school: type the school's code */
+.ck-code { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 360px; text-align: left; }
+.ck-code-label { font-size: 14px; font-weight: 600; color: var(--ck-muted); }
+.ck-code-row { display: flex; gap: 8px; }
+.ck-code-row .ck-time { height: 52px; border: 1px solid var(--ck-border-strong); background: transparent; color: var(--ck-text); font-size: 17px; }
+.ck-code-row .ck-x-btn { height: 52px; padding: 0 22px; font-size: 16px; }

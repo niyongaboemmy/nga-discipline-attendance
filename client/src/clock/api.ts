@@ -167,6 +167,11 @@ export const clockApi = {
   me: (slug: string, token: string) => call<Me>(slug, '/me', { token }),
   challenge: (slug: string, token: string) => call<{ nonce: string; expiresIn: number; serverNow: string }>(slug, '/challenge', { method: 'POST', token, body: '{}' }),
   punch: (slug: string, token: string, payload: Record<string, unknown>) => call<PunchResult>(slug, '/punch', { method: 'POST', token, body: JSON.stringify(payload) }),
+  /** A short-lived code the installed app (Home Screen) trades for its own sign-in on the same phone. */
+  handoff: (slug: string, token: string) => call<{ code: string; expiresIn: number }>(slug, '/handoff', { method: 'POST', token, body: '{}' }),
+  claimHandoff: (slug: string, payload: Record<string, unknown>) => call<Registered>(slug, '/handoff/claim', { method: 'POST', body: JSON.stringify(payload) }),
+  /** Sign this device out: the page asks for Google sign-in again. */
+  signOut: (slug: string, token: string) => call<{ signedOut: boolean }>(slug, '/signout', { method: 'POST', token, body: '{}' }),
   calendar: (slug: string, token: string, month?: string) => call<MyCalendar>(slug, `/calendar${month ? `?month=${month}` : ''}`, { token }),
   pushOn: (slug: string, token: string, payload: { subscription: unknown; lang: string; test?: boolean }) =>
     call<{ on: boolean; tested: boolean }>(slug, '/push', { method: 'POST', token, body: JSON.stringify(payload) }),

@@ -96,6 +96,7 @@ function mockServer(opts = {}) {
       if (opts.noAccount) return route.fulfill(err(404, 'NO_ACCOUNT', 'No staff account', { email: 'grace.phone@gmail.com' }));
       if (!body.confirm) return route.fulfill(ok({ preview: true, deviceStatus: st.deviceStatus, replaces: false, person, email: opts.email || 'grace.mukamana@gmail.com' }));
       st.registered = true;
+      st.revoked = false;
       return route.fulfill(ok({ deviceToken: 'tok_' + 'x'.repeat(40), deviceStatus: st.deviceStatus, replaced: false, person, email: 'grace.mukamana@gmail.com' }));
     }
     if (st.revoked) return route.fulfill(err(401, 'DEVICE_REVOKED', 'removed'));
@@ -128,6 +129,14 @@ function mockServer(opts = {}) {
       }
       return route.fulfill(ok({ month, today: '2026-11-24', min: '2025-11', max: '2027-05', days, summary: sum }));
     }
+    if (p === '/manifest.webmanifest') return route.fulfill({ status: 200, contentType: 'application/manifest+json', body: JSON.stringify({ id: '/c/nga', start_url: u.searchParams.get('h') ? `/c/nga?h=${u.searchParams.get('h')}` : '/c/nga', scope: '/c/', display: 'standalone', name: 'New Generation Academy · Check-in', short_name: 'Check-in', icons: [] }) });
+    if (p === '/handoff') return route.fulfill(ok({ code: 'HANDOFFCODE_abcdefghijklmnop12345', expiresIn: 900 }));
+    if (p === '/handoff/claim') {
+      if (body.code !== 'HANDOFFCODE_abcdefghijklmnop12345' || !body.publicKeyJwk) return route.fulfill(err(410, 'HANDOFF_EXPIRED', 'expired'));
+      st.registered = true;
+      return route.fulfill(ok({ deviceToken: 'tok_' + 'h'.repeat(40), deviceStatus: 'active', replaced: false, person, email: 'grace.mukamana@gmail.com' }));
+    }
+    if (p === '/signout') { st.registered = false; st.revoked = true; return route.fulfill(ok({ signedOut: true })); }
     if (p === '/challenge') return route.fulfill(ok({ nonce: 'n' + Math.random().toString(36).slice(2), expiresIn: 60, serverNow: st.now }));
     if (p === '/punch') {
       const d = Math.abs(body.position.lat - SCHOOL.lat) * 111195;
@@ -503,6 +512,75 @@ async function extrasFlow(browser, theme) {
   await off.ctx.close();
 }
 
+/** The installed app (Add to Home Screen): opens this school, takes over the sign-in, recovers from a bad copy; sign out in Help. */
+async function installedFlow(browser, theme) {
+  const tag = `installed-${theme}`;
+  const vp = VIEWPORTS[0];
+  const server = mockServer({});
+
+  // 1. In the browser: the install manifest is this school's, and carries a sign-in code once signed in.
+  const a = await newPage(browser, vp, theme, { server });
+  await a.page.goto(`${BASE}/c/nga`);
+  const href0 = await a.page.locator('#ck-manifest').getAttribute('href');
+  if (href0 !== '/api/clock/nga/manifest.webmanifest') fail(`${tag}: the install manifest is not this school's (${href0})`);
+  await a.page.getByTestId('gis').click();
+  await a.page.getByRole('button', { name: /Yes, this is my/ }).click();
+  const allow = a.page.getByRole('button', { name: 'Allow location' });
+  if (await allow.isVisible().catch(() => false)) await allow.click();
+  await a.page.locator('.ck-big').waitFor();
+  await a.page.waitForFunction(() => (document.getElementById('ck-manifest')?.getAttribute('href') || '').includes('?h=HANDOFFCODE'), null, { timeout: 8000 })
+    .catch(() => fail(`${tag}: the install manifest does not carry a sign-in code after sign-in`));
+
+  // 2. Sign out from Help: the page forgets the device and asks for Google again.
+  await a.page.getByRole('button', { name: 'Help' }).click();
+  await a.page.getByTestId('signout').click();
+  await expectText(a.page, 'Sign out of this device?', `${tag} sign-out confirm`);
+  await a.page.waitForTimeout(300);
+  await shot(a.page, `${tag}-50-signout-confirm`);
+  await a.page.getByTestId('signout-yes').click();
+  await a.page.getByTestId('gis').waitFor({ timeout: 8000 }).catch(() => fail(`${tag}: no Google sign-in after signing out`));
+  if (await a.page.locator('.ck-big').count()) fail(`${tag}: still on the daily screen after signing out`);
+  await a.ctx.close();
+
+  // 3. The installed app: empty storage, started from the icon with the code. No Google step.
+  const b = await newPage(browser, vp, theme, { server: mockServer({}) });
+  await b.page.goto(`${BASE}/c/nga?h=HANDOFFCODE_abcdefghijklmnop12345`);
+  const allow2 = b.page.getByRole('button', { name: 'Allow location' });
+  await Promise.race([b.page.locator('.ck-big').waitFor({ timeout: 10000 }), allow2.waitFor({ timeout: 10000 })]).catch(() => fail(`${tag}: the installed app did not take over the sign-in`));
+  if (await allow2.isVisible().catch(() => false)) await allow2.click();
+  await b.page.locator('.ck-big').waitFor();
+  if (await b.page.getByTestId('gis').count()) fail(`${tag}: the installed app still asks for Google`);
+  if (new URL(b.page.url()).search) fail(`${tag}: the sign-in code stayed in the address`);
+  // An expired code falls back to the normal sign-in.
+  const c = await newPage(browser, vp, theme, { server: mockServer({}) });
+  await c.page.goto(`${BASE}/c/nga?h=EXPIREDEXPIREDEXPIREDEXPIRED12`);
+  await c.page.getByTestId('gis').waitFor({ timeout: 8000 }).catch(() => fail(`${tag}: an expired code did not fall back to Google sign-in`));
+  await b.ctx.close();
+  await c.ctx.close();
+
+  // 4. An old icon that starts without a school: type the school's code.
+  const d = await newPage(browser, vp, theme, { server: mockServer({}) });
+  await d.page.goto(`${BASE}/c/`);
+  await expectText(d.page, 'Your school’s code', `${tag} school code field`);
+  await d.page.getByLabel('Your school’s code').fill('NGA');
+  await d.page.waitForTimeout(200);
+  await shot(d.page, `${tag}-51-school-code`);
+  await d.page.getByRole('button', { name: 'Open' }).click();
+  await d.page.waitForURL(`${BASE}/c/nga`, { timeout: 8000 }).catch(() => fail(`${tag}: the school code did not open the school`));
+  await d.page.getByTestId('gis').waitFor();
+  await d.ctx.close();
+
+  // 5. Never blank: the page's script answered with a web page (a removed file) -> one clean reload, then a message with a button.
+  const e = await newPage(browser, vp, theme, { server: mockServer({}) });
+  let asked = 0;
+  await e.ctx.route('**/assets/clock-*.js', (r) => { asked += 1; return r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><html><body>app page</body></html>' }); });
+  await e.page.goto(`${BASE}/c/nga`);
+  await e.page.getByText('The check-in page could not open').waitFor({ timeout: 20000 }).catch(() => fail(`${tag}: a broken script leaves the page blank`));
+  if (asked < 2) fail(`${tag}: the page did not try one clean reload first`);
+  await shot(e.page, `${tag}-52-could-not-open`);
+  await e.ctx.close();
+}
+
 async function main() {
   const preview = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], { stdio: 'ignore' });
   try {
@@ -524,6 +602,8 @@ async function main() {
     }
     for (const theme of ['light', 'dark']) await extrasFlow(browser, theme);
     console.log('ok missed check-out + reminders card');
+    for (const theme of ['light', 'dark']) await installedFlow(browser, theme);
+    console.log('ok installed app, sign out, recovery');
     for (const theme of ['light', 'dark']) await weakGpsFlow(browser, theme);
     console.log('ok own network, weak GPS');
     for (const theme of ['light', 'dark']) await phoneTapFlow(browser, theme);

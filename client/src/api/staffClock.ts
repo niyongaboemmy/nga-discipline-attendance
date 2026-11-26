@@ -162,6 +162,8 @@ export interface MyWeek {
   today: string; nowMinutes: number; own: boolean; days: MyWeekDay[];
   summary: { workDays: number; worked: number; late: number; absent: number; daysOff: number; plannedMinutes: number; left: number };
   month: { workDays: number; worked: number; late: number; absent: number };
+  /** the phone or browser they check in with (null: none signed in) */
+  device?: { id: number; label: string | null; form_factor: string; google_email: string; status: 'active' | 'pending'; registered_at: string; last_used_at: string | null } | null;
 }
 
 export interface DayPlan { works: boolean; start: string; end: string }
@@ -226,6 +228,8 @@ export const staffClockApi = {
   report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
   reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),
   myWeek: () => data(apiGet<MyWeek>('/api/staff/clock/my-week')),
+  /** Sign my own check-in device out (a lost phone, a shared computer). */
+  signOutMyDevice: () => apiPost('/api/staff/clock/my-device/signout'),
   /** A leader reminds named people to check in (or out) now; only phones with reminders on get it. */
   nudge: (kind: 'in' | 'out', userIds: string[]) => apiPost<{ sent: number; noReminders: number; already: number; notNeeded: number }>('/api/staff/clock/nudge', { kind, userIds }),
   /** The office records when someone left on a day they forgot to check out. */
