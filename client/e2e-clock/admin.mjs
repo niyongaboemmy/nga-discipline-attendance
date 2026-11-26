@@ -63,6 +63,15 @@ const OVERVIEW = {
     pending: [{ id: 31, user_id: '110', user_name: 'Patrick Habimana', google_email: 'patrick@gmail.com', form_factor: 'phone', label: 'Samsung A15 · Chrome', status: 'pending', registered_at: '2026-11-24T05:40:00Z', approved_at: null, last_used_at: null, revoked_at: null, revoke_reason: null }],
     unregistered: [{ id: '107', name: 'Olivier Mugisha' }, { id: '108', name: 'Solange Iradukunda' }, { id: '110', name: 'Patrick Habimana' }],
   },
+  missing: {
+    checkoutOpen: true,
+    noCheckoutToday: [{ userId: '102', name: 'Jean Bosco Niyonzima', date: '2026-11-24', checkIn: '07:51', autoClosed: false }],
+    recentNoCheckout: [
+      { userId: '104', name: 'Eric Habyarimana', date: '2026-11-21', checkIn: '07:30', autoClosed: true },
+      { userId: '105', name: 'Diane Mukeshimana', date: '2026-11-20', checkIn: '07:12', autoClosed: true },
+    ],
+  },
+  health: { google: true, zones: 1, enabled: true, tested: false, shared: false, unregistered: 3, staff: 10 },
 };
 const DEVICES = [
   OVERVIEW.phones.pending[0],
@@ -159,6 +168,22 @@ async function run(browser, vp) {
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
   await shot('01-dashboard');
   await shot('01b-setup');
+  // Attention strip: only what needs fixing, each a tap to the fix.
+  await page.locator('[data-attn="tested"]').waitFor();
+  await page.locator('[data-attn="phones"]').waitFor();
+  await page.locator('[data-attn="review"]').waitFor();
+  // Tap tiles open the lists: not in, no check-out today, missed check-outs (grouped by day).
+  await page.locator('[data-kpi="notIn"]').click();
+  await expectText(page, 'Copy names', `${tag} not-in sheet`);
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.locator('[data-kpi="noOut"]').click();
+  await expectText(page, 'In at 07:51', `${tag} no check-out sheet`);
+  await page.keyboard.press('Escape');
+  await page.locator('[data-kpi="recent"]').click();
+  await expectText(page, 'Eric Habyarimana', `${tag} missed check-outs`);
+  await expectText(page, 'Saturday 21 Nov', `${tag} missed grouped by day`);
+  await shot('01c-missed-sheet');
+  await page.keyboard.press('Escape');
   await page.getByRole('tab', { name: /Needs review/ }).click();
   await expectText(page, 'Same spot and time as another check-in', `${tag} review`);
   await shot('02-review');
@@ -178,6 +203,7 @@ async function run(browser, vp) {
 
   // The setup step links straight to the rules on the zone page.
   await page.goto(`${BASE}/staff/clock`);
+  await page.getByRole('button', { name: /Set up staff check-in/ }).click(); // folded by default: open it
   await page.getByRole('button', { name: 'Review times' }).click();
   await page.waitForURL(/\/staff\/clock\/zone#zone-rules$/);
   await expectText(page, 'Check-in rules', `${tag} zone rules`);

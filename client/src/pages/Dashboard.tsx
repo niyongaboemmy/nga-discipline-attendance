@@ -1,4 +1,5 @@
 import { UserAvatar } from '../components/common/UserAvatar';
+import { ClockHomeCard } from './staffClock/ClockHomeCard';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -573,6 +574,7 @@ export const Dashboard: React.FC = () => {
           )}
         </HeroBanner>
       )}
+      {user && user.role !== 'student' && <ClockHomeCard />}
 
       {loading ? (
         <div style={{ padding: '80px 0' }}><LoadingSpinner /></div>

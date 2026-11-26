@@ -5,7 +5,7 @@ import { formatDistance, GeoError, permissionState, sampleLocation, zoneHint, ty
 import { renderGoogleButton } from './google';
 import { detectLang, makeT, type Lang, type T } from './i18n';
 import {
-  IconAddHome, IconCheck, IconClock, IconDeviceOff, IconHelp, IconIn, IconOut, IconPhoneCheck, IconPin, IconPinOff, IconRetry, IconShield, IconWarn, IconWifi,
+  IconAddHome, IconCheck, IconChevron, IconClock, IconDeviceOff, IconHelp, IconIn, IconKeyboard, IconMail, IconOut, IconPhone, IconPhoneCheck, IconPin, IconPinOff, IconQr, IconRetry, IconShield, IconUser, IconWarn, IconWifi,
 } from './icons';
 
 /**
@@ -79,7 +79,8 @@ export function ClockApp() {
   const [registering, setRegistering] = useState(false);
   const [welcomeError, setWelcomeError] = useState<string | null>(null);
   /** the Google account is not on the school's list: offer the profile card where staff link it */
-  const [noAccount, setNoAccount] = useState(false);
+  const [noAccount, setNoAccount] = useState<string | null>(null);
+  const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
   const [geoMode, setGeoMode] = useState<GeoMode>('idle');
   const [fix, setFix] = useState<{ best: Fix; samples: Fix[]; at: number } | null>(null);
   const [hint, setHint] = useState<ZoneHint | null>(null);
@@ -301,7 +302,7 @@ export function ClockApp() {
     async (credential: string) => {
       if (!slug) return;
       setWelcomeError(null);
-      setNoAccount(false);
+      setNoAccount(null);
       setRegistering(true);
       try {
         const keys = await ensureKeys(slug);
@@ -313,7 +314,7 @@ export function ClockApp() {
         setView('confirm');
       } catch (err) {
         setWelcomeError(registerErrorText(err, t, deviceWord));
-        setNoAccount(err instanceof ClockApiError && err.code === 'NO_ACCOUNT');
+        setNoAccount(err instanceof ClockApiError && err.code === 'NO_ACCOUNT' ? String(err.data.email ?? '') : null);
       } finally {
         setRegistering(false);
       }
@@ -468,10 +469,9 @@ export function ClockApp() {
             </div>
             <div className="ck-start">
               <div className="ck-start-head"><h2>{t('getStarted')}</h2><p>{t('getStartedLead')}</p></div>
-              {welcomeError && <div className="ck-alert ck-alert-red" role="alert"><IconWarn size={20} /><span className="ck-wrap">{welcomeError}</span></div>}
-              {noAccount && boot.profileUrl && (
-                <a className="ck-btn ck-btn-secondary ck-btn-block" href={boot.profileUrl} target="_blank" rel="noopener noreferrer">{t('addInProfile')}</a>
-              )}
+              {noAccount !== null ? (
+                <NoAccountCard t={t} email={noAccount} profileUrl={boot.profileUrl} />
+              ) : welcomeError && <div className="ck-alert ck-alert-red" role="alert"><IconWarn size={20} /><span className="ck-wrap">{welcomeError}</span></div>}
               {boot.googleClientId ? (
                 <div className="ck-google-slot" aria-busy={registering}>
                   {registering ? <button className="ck-btn ck-btn-secondary ck-btn-block" disabled><span className="ck-spinner" /> {t('loading')}</button> : <div ref={googleSlot} style={{ width: '100%', display: 'flex', justifyContent: 'center' }} />}
@@ -479,6 +479,7 @@ export function ClockApp() {
               ) : (
                 <div className="ck-alert ck-alert-amber"><IconWarn size={20} /><span>{t('googleNotSet')}</span></div>
               )}
+              <button className="ck-link-btn" onClick={() => { setHelpTopic(noAccount !== null ? 'gmail' : null); setHelp(true); }}><IconHelp size={18} />{t('needHelp')}</button>
               <p className="ck-note">{t('staffOnly')}</p>
               <LangPills lang={lang} setLang={setLang} />
             </div>
@@ -645,8 +646,7 @@ export function ClockApp() {
           <div className="ck-sheet" role="dialog" aria-modal="true" aria-label={t('help')}>
             <div className="ck-grabber" />
             <div className="ck-help-head"><h2>{t('help')}</h2><button className="ck-help-close" onClick={() => setHelp(false)}>{t('close')}</button></div>
-            <div className="ck-help-card"><b>{t('lostDevice', { device: deviceWord })}</b><p>{t('lostDeviceLead')}</p></div>
-            <div className="ck-help-card"><b>{t('locNotFound')}</b><p>{tablet ? t('notPreciseHelpTablet') : t('locNotFoundLead')}</p></div>
+            <Troubleshoot t={t} topic={helpTopic} setTopic={setHelpTopic} profileUrl={boot?.profileUrl} />
             <div className="ck-help-card ck-help-row"><b>{t('language')}</b><LangPills lang={lang} setLang={setLang} short /></div>
             <div className="ck-help-card ck-help-row">
               <b>{t('theme')}</b>
@@ -683,6 +683,61 @@ function SchoolMark({ initials, logoUrl, large }: { initials: string; logoUrl?: 
     );
   }
   return <div className={cls} aria-hidden="true">{initials}</div>;
+}
+
+type HelpTopic = 'gmail' | 'loc' | 'outside' | 'device' | 'nophone';
+
+/** "My Gmail is not recognised": the address, then three visual steps and the shortcut. */
+function NoAccountCard({ t, email, profileUrl }: { t: T; email: string; profileUrl?: string }) {
+  return (
+    <div className="ck-noacc" role="alert" data-testid="no-account">
+      <div className="ck-noacc-mail"><IconMail size={18} /><span>{email}</span><em>{t('notRecognised')}</em></div>
+      <ol className="ck-flow">
+        <li><span className="ck-flow-ico"><IconUser size={18} /></span>{t('hGmail1')}</li>
+        <li><span className="ck-flow-ico"><IconKeyboard size={18} /></span>{t('hGmail2')}</li>
+        <li><span className="ck-flow-ico"><IconRetry size={18} /></span>{t('hGmail3')}</li>
+      </ol>
+      {profileUrl && <a className="ck-btn ck-btn-primary ck-btn-block" href={profileUrl} target="_blank" rel="noopener noreferrer">{t('openProfile')}</a>}
+      <p className="ck-noacc-or">{t('tryAnother')}</p>
+    </div>
+  );
+}
+
+/** Help: pick what is happening, see the steps (icons, few words), act. */
+function Troubleshoot({ t, topic, setTopic, profileUrl }: { t: T; topic: HelpTopic | null; setTopic: (v: HelpTopic | null) => void; profileUrl?: string }) {
+  const topics: Array<{ key: HelpTopic; icon: React.ReactNode; title: string; steps: Array<[React.ReactNode, string]>; action?: React.ReactNode }> = [
+    { key: 'gmail', icon: <IconMail size={20} />, title: t('hGmail'), steps: [[<IconUser size={16} />, t('hGmail1')], [<IconKeyboard size={16} />, t('hGmail2')], [<IconRetry size={16} />, t('hGmail3')]],
+      action: profileUrl ? <a className="ck-btn ck-btn-primary ck-btn-block" href={profileUrl} target="_blank" rel="noopener noreferrer">{t('openProfile')}</a> : undefined },
+    { key: 'loc', icon: <IconPinOff size={20} />, title: t('hLoc'), steps: [[<IconShield size={16} />, t('hLoc1')], [<IconCheck size={16} />, t('hLoc2')], [<IconPin size={16} />, t('hLoc3')]] },
+    { key: 'outside', icon: <IconPin size={20} />, title: t('hOutside'), steps: [[<IconClock size={16} />, t('hOutside1')], [<IconWifi size={16} />, t('hOutside2')], [<IconHelp size={16} />, t('hOutside3')]] },
+    { key: 'device', icon: <IconPhone size={20} />, title: t('hDevice'), steps: [[<IconPhone size={16} />, t('hDevice1')], [<IconDeviceOff size={16} />, t('hDevice2')], [<IconPhoneCheck size={16} />, t('hDevice3')]] },
+    { key: 'nophone', icon: <IconQr size={20} />, title: t('hNoPhone'), steps: [[<IconQr size={16} />, t('hNoPhone1')], [<IconUser size={16} />, t('hNoPhone2')]] },
+  ];
+  return (
+    <div className="ck-trouble">
+      <div className="ck-trouble-pick">{t('helpPick')}</div>
+      {topics.map((tp) => {
+        const open = topic === tp.key;
+        return (
+          <div key={tp.key} className={`ck-trouble-item${open ? ' open' : ''}`}>
+            <button className="ck-trouble-head" aria-expanded={open} onClick={() => setTopic(open ? null : tp.key)}>
+              <span className="ck-trouble-ico">{tp.icon}</span>
+              <span className="ck-trouble-title">{tp.title}</span>
+              <span className="ck-trouble-chev"><IconChevron size={18} /></span>
+            </button>
+            {open && (
+              <div className="ck-trouble-body">
+                <ol className="ck-flow">
+                  {tp.steps.map(([ico, text], i) => <li key={i}><span className="ck-flow-ico">{ico}</span>{text}</li>)}
+                </ol>
+                {tp.action}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function schoolInitials(name: string): string {

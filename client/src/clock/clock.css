@@ -486,3 +486,28 @@ a.ck-btn { text-decoration: none; }
 /* the school's own logo: white tile so any logo colour reads in both themes */
 .ck-logo-img { background: #fff; border: 1px solid var(--ck-line, rgba(0,0,0,.08)); padding: 6px; overflow: hidden; }
 .ck-logo-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* ---------- not-recognised card + troubleshooter: icons first, few words ---------- */
+.ck-noacc { display: flex; flex-direction: column; gap: 14px; padding: 16px; border-radius: 22px; border: 1px solid var(--ck-border); background: var(--ck-bg); }
+.ck-noacc-mail { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; padding: 7px 7px 7px 14px; border-radius: 22px; background: var(--ck-red-bg); color: var(--ck-red); font-weight: 600; font-size: 15px; min-width: 0; }
+.ck-noacc-mail span { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+.ck-noacc-mail em { font-style: normal; font-size: 12px; height: 30px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 999px; background: var(--ck-bg); flex: none; }
+.ck-noacc-or { margin: 0; text-align: center; font-size: 13px; color: var(--ck-muted); }
+.ck-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; counter-reset: ck; }
+.ck-flow li { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 0; font-size: 15px; font-weight: 500; color: var(--ck-text); }
+.ck-flow li + li::before { content: ''; position: absolute; left: 17px; top: -8px; height: 16px; border-left: 2px dashed var(--ck-border); }
+.ck-flow-ico { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; flex: none; background: var(--ck-blue-tint, rgba(37,99,235,.1)); color: var(--ck-blue); }
+.ck-link-btn { align-self: center; display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 16px; border-radius: 999px; border: 0; background: transparent; color: var(--ck-blue); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.ck-link-btn:hover { background: var(--ck-blue-tint, rgba(37,99,235,.08)); }
+.ck-trouble { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.ck-trouble-pick { font-size: 13px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--ck-muted); margin: 4px 2px; }
+.ck-trouble-item { border: 1px solid var(--ck-border); border-radius: 20px; overflow: hidden; transition: border-color .15s; }
+.ck-trouble-item.open { border-color: var(--ck-blue); }
+.ck-trouble-head { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 0; background: transparent; font: inherit; color: var(--ck-text); text-align: left; cursor: pointer; }
+.ck-trouble-ico { width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center; background: var(--ck-blue-tint, rgba(37,99,235,.1)); color: var(--ck-blue); flex: none; }
+.ck-trouble-title { flex: 1; font-size: 16px; font-weight: 600; }
+.ck-trouble-chev { color: var(--ck-muted); transition: transform .2s; display: grid; }
+.ck-trouble-item.open .ck-trouble-chev { transform: rotate(90deg); }
+.ck-trouble-body { padding: 2px 16px 16px; display: flex; flex-direction: column; gap: 12px; animation: ck-drop .18s ease; }
+@keyframes ck-drop { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .ck-trouble-body { animation: none; } .ck-trouble-chev { transition: none; } }

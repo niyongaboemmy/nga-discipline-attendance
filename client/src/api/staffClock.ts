@@ -80,7 +80,11 @@ export interface Overview {
   rows: OverviewRow[];
   review: Array<{ recordId: number; userId: string; name: string; at: string | null; flags: string[]; flagText: string[]; distance: number | null; accuracy: number | null }>;
   phones: { registered: number; staff: number; pending: ClockDevice[]; unregistered: Array<{ id: string; name: string }> };
+  missing?: { checkoutOpen: boolean; noCheckoutToday: MissingCheckout[]; recentNoCheckout: MissingCheckout[] };
+  health?: { google: boolean; zones: number; enabled: boolean; tested: boolean; shared: boolean; unregistered: number; staff: number };
 }
+
+export interface MissingCheckout { userId: string; name: string; date: string; checkIn: string | null; autoClosed: boolean }
 
 export interface IssuedCard {
   userId: string;

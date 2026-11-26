@@ -1,4 +1,5 @@
 import { UserAvatar } from '../components/common/UserAvatar';
+import { ClockHomeCard } from './staffClock/ClockHomeCard';
 import React, { useState, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
@@ -93,6 +94,7 @@ export const StaffAttendance: React.FC = () => {
         )}
       </div>
 
+      <ClockHomeCard />
       {clockLink && (
         <div className="card card-pad mb-4" style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'center' }}>
           <div style={{ width: 132, height: 132, borderRadius: 18, border: '1px solid var(--border)', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>

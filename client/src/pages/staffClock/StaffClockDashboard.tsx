@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, Clock, AlertTriangle, ChevronLeft, ChevronRight, Search, Download } from 'lucide-react';
+import { Check, Clock, AlertTriangle, ChevronLeft, ChevronRight, Search, Download, ArrowUpRight, LogOut, UserX, CalendarClock } from 'lucide-react';
 import { DashboardLayout } from '../../components/Layout/DashboardLayout';
 import { ErrorState } from '../../components/common/ErrorState';
 import { useToast } from '../../context/ToastContext';
@@ -9,6 +9,7 @@ import { ApiError } from '../../api/client';
 import { staffClockApi, initialsOf, type Overview, type OverviewRow } from '../../api/staffClock';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { StaffClockSetup } from './StaffClockSetup';
+import { AttentionStrip, ListSheet, Ring, type SheetPerson } from './StaffClockAttention';
 
 /** Staff attendance dashboard (prototype "Admin: staff attendance dashboard"). */
 
@@ -43,6 +44,7 @@ export const StaffClockDashboard: React.FC = () => {
   const [search, setSearch] = useState('');
   const [hover, setHover] = useState(-1);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<null | 'notIn' | 'noOut' | 'recent'>(null);
 
   const load = useCallback(async (d: string | null = date) => {
     setLoading(true);
@@ -117,6 +119,14 @@ export const StaffClockDashboard: React.FC = () => {
     review: data?.review.length ?? 0,
     phones: data?.phones.pending.length ?? 0,
   };
+  const missingOut = data?.missing?.noCheckoutToday ?? [];
+  const recentOut = data?.missing?.recentNoCheckout ?? [];
+  const dayName = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const sheetPeople: SheetPerson[] =
+    sheet === 'notIn' ? (data?.rows ?? []).filter((r) => r.status === 'not_in').map((r) => ({ id: r.userId, name: r.name, meta: `${r.role}${r.device ? '' : ' · no phone registered'}` }))
+    : sheet === 'noOut' ? missingOut.map((m) => ({ id: m.userId, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, tag: m.autoClosed ? 'Closed' : undefined }))
+    : sheet === 'recent' ? recentOut.map((m) => ({ id: `${m.userId}-${m.date}`, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, group: dayName(m.date) }))
+    : [];
   const maxBar = Math.max(4, ...(data?.arrivals ?? []).map((b) => b.onTime + b.late));
   const cutIdx = data ? data.arrivals.findIndex((b) => b.from >= data.rules.lateAfter) : -1;
   const nowLabel = data ? new Date(data.serverNow).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -142,36 +152,54 @@ export const StaffClockDashboard: React.FC = () => {
 
         {error && <ErrorState message={error} onRetry={() => void load()} />}
         {can(['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_DEVICES_MANAGE']) && <StaffClockSetup place="dashboard" />}
+        {data && data.isToday && (
+          <AttentionStrip
+            data={data}
+            canSetup={can('STAFF_ATTENDANCE_ZONES_MANAGE')}
+            onReview={() => { setTab('review'); document.getElementById('sc-staff-list')?.scrollIntoView({ behavior: 'smooth' }); }}
+            onPhones={() => document.getElementById('sc-phones')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+          />
+        )}
 
         {loading && !data ? (
           <div className="sc-kpis">{[0, 1, 2, 3, 4].map((i) => <div key={i} className="sc-skel" style={{ height: 118, borderRadius: 20 }} />)}</div>
         ) : k && (
           <div className="sc-kpis">
-            <div className="sc-kpi">
-              <div className="sc-kpi-label">Checked in</div>
-              <div className="sc-kpi-value"><b>{k.checkedIn}</b><span>of {k.staff} staff</span></div>
-              <div className="sc-bar"><div style={{ width: `${k.staff ? Math.round((k.checkedIn / k.staff) * 100) : 0}%` }} /></div>
+            <div className="sc-kpi sc-kpi-hero">
+              <Ring value={k.checkedIn} total={k.staff} size={76} />
+              <div>
+                <div className="sc-kpi-label">Checked in</div>
+                <div className="sc-kpi-value"><b>{k.checkedIn}</b><span>/ {k.staff}</span></div>
+              </div>
             </div>
             <div className="sc-kpi">
               <div className="sc-kpi-label" style={{ color: 'var(--status-present)' }}><Check size={15} /> On time</div>
-              <div className="sc-kpi-value"><b>{k.onTime}</b><span>{k.checkedIn ? `${Math.round((k.onTime / k.checkedIn) * 100)}% of check-ins` : 'no check-ins yet'}</span></div>
-              <div className="sc-kpi-foot">By {data!.rules.lateAfter}</div>
+              <div className="sc-kpi-value"><b>{k.onTime}</b></div>
+              <div className="sc-kpi-foot">by {data!.rules.lateAfter}</div>
             </div>
             <div className="sc-kpi">
               <div className="sc-kpi-label" style={{ color: 'var(--status-late)' }}><Clock size={15} /> Late</div>
-              <div className="sc-kpi-value"><b>{k.late}</b><span>{k.medianLateMinutes != null ? `median ${k.medianLateMinutes} min late` : 'nobody late'}</span></div>
-              <div className="sc-kpi-foot">After {data!.rules.lateAfter}</div>
+              <div className="sc-kpi-value"><b>{k.late}</b>{k.medianLateMinutes != null && <span>~{k.medianLateMinutes} min</span>}</div>
+              <div className="sc-kpi-foot">after {data!.rules.lateAfter}</div>
             </div>
-            <div className="sc-kpi">
-              <div className="sc-kpi-label">Not in yet</div>
-              <div className="sc-kpi-value"><b>{k.notIn}</b><span>{k.checkedOut} checked out</span></div>
-              <button className="sc-btn sc-btn-soft sc-btn-sm" style={{ marginTop: 8 }} onClick={() => setTab('notIn')}>See who</button>
-            </div>
-            <div className="sc-kpi">
-              <div className="sc-kpi-label" style={{ color: 'var(--status-late)' }}><AlertTriangle size={15} /> Needs review</div>
-              <div className="sc-kpi-value"><b>{k.needsReview}</b><span>unusual check-ins</span></div>
-              <button className="sc-btn sc-btn-sm" style={{ marginTop: 8 }} onClick={() => setTab('review')} disabled={!k.needsReview}>Review</button>
-            </div>
+            <button type="button" className={`sc-kpi sc-kpi-tap${k.notIn ? '' : ' sc-kpi-dim'}`} data-kpi="notIn" onClick={() => setSheet('notIn')}>
+              <ArrowUpRight size={16} className="sc-kpi-go" />
+              <div className="sc-kpi-label"><UserX size={15} /> {data!.isToday ? 'Not in yet' : 'Absent'}</div>
+              <div className="sc-kpi-value"><b>{k.notIn}</b></div>
+              <div className="sc-kpi-foot">tap to see who</div>
+            </button>
+            <button type="button" className={`sc-kpi sc-kpi-tap${missingOut.length ? ' sc-kpi-warn' : ' sc-kpi-dim'}`} data-kpi="noOut" onClick={() => setSheet('noOut')}>
+              <ArrowUpRight size={16} className="sc-kpi-go" />
+              <div className="sc-kpi-label"><LogOut size={15} /> No check-out</div>
+              <div className="sc-kpi-value"><b>{data!.missing?.checkoutOpen === false ? '–' : missingOut.length}</b></div>
+              <div className="sc-kpi-foot">{data!.missing?.checkoutOpen === false ? `opens ${data!.rules.earlyLeaveBefore}` : `${k.checkedOut} checked out`}</div>
+            </button>
+            <button type="button" className={`sc-kpi sc-kpi-tap${recentOut.length ? ' sc-kpi-warn' : ' sc-kpi-dim'}`} data-kpi="recent" onClick={() => setSheet('recent')}>
+              <ArrowUpRight size={16} className="sc-kpi-go" />
+              <div className="sc-kpi-label"><CalendarClock size={15} /> Missed</div>
+              <div className="sc-kpi-value"><b>{recentOut.length}</b></div>
+              <div className="sc-kpi-foot">check-outs · 7 days</div>
+            </button>
           </div>
         )}
 
@@ -213,7 +241,7 @@ export const StaffClockDashboard: React.FC = () => {
               </div>
             </section>
 
-            <section className="sc-card sc-side" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <section id="sc-phones" className="sc-card sc-side" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <h2>Phones</h2>
               <div className="sc-kpi-value" style={{ marginTop: 0 }}><b style={{ fontSize: 30 }}>{data.phones.registered}</b><span>of {data.phones.staff} staff registered</span></div>
               <div style={{ display: 'flex', height: 8, gap: 2, borderRadius: 999, overflow: 'hidden' }}>
@@ -241,7 +269,7 @@ export const StaffClockDashboard: React.FC = () => {
         )}
 
         {data && (
-          <section className="sc-card">
+          <section className="sc-card" id="sc-staff-list">
             <div className="sc-filters">
               <div role="tablist" aria-label="Filter staff" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {([['all', 'Everyone'], ['late', 'Late'], ['notIn', 'Not in yet'], ['review', 'Needs review']] as Array<[Tab, string]>).map(([key, label]) => (
@@ -329,6 +357,15 @@ export const StaffClockDashboard: React.FC = () => {
           </section>
         )}
         {loading && data && <div style={{ position: 'fixed', right: 24, bottom: 24 }} aria-label="Refreshing"><Spinner /></div>}
+        {sheet && data && (
+          <ListSheet
+            title={sheet === 'notIn' ? (data.isToday ? 'Not in yet' : 'Absent') : sheet === 'noOut' ? 'No check-out' : 'Missed check-outs'}
+            subtitle={sheet === 'recent' ? 'Checked in, never checked out · last 7 days' : dayName(data.date)}
+            people={sheetPeople}
+            empty={sheet === 'notIn' ? 'Everyone is in' : sheet === 'noOut' ? (data.missing?.checkoutOpen === false ? `Check-out opens at ${data.rules.earlyLeaveBefore}` : 'Everyone checked out') : 'No missed check-outs'}
+            onClose={() => setSheet(null)}
+          />
+        )}
       </div>
     </DashboardLayout>
   );

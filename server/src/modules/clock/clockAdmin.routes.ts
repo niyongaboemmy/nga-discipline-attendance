@@ -5,7 +5,7 @@ import { getDb } from '../../database.js';
 import { authMiddleware, type AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
 import { recordAudit } from '../../shared/audit.js';
-import { safeClockLabel, schoolDateString, timeToMinutes } from '../../shared/schoolTime.js';
+import { addDays, safeClockLabel, schoolDateString, schoolMinutesOfDay, timeToMinutes } from '../../shared/schoolTime.js';
 import { setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
 import { currentTenant } from '../../tenancy/index.js';
 import { loadStaffRoster } from '../../routes/mis.js';
@@ -369,6 +369,30 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
     const pending = devices.filter((d) => d.status === 'pending');
     const unregistered = [...people.values()].filter((p) => !activeByUser.has(p.id)).map((p) => ({ id: p.id, name: p.name }));
 
+    // Missing check-outs: today once the check-out window has opened, and the last 7 days.
+    const outOpen = date !== today || schoolMinutesOfDay(new Date(clockNow())) >= timeToMinutes(rules.earlyLeaveBefore);
+    const noCheckoutToday = outOpen
+      ? valid.filter((r) => r.clock_in && !r.clock_out).map((r) => ({ userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed' }))
+      : [];
+    const recentNoCheckout = (await db.all<any[]>(
+      `SELECT staff_id, staff_name, date, clock_in, out_status FROM staff_attendance
+        WHERE date >= ? AND date < ? AND clock_in IS NOT NULL AND clock_out IS NULL AND COALESCE(review_state,'') <> 'invalid'
+        ORDER BY date DESC, staff_name`,
+      addDays(date, -7), date
+    )).map((r) => ({ userId: String(r.staff_id), name: r.staff_name, date: r.date, checkIn: safeClockLabel(r.clock_in), autoClosed: r.out_status === 'auto_closed' }));
+
+    // What still stops staff from checking in, for the setup-health strip.
+    const zones = await loadZones(db, true);
+    const health = {
+      google: !!config.googleClientId,
+      zones: zones.filter((z: any) => z.center_lat != null).length,
+      enabled: !!rules.enabled,
+      tested: (rules.setupDone ?? []).includes('tested'),
+      shared: (rules.setupDone ?? []).includes('shared'),
+      unregistered: unregistered.length,
+      staff: people.size,
+    };
+
     return res.json({
       success: true,
       data: {
@@ -392,6 +416,8 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         rows,
         review,
         phones: { registered: activeByUser.size, staff: people.size, pending, unregistered },
+        missing: { checkoutOpen: outOpen, noCheckoutToday, recentNoCheckout },
+        health,
       },
     });
   } catch (err) {

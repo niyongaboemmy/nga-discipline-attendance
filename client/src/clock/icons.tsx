@@ -55,3 +55,21 @@ export const IconDeviceOff = ({ size = 24, tablet = false }: { size?: number; ta
 export const IconAddHome = ({ size = 22 }: { size?: number }) => (
   <Svg size={size}><rect x="6.5" y="2.5" width="11" height="19" rx="2.5" /><path d="M12 9v6M9 12h6" /></Svg>
 );
+export const IconMail = (p: { size?: number }) => (
+  <Svg {...p}><rect x="3" y="5" width="18" height="14" rx="3" /><path d="m4 7 8 6 8-6" /></Svg>
+);
+export const IconUser = (p: { size?: number }) => (
+  <Svg {...p}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></Svg>
+);
+export const IconKeyboard = (p: { size?: number }) => (
+  <Svg {...p}><rect x="2" y="6" width="20" height="12" rx="3" /><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" /></Svg>
+);
+export const IconChevron = (p: { size?: number }) => (
+  <Svg {...p}><path d="m9 6 6 6-6 6" /></Svg>
+);
+export const IconQr = (p: { size?: number }) => (
+  <Svg {...p}><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3" /></Svg>
+);
+export const IconPhone = (p: { size?: number }) => (
+  <Svg {...p}><rect x="6" y="2" width="12" height="20" rx="3" /><path d="M11 18h2" /></Svg>
+);
