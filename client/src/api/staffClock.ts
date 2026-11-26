@@ -129,7 +129,36 @@ export interface PersonHistory {
   summary: { schoolDays: number; attended: number; onTime: number; late: number; absent: number; noOut: number; early: number; rate: number | null; punctuality: number | null; avgIn: string | null; streak: number; bestStreak: number };
 }
 
+export type ReportDayKind = 'school' | 'off' | 'untracked' | 'future';
+/** One calendar day for the whole staff. On today, `absent` is the staff not in yet. */
+export interface ReportDay { date: string; kind: ReportDayKind; onTime: number; late: number; absent: number; staff: number; today: boolean }
+export interface ReportGroup { key: 'conversation' | 'often_late' | 'rarely_absent' | 'on_time'; label: string; rule: string; count: number }
+export interface ClockReport {
+  today: string; from: string; to: string; trackingFrom: string; staff: number; countedDays: number; lateAfter: string;
+  term: { name: string; start: string; end: string } | null;
+  rosterSource: 'mis' | 'local';
+  /** whole months covering the period */
+  days: ReportDay[];
+  totals: { schoolDays: number; onTime: number; late: number; absent: number; staffDays: number; rate: number | null; prevRate: number | null };
+  weeks: Array<{ start: string; rate: number | null; late: number; prevRate: number | null }>;
+  weekdays: Array<{ dow: number; rate: number | null }>;
+  arrivals: Array<{ from: string; to: string; onTime: number; late: number }>;
+  groups: ReportGroup[];
+}
+export interface ReportPerson { userId: string; name: string; schoolDays: number; attended: number; late: number; absent: number; rate: number | null; punctuality: number | null }
+
+const range = (from?: string, to?: string, group?: string) => {
+  const q = new URLSearchParams();
+  if (from) q.set('from', from);
+  if (to) q.set('to', to);
+  if (group) q.set('group', group);
+  const s = q.toString();
+  return s ? `?${s}` : '';
+};
+
 export const staffClockApi = {
+  report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
+  reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),
   history: (id: string, days = 365) => data(apiGet<PersonHistory>(`/api/staff/clock/people/${encodeURIComponent(id)}/history?days=${days}`)),
   config: () => data(apiGet<ClockConfig>('/api/staff/clock/config')),
   saveRules: (rules: Partial<ClockRules>) => data(apiPut<{ rules: ClockRules }>('/api/staff/clock/config', rules)),
