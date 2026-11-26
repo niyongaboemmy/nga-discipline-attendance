@@ -401,6 +401,7 @@ export const StaffClockDashboard: React.FC = () => {
                       <span className="scr-dotlabel"><i className="scr-on" />{panel.kpis.onTime} on time</span>
                       <span className="scr-dotlabel"><i className="scr-late" />{panel.kpis.late} late</span>
                       <span className="scr-dotlabel"><i className="scr-abs" />{panel.kpis.notIn} {panel.isToday ? 'not in yet' : 'absent'}</span>
+                      {!!panel.kpis.dayOff && <span className="scr-dotlabel" title="Not expected this day: their own working week, or the school is closed"><i className="scr-off" />{panel.kpis.dayOff} day off</span>}
                     </div>
                     <div className="scr-tiles">
                       <div className="scr-tile"><b className="sc-num">{firstIn ?? '–'}</b><small>first check-in</small></div>
@@ -434,7 +435,7 @@ export const StaffClockDashboard: React.FC = () => {
                 )}
               </section>
               <section className="sc-card scr-pattern">
-                <h2>Late arrivals per week</h2><p className="sc-card-sub">Check-ins after {report.lateAfter}</p>
+                <h2>Late arrivals per week</h2><p className="sc-card-sub">Check-ins after {report.lateAfter}{report.ownPlans ? ` (${report.ownPlans} staff: after their own start)` : ''}</p>
                 {report.weeks.length === 0 ? <div className="scr-empty">Appears after the first school week.</div> : (
                   <Columns
                     label="Late arrivals per week" showValues
@@ -524,7 +525,7 @@ export const StaffClockDashboard: React.FC = () => {
         {person && (
           <StaffHistoryModal key={person.id} personId={person.id} name={person.name} role={person.role} instant={person.instant}
             list={person.list} onNav={(p) => setPerson((cur) => (cur ? { ...cur, id: p.id, name: p.name, role: p.role, instant: true } : cur))}
-            onClose={() => setPerson(null)} />
+            onClose={() => setPerson(null)} onChanged={() => void load(true)} />
         )}
       </div>
     </DashboardLayout>

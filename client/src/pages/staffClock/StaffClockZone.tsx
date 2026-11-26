@@ -912,6 +912,14 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
                   <span>School Wi-Fi</span>
                   <input className="zc-input zc-input-md" aria-label="School network" placeholder="41.186.10.0/24" disabled={!canEdit} value={rules.schoolNetworks} onChange={(e) => patchRules({ schoolNetworks: e.target.value })} />
                 </label>
+                <div className="zc-rule" title="On mobile data indoors a phone's GPS can be vaguer than the precision above. Accept: the check-in counts while the reading still reaches the school, and waits in Needs review. Refuse: only precise readings count.">
+                  <span>Weak GPS on own network</span>
+                  <div className="zc-shape" role="group" aria-label="Weak GPS on a person's own network">
+                    <button aria-pressed={rules.weakLocation !== 'refuse'} disabled={!canEdit} onClick={() => patchRules({ weakLocation: 'review' })}>Accept, review</button>
+                    <button aria-pressed={rules.weakLocation === 'refuse'} disabled={!canEdit} onClick={() => patchRules({ weakLocation: 'refuse' })} data-testid="weak-refuse">Refuse</button>
+                  </div>
+                </div>
+                <p className="zc-rule-note">These hours are for everyone. Someone with different days or times? Open them on the <Link to="/staff/clock/people">Staff</Link> tab, then Working hours.</p>
               </div>
               {canEdit && <div className="zc-drawer-foot">Changes save with the areas</div>}
             </div>

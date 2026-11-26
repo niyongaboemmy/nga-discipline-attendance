@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clockApi, ClockApiError, OfflineError, type Bootstrap, type DayState, type Me, type PunchResult, type RegisterPreview, type Registered } from './api';
 import { askPersistentStorage, deviceInfo, ensureKeys, forgetDevice, installUuid, isTabletDevice, loadDevice, ngaDeviceId, saveToken, signMessage, supportsDeviceKeys } from './device';
-import { formatDistance, GeoError, permissionState, sampleLocation, zoneHint, type Fix, type ZoneHint } from './geo';
+import { formatDistance, GeoError, permissionState, sampleLocation, weakButPlausible, zoneHint, type Fix, type ZoneHint } from './geo';
 import { renderGoogleButton } from './google';
 import { PhoneTap } from './PhoneTap';
 import { detectLang, makeT, type Lang, type T } from './i18n';
@@ -84,6 +84,10 @@ export function ClockApp() {
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
   const [geoMode, setGeoMode] = useState<GeoMode>('idle');
   const [fix, setFix] = useState<{ best: Fix; samples: Fix[]; at: number } | null>(null);
+  /** while locating: the best precision so far, in metres (GPS settling on mobile data) */
+  const [seeking, setSeeking] = useState<number | null>(null);
+  /** the reading is vague but the school accepts it for review */
+  const [weak, setWeak] = useState(false);
   const [hint, setHint] = useState<ZoneHint | null>(null);
   const [serverOutside, setServerOutside] = useState<number | null>(null);
   const [busy, setBusy] = useState<'in' | 'out' | null>(null);
@@ -102,6 +106,8 @@ export function ClockApp() {
   const googleSlot = useRef<HTMLDivElement>(null);
   /** The latest bootstrap for callbacks created before it arrived (first load). */
   const bootRef = useRef<Bootstrap | null>(null);
+  /** this device registered as a computer: its location never improves, so no long GPS wait */
+  const computerRef = useRef(false);
   const toastTimer = useRef<number | undefined>(undefined);
 
   const flash = useCallback((msg: string, error = false) => {
@@ -161,13 +167,26 @@ export function ClockApp() {
       if (!boot) return null;
       setGeoMode('locating');
       setServerOutside(null);
+      setSeeking(null);
+      setWeak(false);
       try {
-        const r = await sampleLocation({ maxMs: quick ? 5000 : 8000, goodEnough: 20 });
+        // A phone or tablet off the school Wi-Fi starts from a cell-tower guess: GPS needs
+        // up to 20 s to settle, so wait for it instead of giving up on the first vague reading.
+        // A computer never improves, so it keeps the short wait (and the "use my phone" way).
+        const handheld = !computerRef.current && (window.matchMedia?.('(pointer: coarse)').matches ?? false);
+        const r = await sampleLocation({
+          maxMs: handheld ? (quick ? 15000 : 20000) : quick ? 5000 : 8000,
+          goodEnough: 20,
+          patientUntil: handheld && boot.rules.requireZone ? boot.rules.maxAccuracy : undefined,
+          onProgress: (b) => setSeeking(Math.round(b.accuracy)),
+        });
         setFix({ ...r, at: Date.now() });
         const h = zoneHint(r.best, boot.zones, boot.rules);
         setHint(h);
+        const weakOk = weakButPlausible(r.best, h, boot.rules);
+        setWeak(boot.rules.requireZone && weakOk);
         if (!boot.rules.requireZone || !h) setGeoMode('ok');
-        else setGeoMode(!h.preciseEnough ? 'vague' : h.inside ? 'ok' : 'outside');
+        else setGeoMode(!h.preciseEnough ? (weakOk ? 'ok' : 'vague') : h.inside ? 'ok' : 'outside');
         return r;
       } catch (err) {
         if (err instanceof GeoError && err.kind === 'denied') {
@@ -187,6 +206,7 @@ export function ClockApp() {
   const enterDaily = useCallback(
     async (m: Me) => {
       setMe(m);
+      computerRef.current = m.device.formFactor === 'desktop';
       adoptServerTime(m.serverNow);
       if (m.device.status === 'pending') return setView('pending');
       if (!m.open) {
@@ -635,6 +655,9 @@ export function ClockApp() {
           dateText={dateText}
           place={place}
           geoMode={geoMode}
+          seeking={seeking}
+          weak={weak}
+          maxAccuracy={boot?.rules.maxAccuracy ?? 100}
           hint={hint}
           fix={fix?.best ?? null}
           serverOutside={serverOutside}
@@ -899,6 +922,9 @@ interface DailyProps {
   dateText: string;
   place: string;
   geoMode: GeoMode;
+  seeking: number | null;
+  weak: boolean;
+  maxAccuracy: number;
   hint: ZoneHint | null;
   fix: Fix | null;
   serverOutside: number | null;
@@ -1049,7 +1075,9 @@ function dailyVisual(p: DailyProps): Visual {
   const { t, me, geoMode, hint, busy, offline, tablet, deviceWord } = p;
   const today = me.today;
   const statusWord = today?.status === 'late' ? t('late') : t('onTime');
-  const atSchoolChip = hint ? t('atSchoolDist', { distance: formatDistance(hint.distance) }) : t('atSchool');
+  const atSchoolChip = p.weak && p.fix ? t('weakChip', { accuracy: Math.round(p.fix.accuracy) }) : hint ? t('atSchoolDist', { distance: formatDistance(hint.distance) }) : t('atSchool');
+  const okTone = p.weak ? 'amber' : 'green';
+  const lateHelp = p.weak ? t('weakHelp') : me.rules.lateAfter ? t('lateAfter', { time: me.rules.lateAfter }) : '';
 
   if (me.next === 'done' && today) {
     return { style: 'grey', icon: 'done', label: t('doneToday'), sub: t('inOut', { in: today.checkIn ?? '', out: today.checkOut ?? '' }), pulse: false, disabled: true,
@@ -1071,10 +1099,12 @@ function dailyVisual(p: DailyProps): Visual {
   }
   if (out && me.checkoutOpensAt) {
     return { style: 'outline', icon: 'out', label: t('checkOut'), sub: t('checkoutOpens', { time: me.checkoutOpensAt }), pulse: false, disabled: true,
-      chip: today ? t('checkedInAt', { time: today.checkIn ?? '', status: statusWord }) : '', chipTone: 'green', helper: t('lateAfter', { time: me.rules.lateAfter }) };
+      chip: today ? t('checkedInAt', { time: today.checkIn ?? '', status: statusWord }) : '', chipTone: 'green', helper: me.rules.lateAfter ? t('lateAfter', { time: me.rules.lateAfter }) : '' };
   }
   if (geoMode === 'locating' || geoMode === 'idle') {
-    return { style: out ? 'outline' : 'blue', icon: 'spin', label: t('findingYou'), sub: t('oneMoment'), pulse: !out, disabled: true, chip: t('findingLocation'), chipTone: 'muted', helper: '' };
+    const settling = p.seeking != null && p.seeking > p.maxAccuracy;
+    return { style: out ? 'outline' : 'blue', icon: 'spin', label: t('findingYou'), sub: t('oneMoment'), pulse: !out, disabled: true,
+      chip: settling ? t('gpsSettling', { accuracy: p.seeking as number }) : t('findingLocation'), chipTone: 'muted', helper: settling ? t('gpsSettlingHelp') : '' };
   }
   if (geoMode === 'outside') {
     const d = p.serverOutside ?? hint?.distance ?? null;
@@ -1088,10 +1118,10 @@ function dailyVisual(p: DailyProps): Visual {
   }
   if (out) {
     return { style: 'outline', icon: 'out', label: t('checkOut'), sub: t('inSince', { time: today?.checkIn ?? '' }), pulse: false, disabled: false,
-      chip: atSchoolChip, chipTone: 'green', helper: today ? t('checkedInAt', { time: today.checkIn ?? '', status: statusWord }) : '' };
+      chip: atSchoolChip, chipTone: okTone, helper: p.weak ? t('weakHelp') : today ? t('checkedInAt', { time: today.checkIn ?? '', status: statusWord }) : '' };
   }
-  return { style: 'blue', icon: 'in', label: t('checkIn'), sub: t('tapOnce'), pulse: true, disabled: false, chip: atSchoolChip, chipTone: 'green',
-    helper: t('lateAfter', { time: me.rules.lateAfter }) };
+  return { style: 'blue', icon: 'in', label: t('checkIn'), sub: t('tapOnce'), pulse: true, disabled: false, chip: atSchoolChip, chipTone: okTone,
+    helper: lateHelp };
 }
 
 export type { DayState };

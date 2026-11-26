@@ -48,11 +48,14 @@ const people = [
 const OVERVIEW = {
   date: '2026-11-24', isToday: true, serverNow: '2026-11-24T08:15:00.000Z', rosterSource: 'mis',
   rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00', opens: '05:00', enabled: true },
-  kpis: { staff: 10, checkedIn: 8, onTime: 6, late: 2, notIn: 2, checkedOut: 0, earlyLeave: 0, needsReview: 2, medianLateMinutes: 14 },
+  ownPlans: 2,
+  kpis: { staff: 9, checkedIn: 8, onTime: 6, late: 2, notIn: 1, dayOff: 1, checkedOut: 0, earlyLeave: 0, needsReview: 2, medianLateMinutes: 14 },
   arrivals: [['06:30', 0, 0], ['06:45', 0, 0], ['07:00', 1, 0], ['07:15', 2, 0], ['07:30', 1, 0], ['07:45', 2, 0], ['08:00', 1, 0], ['08:15', 0, 0], ['08:30', 0, 0], ['08:45', 0, 2], ['09:00', 0, 0], ['09:15', 0, 0]]
     .map(([from, onTime, late]) => ({ from, to: from, onTime, late })),
   rows: people.map(([userId, name, role, checkIn, status, checkOut, distance, device, review, source]) => ({
-    recordId: checkIn ? Number(userId) : null, userId, name, role, checkIn, checkOut, status, outStatus: null, distance, source: source ?? (checkIn ? 'device' : null), device, flags: [], needsReview: !!review, reviewState: null,
+    recordId: checkIn ? Number(userId) : null, userId, name, role, checkIn, checkOut, status: userId === '110' ? 'day_off' : status, expected: userId !== '110',
+    plan: userId === '110' ? { own: true, works: false, start: null, end: null } : userId === '109' ? { own: true, works: true, start: '07:00', end: '13:00' } : { own: false, works: true, start: '08:30', end: '16:00' },
+    outStatus: null, distance, source: source ?? (checkIn ? 'device' : null), device, flags: [], needsReview: !!review, reviewState: null,
   })),
   review: [
     { recordId: 102, userId: '102', name: 'Jean Bosco Niyonzima', at: '07:51', flags: ['twin_punch'], flagText: ['Same spot and time as another check-in'], distance: 12, accuracy: 9 },
@@ -105,6 +108,13 @@ function report() {
 }
 const REPORT = report();
 const reportStaff = (group) => ({ from: REPORT.from, to: REPORT.to, schoolDays: REPORT.countedDays, people: people.slice(group ? 4 : 2, group ? 7 : 9).map(([userId, name], i) => ({ userId, name, schoolDays: 55, attended: 55 - i, late: 3 + i, absent: i, rate: 100 - i * 2, punctuality: 90 - i })) });
+/** Working weeks: the school's, and the own plans saved during the run (PUT .../plan). */
+const SCHOOL_WEEK = Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, { works: d !== '0' && d !== '6', start: '08:30', end: '16:00' }]));
+const PLANS = new Map();
+const planOf = (id) => {
+  const own = PLANS.get(id);
+  return { own: !!own, days: own?.days ?? SCHOOL_WEEK, school: SCHOOL_WEEK, effectiveFrom: own ? '2026-11-24' : null, note: own?.note ?? null, updatedByName: own ? 'Admin Office' : null, updatedAt: own ? '2026-11-24T08:16:00Z' : null, upcoming: null, versions: [] };
+};
 /** A year of days for one person: mostly on time, some late, a few absences, weekends off. */
 function history(id) {
   const days = [];
@@ -128,7 +138,7 @@ function history(id) {
     if (early) sum.early++;
   }
   return { person: { id, name: people.find((p) => p[0] === id)?.[1] ?? 'Staff', role: 'Teacher' }, from: days[0].date, to: '2026-11-24', today: '2026-11-24', trackingFrom: days[64].date,
-    rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00' }, days,
+    rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00' }, plan: planOf(id), days,
     summary: { ...sum, rate: Math.round((sum.attended / sum.schoolDays) * 100), punctuality: Math.round((sum.onTime / sum.attended) * 100), avgIn: '07:24', streak: 6, bestStreak: 19 } };
 }
 const DEVICES = [
@@ -173,6 +183,12 @@ async function context(browser, { width, height, theme, mobile = false }) {
     if (p === '/api/sso/verify-mis') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
     if (p === '/api/roles-permissions/me') return ok({ permissionKeys: PERMS });
     if (p === '/api/staff/clock/overview') { const d = u.searchParams.get('date'); return ok(d && d !== OVERVIEW.date ? { ...OVERVIEW, date: d, isToday: false } : OVERVIEW); }
+    { const m = p.match(/^\/api\/staff\/clock\/people\/([^/]+)\/plan$/);
+      if (m && route.request().method() === 'PUT') {
+        const body = route.request().postDataJSON();
+        if (body.days) PLANS.set(m[1], body); else PLANS.delete(m[1]);
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: body.days ? 'Own hours saved, from today' : "Back to the school's hours, from today", data: { plan: planOf(m[1]), rejudged: 0 } }) });
+      } }
     if (p === '/api/staff/clock/report') return ok(REPORT);
     if (p === '/api/staff/clock/report/staff') return ok(reportStaff(u.searchParams.get('group')));
     { const m = p.match(/^\/api\/staff\/clock\/people\/([^/]+)\/history$/); if (m) return ok(history(m[1])); }
@@ -351,6 +367,31 @@ async function run(browser, vp) {
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: history modal scrolls sideways`);
   await shot('02c-history');
   await modal.getByRole('button', { name: 'Previous month' }).click();
+
+  // Working hours: by default the school's; Wednesday off + a later Monday start makes it an own plan.
+  await page.getByTestId('tab-hours').click();
+  await expectText(page, "Follows the school's hours", `${tag} default hours`);
+  if (!(await page.getByTestId('plan-save').isDisabled())) fail(`${tag}: Save hours is enabled with nothing changed`);
+  await page.getByRole('switch', { name: /Wednesday/ }).click();
+  await page.getByLabel('Monday starts').fill('10:00');
+  await expectText(page, 'School: 08:30 – 16:00', `${tag} school hint on a changed day`);
+  await page.getByLabel('Monday ends').fill('09:00');
+  await expectText(page, 'End must be after start', `${tag} time validation`);
+  if (!(await page.getByTestId('plan-save').isDisabled())) fail(`${tag}: Save hours is enabled with a wrong time`);
+  await page.getByLabel('Monday ends').fill('14:00');
+  await page.getByLabel('Note').fill('Part time');
+  await page.waitForTimeout(200);
+  if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: working hours scroll sideways`);
+  await shot('02d-hours-edit');
+  await page.getByTestId('plan-save').click();
+  await expectText(page, 'Own hours saved', `${tag} hours saved toast`);
+  await expectText(page, 'Own hours', `${tag} own hours state`);
+  await expectText(page, '4 days a week', `${tag} own week summary`);
+  await shot('02e-hours-own');
+  await page.getByTestId('plan-reset').click();
+  await page.getByTestId('plan-reset-yes').click();
+  await expectText(page, "Back to the school's hours", `${tag} hours reset toast`);
+  await expectText(page, "Follows the school's hours", `${tag} back to school hours`);
   await modal.getByRole('button', { name: 'Close' }).click();
   if (await page.getByTestId('staff-history').count()) fail(`${tag}: history did not close`);
 

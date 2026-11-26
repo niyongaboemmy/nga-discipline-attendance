@@ -643,7 +643,7 @@ describe('on their own network (mobile data): a weak GPS reading', () => {
 
 describe("a person's own working week", () => {
   const week = (over: Record<string, { works: boolean; start?: string; end?: string }>) =>
-    Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, { works: false, start: '08:00', end: '17:00', ...(over[d] ?? {}) }]));
+    Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((d) => [d, { start: '08:00', end: '17:00', ...(over[d] ?? { works: false }) }]));
   const plan = (id: string, body: unknown, token = adminToken) => request(app).put(`/api/staff/clock/people/${id}/plan`).set(authHeader(token)).send(body as any);
 
   it('judges late, early, days off and absences by the plan, everywhere', async () => {
