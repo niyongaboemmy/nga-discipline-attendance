@@ -878,6 +878,21 @@ describe('reminders and forgotten check-outs', () => {
     now = kigali('09:00', '2027-02-03');
     const me = (await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone2.token!)).body.data;
     expect(me.week.find((d: any) => d.date === '2027-02-02')).toMatchObject({ start: '10:00', end: '14:00' });
+    // Their calendar for February: Tuesdays 10:00-14:00, every other day off; the 2nd was worked (no check-out), the rest are still to come.
+    const cal = (await request(app).get('/api/clock/nga/calendar?month=2027-02').set('X-Clock-Device', phone2.token!)).body.data;
+    expect(cal).toMatchObject({ month: '2027-02', today: '2027-02-03' });
+    expect(cal.days).toHaveLength(28);
+    expect(cal.days[1]).toMatchObject({ date: '2027-02-02', kind: 'on_time', start: '10:00', end: '14:00', in: '09:45', out: null, noOut: true, own: true });
+    expect(cal.days[2]).toMatchObject({ date: '2027-02-03', kind: 'off', start: null });
+    expect(cal.days[8]).toMatchObject({ date: '2027-02-09', kind: 'planned', start: '10:00', end: '14:00' });
+    // (Monday the 1st was before their own hours started: a school day, absent.)
+    expect(cal.summary).toMatchObject({ workDays: 5, worked: 1, late: 0, absent: 1, daysOff: 23, plannedMinutes: 1410, left: 3 });
+    // The other person (school hours) was absent on a past weekday of their own month view; far months are clamped.
+    const calSchool = (await request(app).get('/api/clock/nga/calendar?month=2027-02').set('X-Clock-Device', phone.token!)).body.data;
+    expect(calSchool.days[0]).toMatchObject({ date: '2027-02-01', kind: 'absent', start: '08:30', end: '16:00', own: false });
+    expect(calSchool.days[5]).toMatchObject({ date: '2027-02-06', kind: 'off' });
+    expect((await request(app).get('/api/clock/nga/calendar?month=2031-01').set('X-Clock-Device', phone.token!)).body.data.month).toBe(cal.max);
+    expect((await request(app).get('/api/clock/nga/calendar').send()).status).toBe(401);
     expect(me.myWeek).toMatchObject({ own: true, days: { '2': { works: true, start: '10:00', end: '14:00' }, '3': { works: false } } });
     expect(me.missedOut).toEqual({ date: '2027-02-02', checkIn: '09:45' });
     const claim = (body: unknown) => request(app).post('/api/clock/nga/missed-checkout').set('X-Clock-Device', phone2.token!).send(body as any);

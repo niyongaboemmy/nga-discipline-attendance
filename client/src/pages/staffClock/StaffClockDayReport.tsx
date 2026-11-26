@@ -15,7 +15,7 @@ import { downloadDayPdf, downloadDayXlsx, type DayExportRow } from './dayReportE
  * person's history, with the visible rows as the list to step through.
  */
 
-type Filter = 'all' | 'present' | 'late' | 'out' | 'stillIn' | 'noOut';
+type Filter = 'all' | 'present' | 'late' | 'out' | 'stillIn' | 'noOut' | 'off';
 
 const toMin = (t: string | null) => {
   if (!t) return null;
@@ -83,6 +83,7 @@ export const DayReport: React.FC<{
     present: (r) => r.status === 'present',
     late: (r) => r.status === 'late',
     out: (r) => r.status === 'not_in' || r.status === 'invalid',
+    off: (r) => r.status === 'day_off',
     stillIn: (r) => inSchool(r) && !r.checkOut,
     noOut: (r) => inSchool(r) && !r.checkOut,
   };
@@ -93,6 +94,7 @@ export const DayReport: React.FC<{
     ['late', 'Late', 'late'],
     ['out', absentWord, 'abs'],
     isToday ? ['stillIn', checkoutOpen ? 'No check-out yet' : 'At school now', 'in'] : ['noOut', 'No check-out', 'in'],
+    ...(rows.some((r) => r.status === 'day_off') ? [['off', 'Day off', 'off'] as [Filter, string, string]] : []),
   ];
   const term = q.trim().toLowerCase();
   const order: Record<OverviewRow['status'], number> = { late: 0, not_in: 1, invalid: 2, present: 3, day_off: 4 };

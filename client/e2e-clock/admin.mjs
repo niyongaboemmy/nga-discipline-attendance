@@ -49,12 +49,14 @@ const OVERVIEW = {
   date: '2026-11-24', isToday: true, serverNow: '2026-11-24T08:15:00.000Z', rosterSource: 'mis',
   rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00', opens: '05:00', enabled: true },
   ownPlans: 2,
+  now: { at: '10:15', expectedToday: 9, shouldBeHere: 9, here: 8, notHere: 1, startsLater: 0, left: 0, leftEarly: 0, missed: 0, dayOff: 1, late: 2 },
   kpis: { staff: 9, checkedIn: 8, onTime: 6, late: 2, notIn: 1, dayOff: 1, checkedOut: 0, earlyLeave: 0, needsReview: 2, medianLateMinutes: 14 },
   arrivals: [['06:30', 0, 0], ['06:45', 0, 0], ['07:00', 1, 0], ['07:15', 2, 0], ['07:30', 1, 0], ['07:45', 2, 0], ['08:00', 1, 0], ['08:15', 0, 0], ['08:30', 0, 0], ['08:45', 0, 2], ['09:00', 0, 0], ['09:15', 0, 0]]
     .map(([from, onTime, late]) => ({ from, to: from, onTime, late })),
   rows: people.map(([userId, name, role, checkIn, status, checkOut, distance, device, review, source]) => ({
     recordId: checkIn ? Number(userId) : null, userId, name, role, checkIn, checkOut, status: userId === '110' ? 'day_off' : status, expected: userId !== '110',
     plan: userId === '110' ? { own: true, works: false, start: null, end: null } : userId === '109' ? { own: true, works: true, start: '07:00', end: '13:00' } : { own: false, works: true, start: '08:30', end: '16:00' },
+    moment: userId === '110' ? 'day_off' : userId === '107' ? 'due_now' : 'here', reminders: userId === '107',
     outStatus: null, distance, source: source ?? (checkIn ? 'device' : null), device, flags: [], needsReview: !!review, reviewState: null,
   })),
   review: [
@@ -201,6 +203,7 @@ async function context(browser, { width, height, theme, mobile = false }) {
       FIXED.add('109');
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: `Check-out saved: ${route.request().postDataJSON().time}`, data: { outStatus: 'on_time' } }) });
     }
+    if (p === '/api/staff/clock/nudge') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, message: 'Reminder sent to 1 person', data: { sent: 1, noReminders: 0, already: 0, notNeeded: 0 } }) });
     if (p === '/api/staff/clock/report') return ok(REPORT);
     if (p === '/api/staff/clock/document-brand') { globalThis.__docBrandCalls = (globalThis.__docBrandCalls || 0) + 1; return ok({ name: 'New Generation Academy', logo: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGNkYPhfzwAEjAwM/xkYGAAZBgP+oSDdTQAAAABJRU5ErkJggg==' }); }
     if (p === '/api/staff/clock/report/staff') return ok(reportStaff(u.searchParams.get('group')));
@@ -257,6 +260,24 @@ async function run(browser, vp) {
   if (await page.getByText('Set up staff check-in').count()) fail(`${tag}: setup card still on the dashboard with check-in on`);
   if (await page.locator('#sc-staff-list').count()) fail(`${tag}: staff list still on the dashboard`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
+  // Right now: who should be here, who is; a number opens its list; "not here" can be reminded.
+  const board = page.getByTestId('now-board');
+  await board.waitFor();
+  await expectText(page, '8 of 9', `${tag} here of who should be here`);
+  await expectText(page, 'not here yet', `${tag} not here tile`);
+  await shot('00-right-now');
+  await board.locator('[data-now="notHere"]').click();
+  await expectText(page, 'Should be here at 10:15', `${tag} not-here list`);
+  if ((await page.locator('.sc-sheet .sc-item').count()) !== 1) fail(`${tag}: the not-here list should hold one person`);
+  await page.getByTestId('sheet-action').click();
+  await expectText(page, 'Reminder sent to 1 person', `${tag} nudge toast`);
+  await shot('00b-not-here-sheet');
+  await page.keyboard.press('Escape');
+  await board.locator('[data-now="dayOff"]').click();
+  await expectText(page, 'Day off today', `${tag} day-off list`);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  if (await page.locator('.sc-sheet').count()) fail(`${tag}: the list did not close`);
   // First look is today: 8 of 10 in. The page shows numbers; names open in a window on request.
   if ((await page.getByTestId('scr-headline').innerText()).trim() !== '80%') fail(`${tag}: headline is not today's rate`);
   await expectText(page, '8 of 10 staff checked in', `${tag} today headline`);

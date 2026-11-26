@@ -920,6 +920,13 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
                     <button aria-pressed={rules.weakLocation === 'refuse'} disabled={!canEdit} onClick={() => patchRules({ weakLocation: 'refuse' })} data-testid="weak-refuse">Refuse</button>
                   </div>
                 </div>
+                <div className="zc-rule" title="A day off is a day a person is not expected: their own working week, a weekend, a school day off. Closed: they cannot check in and see when their next day is. Allowed: the check-in counts and is flagged.">
+                  <span>Check-in on a day off</span>
+                  <div className="zc-shape" role="group" aria-label="Check-in on a day off">
+                    <button aria-pressed={rules.nonSchoolDays !== 'allow_flag'} disabled={!canEdit} onClick={() => patchRules({ nonSchoolDays: 'refuse' })}>Closed</button>
+                    <button aria-pressed={rules.nonSchoolDays === 'allow_flag'} disabled={!canEdit} onClick={() => patchRules({ nonSchoolDays: 'allow_flag' })} data-testid="dayoff-allow">Allowed, flagged</button>
+                  </div>
+                </div>
                 <p className="zc-rule-note">These hours are for everyone. Someone with different days or times? Open them on the <Link to="/staff/clock/people">Staff</Link> tab, then Working hours.</p>
               </div>
               {canEdit && <div className="zc-drawer-foot">Changes save with the areas</div>}

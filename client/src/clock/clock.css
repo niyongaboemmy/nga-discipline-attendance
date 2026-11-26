@@ -596,3 +596,10 @@ a.ck-btn { text-decoration: none; }
 .ck-x-row .ck-x-btn { height: 46px; padding: 0 22px; }
 .ck-x-btn:disabled { opacity: .5; cursor: default; }
 .ck-x-btn-quiet { background: transparent; color: inherit; border: 1px solid var(--ck-border); }
+
+.ck-hours { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; }
+.ck-hours li { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 40px; padding: 0 12px; border-radius: 12px; font-size: 15px; }
+.ck-hours li span { text-transform: capitalize; }
+.ck-hours li b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ck-hours li.off b { font-weight: 500; color: var(--ck-faint); }
+.ck-hours li.today { background: var(--ck-blue-tint); color: var(--ck-blue-deep); }

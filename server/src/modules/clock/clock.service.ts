@@ -699,6 +699,67 @@ export async function applyTap(
 }
 
 // ---------------------------------------------------------------------------
+// The person's own calendar: a month of their days (expected hours, days off,
+// days the school is closed, what was recorded).
+// ---------------------------------------------------------------------------
+
+export type MyDayKind = 'on_time' | 'late' | 'absent' | 'today' | 'planned' | 'off' | 'closed' | 'untracked';
+
+export async function personCalendar(db: Database, device: DeviceRow, monthRaw: unknown) {
+  const today = schoolDateString(new Date(clockNow()));
+  let month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(monthRaw ?? '')) ? String(monthRaw) : today.slice(0, 7);
+  // A year back, six months ahead.
+  const lo = addDays(today, -366).slice(0, 7);
+  const hi = addDays(today, 184).slice(0, 7);
+  if (month < lo) month = lo;
+  if (month > hi) month = hi;
+  const from = `${month}-01`;
+  const to = addDays(`${addDays(from, 32).slice(0, 7)}-01`, -1);
+
+  const book = await loadPlanBook(db, device.user_id);
+  const records = new Map((await db.all<any[]>(
+    `SELECT date, clock_in, clock_out, status, out_status, review_state FROM staff_attendance WHERE staff_id = ? AND date >= ? AND date <= ?`, device.user_id, from, to
+  )).map((r) => [String(r.date), r]));
+  let closedDays = new Set<string>();
+  try {
+    closedDays = new Set((await db.all<{ session_date: string }[]>(`SELECT session_date FROM rfid_days_off WHERE session_date >= ? AND session_date <= ?`, from, to)).map((r) => r.session_date));
+  } catch { /* no days-off table */ }
+  const first = await db.get<{ d: string | null }>(`SELECT MIN(date) AS d FROM staff_attendance WHERE source IN ('device','card')`);
+  const trackingFrom = first?.d && first.d <= today ? first.d : today;
+
+  const days: Array<{ date: string; kind: MyDayKind; start: string | null; end: string | null; in: string | null; out: string | null; early: boolean; noOut: boolean; own: boolean }> = [];
+  const sum = { workDays: 0, worked: 0, late: 0, absent: 0, daysOff: 0, plannedMinutes: 0, left: 0 };
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const rule = book.dayFor(device.user_id, d);
+    const closed = closedDays.has(d);
+    const works = rule.works && !closed;
+    const r = records.get(d);
+    const came = !!r?.clock_in && r.review_state !== 'invalid';
+    let kind: MyDayKind;
+    if (came) kind = r.status === 'late' ? 'late' : 'on_time';
+    else if (closed) kind = 'closed';
+    else if (!works) kind = 'off';
+    else if (d > today) kind = 'planned';
+    else if (d === today) kind = 'today';
+    else if (d < trackingFrom) kind = 'untracked';
+    else kind = 'absent';
+    days.push({
+      date: d, kind, start: works ? rule.start : null, end: works ? rule.end : null,
+      in: came ? safeClockLabel(r.clock_in) : null, out: came ? safeClockLabel(r.clock_out) : null,
+      early: came && r.out_status === 'early', noOut: came && !r.clock_out && d < today, own: rule.own,
+    });
+    if (works) {
+      sum.workDays += 1;
+      if (rule.lateAfter != null && rule.earlyBefore != null) sum.plannedMinutes += Math.max(0, rule.earlyBefore - rule.lateAfter);
+      if (d > today || (d === today && !came)) sum.left += 1;
+    } else sum.daysOff += 1;
+    if (came) { sum.worked += 1; if (kind === 'late') sum.late += 1; }
+    if (kind === 'absent') sum.absent += 1;
+  }
+  return { month, today, min: lo, max: hi, days, summary: sum };
+}
+
+// ---------------------------------------------------------------------------
 // A forgotten check-out
 // ---------------------------------------------------------------------------
 

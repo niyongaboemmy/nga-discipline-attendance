@@ -58,6 +58,9 @@ export interface WeekDay {
   checkIn: string | null;
   checkOut: string | null;
   status: string | null;
+  /** the hours expected of the person that day */
+  start?: string | null;
+  end?: string | null;
 }
 
 export interface DayState {
@@ -70,6 +73,14 @@ export interface DayState {
   opensAt: string;
   today: { checkIn: string | null; checkOut: string | null; status: string; outStatus: string | null; minutesAtSchool: number } | null;
   week: WeekDay[];
+  /** today is not a working day for this person */
+  dayOff?: boolean;
+  /** ...and the school closes check-in on a day off */
+  dayOffClosed?: boolean;
+  /** the next day they are expected */
+  nextDay?: { date: string; start: string | null } | null;
+  /** their working week: keys '0'..'6', 0 = Sunday */
+  myWeek?: { own: boolean; days: Record<string, { works: boolean; start: string; end: string }> };
   /** a recent day left without a check-out that the person has not explained yet */
   missedOut?: { date: string; checkIn: string | null } | null;
   /** today's times for this person: their own hours (own) or the school's */

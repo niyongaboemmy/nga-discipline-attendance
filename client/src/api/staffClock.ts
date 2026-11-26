@@ -83,6 +83,10 @@ export interface OverviewRow {
   expected?: boolean;
   /** the hours that apply to this person that day; own = their own week, not the school's rules */
   plan?: { own: boolean; works: boolean; start: string | null; end: string | null };
+  /** today only: where the person stands at this minute */
+  moment?: 'here' | 'left' | 'left_early' | 'due_now' | 'due_later' | 'missed' | 'day_off' | null;
+  /** their phone gets reminders, so a leader's nudge reaches them */
+  reminders?: boolean;
   outStatus: string | null;
   distance: number | null;
   source: string | null;
@@ -101,6 +105,8 @@ export interface Overview {
   /** staff who follow their own working week on this day */
   ownPlans?: number;
   holiday?: boolean;
+  /** today only: the school at this minute */
+  now?: { at: string; expectedToday: number; shouldBeHere: number; here: number; notHere: number; startsLater: number; left: number; leftEarly: number; missed: number; dayOff: number; late: number } | null;
   kpis: { staff: number; checkedIn: number; onTime: number; late: number; notIn: number; dayOff?: number; checkedOut: number; earlyLeave: number; needsReview: number; medianLateMinutes: number | null };
   arrivals: Array<{ from: string; to: string; onTime: number; late: number }>;
   rows: OverviewRow[];
@@ -204,6 +210,8 @@ export const staffClockApi = {
   documentBrand: () => data(apiGet<{ name: string; logo: string | null }>('/api/staff/clock/document-brand')),
   report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
   reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),
+  /** A leader reminds named people to check in (or out) now; only phones with reminders on get it. */
+  nudge: (kind: 'in' | 'out', userIds: string[]) => apiPost<{ sent: number; noReminders: number; already: number; notNeeded: number }>('/api/staff/clock/nudge', { kind, userIds }),
   /** The office records when someone left on a day they forgot to check out. */
   setCheckout: (recordId: number, time: string, note?: string) => apiPost<{ outStatus: string }>(`/api/staff/clock/attendance/${recordId}/checkout`, { time, note }),
   /** Save a person's own week from a day on (days null: the school's hours again). */
