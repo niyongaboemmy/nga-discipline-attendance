@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Copy, KeyRound, MapPin, Power, ShieldAlert, Smartphone, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Copy, KeyRound, MapPin, Power, ShieldAlert, Smartphone, X, ChevronRight } from 'lucide-react';
 import type { Overview } from '../../api/staffClock';
 import { initialsOf } from '../../api/staffClock';
 import { useToast } from '../../context/ToastContext';
@@ -76,7 +76,8 @@ export interface SheetPerson { id: string; name: string; meta?: string; tag?: st
 export const ListSheet: React.FC<{ title: string; subtitle?: string; people: SheetPerson[]; empty: string; onClose: () => void; onPick?: (p: SheetPerson) => void }> = ({ title, subtitle, people, empty, onClose, onPick }) => {
   const toast = useToast();
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    // A person's history open on top: Escape closes that first, not this list.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('.sh-overlay')) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -117,6 +118,7 @@ export const ListSheet: React.FC<{ title: string; subtitle?: string; people: She
                       <span className="sc-avatar" style={{ width: 38, height: 38 }}>{initialsOf(p.name)}</span>
                       <span className="sc-item-main"><b className="sc-clip" title={p.name}>{p.name}</b>{p.meta && <small className="sc-clip sc-muted">{p.meta}</small>}</span>
                       {p.tag && <span className="sc-pill sc-tone-amber" style={{ height: 24, fontSize: 12 }}><AlertTriangle size={12} />{p.tag}</span>}
+                      {onPick && p.personId && <ChevronRight size={16} className="sc-item-go" aria-hidden />}
                     </>
                   );
                   return onPick

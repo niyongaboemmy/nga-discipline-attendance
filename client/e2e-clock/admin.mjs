@@ -228,14 +228,18 @@ async function run(browser, vp) {
   if (await page.getByText('Set up staff check-in').count()) fail(`${tag}: setup card still on the dashboard with check-in on`);
   if (await page.locator('#sc-staff-list').count()) fail(`${tag}: staff list still on the dashboard`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
-  // First look is today: 8 of 10 in. The page shows numbers, never a list of staff.
+  // First look is today: 8 of 10 in. Names appear only in the day report (staff by staff).
   if ((await page.getByTestId('scr-headline').innerText()).trim() !== '80%') fail(`${tag}: headline is not today's rate`);
   await expectText(page, '8 of 10 staff checked in', `${tag} today headline`);
   await expectText(page, 'The term on the calendar', `${tag} term calendar`);
   await expectText(page, 'Need a conversation', `${tag} staff groups`);
   for (const name of ['Olivier Mugisha', 'Emmanuel Nkurunziza', 'Grace Mukamana']) {
-    if (await page.getByText(name).count()) fail(`${tag}: "${name}" is listed on the dashboard`);
+    const outside = await page.evaluate((n) => [...document.querySelectorAll('main *')].some((el) => el.children.length === 0 && el.textContent?.trim() === n && !el.closest('#scr-day-report')), name);
+    if (outside) fail(`${tag}: "${name}" is listed outside the day report`);
   }
+  // Today's staff, all statuses, below the calendar.
+  await expectText(page, 'Today, staff by staff', `${tag} day report`);
+  if ((await page.locator('#scr-day-report tbody tr').count()) !== 10) fail(`${tag}: day report should list all 10 staff`);
   await shot('01-dashboard');
   // Attention strip: only what needs fixing, each a tap to the fix.
   // One short line each; the phone waiting for approval is the warning, and comes first.
@@ -249,14 +253,32 @@ async function run(browser, vp) {
   await page.locator('[data-attn="tested"]').waitFor();
   await page.locator('[data-attn="phones"]').waitFor();
   await page.locator('[data-attn="review"]').waitFor();
-  // Today's details: the late and not-in staff open in the side sheet, on request.
-  await page.getByRole('button', { name: "View today's details" }).click();
-  await page.getByRole('button', { name: /View the 4 late or not-in staff/ }).click();
-  await expectText(page, 'Copy names', `${tag} day sheet`);
-  await expectText(page, 'Olivier Mugisha', `${tag} day sheet names`);
-  await expectText(page, 'Late · in at 08:44', `${tag} day sheet late time`);
-  await shot('01a-day-sheet');
-  await page.getByRole('button', { name: 'Close' }).click();
+  // "See all staff" brings the day report into view; filters by status; a row opens the history,
+  // and the arrows step through the rows on screen.
+  await page.getByTestId('see-day-staff').click();
+  const rep = page.locator('#scr-day-report');
+  await rep.getByRole('tab', { name: /Late/ }).click();
+  if ((await rep.locator('tbody tr').count()) !== 2) fail(`${tag}: the Late filter should show 2 staff`);
+  await expectText(page, '08:44', `${tag} late check-in time`);
+  await rep.getByRole('tab', { name: /Not in yet/ }).click();
+  await expectText(page, 'Olivier Mugisha', `${tag} not in yet listed`);
+  await rep.getByRole('tab', { name: /Everyone/ }).click();
+  await rep.getByPlaceholder('Search staff').fill('emman');
+  if ((await rep.locator('tbody tr').count()) !== 1) fail(`${tag}: search should narrow the day report to 1`);
+  await rep.getByPlaceholder('Search staff').fill('');
+  await shot('01a-day-report');
+  await rep.locator('tbody tr, .sc-list .sc-item').locator('visible=true').first().click();
+  const hist = page.getByTestId('staff-history');
+  await hist.waitFor();
+  await expectText(page, '1 / 10', `${tag} history position`);
+  const firstName = (await hist.locator('.sh-who b').innerText()).trim();
+  await page.keyboard.press('ArrowRight');
+  await expectText(page, '2 / 10', `${tag} history next with arrow key`);
+  if ((await hist.locator('.sh-who b').innerText()).trim() === firstName) fail(`${tag}: arrow key did not move to the next person`);
+  await hist.getByRole('button', { name: /^Previous:/ }).click();
+  await expectText(page, '1 / 10', `${tag} history previous button`);
+  await page.keyboard.press('Escape');
+  if (await page.getByTestId('staff-history').count()) fail(`${tag}: history did not close`);
   // A day on the calendar opens in the day panel; the date field and the arrows follow.
   await page.getByRole('button', { name: /^Wed,? 7 Oct · 60% in/ }).first().click();
   await expectText(page, '7 October 2026', `${tag} picked day`);
@@ -266,7 +288,7 @@ async function run(browser, vp) {
   await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Whole term' }).click();
   await expectText(page, 'average over 57 school days', `${tag} term headline`);
   await page.getByRole('button', { name: 'View late or absent staff' }).click();
-  await expectText(page, 'Claudine Uwase', `${tag} term staff sheet`);
+  await page.locator('.sc-sheet').getByText('Claudine Uwase').first().waitFor();
   await page.keyboard.press('Escape');
   // A range of dates: From / to fields, days outside it dimmed.
   await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Date range' }).click();
@@ -277,7 +299,7 @@ async function run(browser, vp) {
   await shot('01b-range');
   // A group shows a count; "View staff" lists it.
   await page.locator('.scr-group').filter({ hasText: 'Often late' }).getByRole('button', { name: 'View staff' }).click();
-  await expectText(page, 'Emmanuel Nkurunziza', `${tag} group sheet`);
+  await page.locator('.sc-sheet').getByText('Emmanuel Nkurunziza').first().waitFor();
   await page.keyboard.press('Escape');
   // Custom date, then back to today.
   await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Custom date' }).click();
@@ -286,16 +308,24 @@ async function run(browser, vp) {
   await page.getByRole('group', { name: 'Period' }).getByRole('button', { name: 'Today' }).click();
   await expectText(page, '8 of 10 staff checked in', `${tag} back to today`);
   await page.locator('[data-kpi="noOut"]').click();
-  await expectText(page, 'In at 07:51', `${tag} no check-out sheet`);
+  await page.locator('.sc-sheet').getByText('In at 07:51').first().waitFor();
   await page.keyboard.press('Escape');
   await page.locator('[data-kpi="recent"]').click();
-  await expectText(page, 'Eric Habyarimana', `${tag} missed check-outs`);
+  await page.locator('.sc-sheet').getByText('Eric Habyarimana').first().waitFor();
   await expectText(page, 'Saturday 21 Nov', `${tag} missed grouped by day`);
   await shot('01c-missed-sheet');
-  // A person in a list opens their history.
+  // A person in a list opens their history ON TOP of the list; Escape closes the history first.
   await page.getByRole('button', { name: /Eric Habyarimana/ }).first().click();
   await page.getByTestId('staff-history').waitFor();
+  {
+    const box = await page.getByTestId('staff-history').boundingBox();
+    const onTop = await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-testid="staff-history"]'), [box.x + box.width / 2, box.y + 40]);
+    if (!onTop) fail(`${tag}: the history opened behind the list`);
+  }
+  await expectText(page, '1 / 2', `${tag} history steps through the sheet list`);
   await page.keyboard.press('Escape');
+  if (await page.getByTestId('staff-history').count()) fail(`${tag}: Escape did not close the history`);
+  if (!(await page.locator('.sc-sheet').count())) fail(`${tag}: Escape closed the list together with the history`);
   await page.keyboard.press('Escape');
   // "Unusual check-ins" goes to the Staff tab's review list.
   await page.locator('[data-attn="review"]').click();
