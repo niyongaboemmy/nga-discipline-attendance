@@ -32,7 +32,16 @@ const hours = (m: number | null) => (m == null ? null : `${Math.floor(m / 60)}h 
 const tipText = (d: HistoryDay) =>
   `${fmtDay(d.date)} · ${KIND[d.kind].label || '—'}${d.in ? ` · in ${d.in}` : ''}${d.out ? ` · out ${d.out}` : d.noOut ? ' · no check-out' : ''}`;
 
-export const StaffHistoryModal: React.FC<{ personId: string; name: string; role?: string | null; onClose: () => void }> = ({ personId, name, role, onClose }) => {
+export interface HistoryNavPerson { id: string; name: string; role?: string | null; note?: string }
+
+export const StaffHistoryModal: React.FC<{
+  personId: string; name: string; role?: string | null; onClose: () => void;
+  /** the list this person was opened from: step through it with the arrows or ← → */
+  list?: HistoryNavPerson[];
+  onNav?: (p: HistoryNavPerson) => void;
+  /** opened by stepping from another person: no entrance animation */
+  instant?: boolean;
+}> = ({ personId, name, role, onClose, list, onNav, instant }) => {
   const [data, setData] = useState<PersonHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [month, setMonth] = useState<string | null>(null);
@@ -49,8 +58,20 @@ export const StaffHistoryModal: React.FC<{ personId: string; name: string; role?
     return () => { live = false; };
   }, [personId]);
 
+  const at = list ? list.findIndex((p) => p.id === personId) : -1;
+  const prevP = at > 0 ? list![at - 1] : null;
+  const nextP = at >= 0 && at < list!.length - 1 ? list![at + 1] : null;
+  const navRef = useRef({ prevP, nextP, onNav });
+  useEffect(() => { navRef.current = { prevP, nextP, onNav }; });
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      const n = navRef.current;
+      if (!n.onNav || (e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if (e.key === 'ArrowLeft' && n.prevP) n.onNav(n.prevP);
+      if (e.key === 'ArrowRight' && n.nextP) n.onNav(n.nextP);
+    };
     window.addEventListener('keydown', onKey);
     dialog.current?.focus();
     const prev = document.body.style.overflow;
@@ -123,15 +144,23 @@ export const StaffHistoryModal: React.FC<{ personId: string; name: string; role?
 
   return (
     <div className="sh-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="sh-dialog" role="dialog" aria-modal="true" aria-label={`${name}: attendance history`} tabIndex={-1} ref={dialog} data-testid="staff-history">
+      <div className={`sh-dialog${instant ? ' sh-instant' : ''}`} role="dialog" aria-modal="true" aria-label={`${name}: attendance history`} tabIndex={-1} ref={dialog} data-testid="staff-history">
         <header className="sh-head">
           <span className="sc-avatar sh-avatar">{initialsOf(data?.person.name ?? name)}</span>
           <div className="sh-who">
             <b className="sc-clip">{data?.person.name ?? name}</b>
             <small>{role || data?.person.role || 'Staff'}{data ? ` · ${fmtDay(data.from, { month: 'short', year: 'numeric' })} – ${fmtDay(data.to, { month: 'short', year: 'numeric' })}` : ''}</small>
           </div>
+          {list && onNav && at >= 0 && list.length > 1 && (
+            <div className="sh-nav" role="group" aria-label="Other staff in this list">
+              <button onClick={() => prevP && onNav(prevP)} disabled={!prevP} aria-label={prevP ? `Previous: ${prevP.name}` : 'No previous'} title={prevP ? `${prevP.name} (←)` : undefined}><ChevronLeft size={16} /></button>
+              <span className="sc-num">{at + 1} / {list.length}</span>
+              <button onClick={() => nextP && onNav(nextP)} disabled={!nextP} aria-label={nextP ? `Next: ${nextP.name}` : 'No next'} title={nextP ? `${nextP.name} (→)` : undefined}><ChevronRight size={16} /></button>
+            </div>
+          )}
           <button className="sh-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </header>
+        {list && at >= 0 && list[at].note && <div className="sh-context">{list[at].note}</div>}
 
         {error ? (
           <div className="sc-empty">{error}</div>

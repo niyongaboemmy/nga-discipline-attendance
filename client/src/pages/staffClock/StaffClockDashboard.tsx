@@ -6,11 +6,12 @@ import { ErrorState } from '../../components/common/ErrorState';
 import { useToast } from '../../context/ToastContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { ApiError } from '../../api/client';
-import { staffClockApi, type ClockReport, type Overview, type ReportDay, type ReportGroup } from '../../api/staffClock';
+import { staffClockApi, type ClockReport, type Overview, type OverviewRow, type ReportDay, type ReportGroup } from '../../api/staffClock';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { StaffClockSetup } from './StaffClockSetup';
 import { AttentionStrip, ListSheet, type SheetPerson } from './StaffClockAttention';
-import { StaffHistoryModal } from './StaffHistoryModal';
+import { StaffHistoryModal, type HistoryNavPerson } from './StaffHistoryModal';
+import { DayReport } from './StaffClockDayReport';
 import { Columns, GroupCards, HeatLegend, MonthGrid, SplitBar, TermCalendar, WeekdayBars, WeeklyChart } from './StaffClockReportParts';
 import { dayRate, delta, fmtDate, medianTime, pct, sumDays } from './reportMath';
 
@@ -47,7 +48,15 @@ export const StaffClockDashboard: React.FC = () => {
   const [dateNote, setDateNote] = useState('');
 
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const [person, setPerson] = useState<{ id: string; name: string } | null>(null);
+  const [person, setPerson] = useState<{ id: string; name: string; role?: string | null; list?: HistoryNavPerson[]; instant?: boolean } | null>(null);
+  const [reportFlash, setReportFlash] = useState(false);
+  // Escape also closes the side sheet while it is still loading its names.
+  useEffect(() => {
+    if (!sheet?.loading) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSheet(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sheet?.loading]);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -104,7 +113,18 @@ export const StaffClockDashboard: React.FC = () => {
     return { from: monthStart < report.from ? report.from : monthStart, to: today };
   }, [range, today, report]);
 
-  const pick = (date: string) => { setSelected(date); setDateNote(''); };
+  /** A day was picked: the day card and the staff report below follow it; bring the report into view. */
+  const showReport = () => {
+    window.setTimeout(() => {
+      const el = document.getElementById('scr-day-report');
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.top > window.innerHeight - 140 || r.bottom < 80) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setReportFlash(true);
+      window.setTimeout(() => setReportFlash(false), 1200);
+    }, 60);
+  };
+  const pick = (date: string) => { setSelected(date); setDateNote(''); showReport(); };
   const goToday = () => { if (today) { setSelected(today); setMode('today'); setDateNote(''); } };
   const pickTyped = (value: string) => {
     if (!value) return;
@@ -166,13 +186,11 @@ export const StaffClockDashboard: React.FC = () => {
     }
   };
 
-  /** Late or absent staff of one day, from that day's overview. */
-  const openDayStaff = (o: Overview) => {
-    const people: SheetPerson[] = o.rows
-      .filter((r) => r.status === 'late' || r.status === 'not_in')
-      .sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === 'late' ? -1 : 1))
-      .map((r) => ({ id: r.userId, personId: r.userId, name: r.name, meta: r.status === 'late' ? `Late · in at ${r.checkIn ?? '—'}` : o.isToday ? 'Not in yet' : 'Absent', group: r.status === 'late' ? 'Late' : o.isToday ? 'Not in yet' : 'Absent' }));
-    setSheet({ title: o.isToday ? 'Late or not in yet' : 'Late or absent', subtitle: long(o.date), people, empty: 'Everyone was in on time' });
+  /** A person from the day report: their history, stepping through the rows on screen. */
+  const openRow = (row: OverviewRow, list: OverviewRow[], o: Overview) => {
+    const word = (r: OverviewRow) => (r.status === 'present' ? 'On time' : r.status === 'late' ? 'Late' : r.status === 'invalid' ? 'Marked invalid' : o.isToday ? 'Not in yet' : 'Absent');
+    const nav = list.map((r) => ({ id: r.userId, name: r.name, role: r.role, note: `${long(o.date)}: ${word(r)}${r.checkIn ? ` · in ${r.checkIn}` : ''}${r.checkOut ? ` · out ${r.checkOut}` : ''}` }));
+    setPerson({ id: row.userId, name: row.name, role: row.role, list: nav });
   };
 
   /** Staff of a period or a group: asked for only now. */
@@ -222,7 +240,7 @@ export const StaffClockDashboard: React.FC = () => {
         split: counted ? { onTime: d.onTime, late: d.late, absent: d.absent } : { onTime: 0, late: 0, absent: 0 },
         legend: counted ? [`${d.onTime} on time`, `${d.late} late`, `${d.absent} ${isToday ? 'not in yet' : 'absent'}`] : [],
         button: isToday ? "View today's details" : "View this day's details",
-        onClick: () => { pick(scope.from); document.getElementById('scr-day')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); },
+        onClick: () => pick(scope.from),
       };
     }
     const s = scope.sum;
@@ -390,13 +408,15 @@ export const StaffClockDashboard: React.FC = () => {
                       <div className="scr-tile"><b className="sc-num">{vsTerm ? vsTerm.text : '–'}</b><small>against the {report.term ? 'term' : 'period'}</small></div>
                     </div>
                     <span className="scr-spacer" />
-                    <button type="button" className="sc-btn sc-btn-soft scr-hero-btn" disabled={lateOrOut === 0} onClick={() => openDayStaff(panel)}>
-                      {lateOrOut === 0 ? 'Everyone was in on time' : `View the ${lateOrOut} late or ${panel.isToday ? 'not-in' : 'absent'} staff`}
+                    <button type="button" className="sc-btn sc-btn-soft scr-hero-btn" onClick={showReport} data-testid="see-day-staff">
+                      {lateOrOut === 0 ? `Everyone was in on time · see all ${panel.kpis.staff}` : `See all ${panel.kpis.staff} staff · ${lateOrOut} late or ${panel.isToday ? 'not in' : 'absent'}`}
                     </button>
                   </>
                 )}
               </section>
             </div>
+
+            <DayReport overview={panel} loading={!panel || (dayLoading && !panelIsToday)} flash={reportFlash} onOpen={(r, list) => panel && openRow(r, list, panel)} />
 
             <div className="scr-row-3">
               <section className="sc-card scr-pattern">
@@ -494,9 +514,18 @@ export const StaffClockDashboard: React.FC = () => {
             </aside>
           </div>
         ) : (
-          <ListSheet title={sheet.title} subtitle={sheet.subtitle} people={sheet.people} empty={sheet.empty} onClose={() => setSheet(null)} onPick={(p) => p.personId && setPerson({ id: p.personId, name: p.name })} />
+          <ListSheet title={sheet.title} subtitle={sheet.subtitle} people={sheet.people} empty={sheet.empty} onClose={() => setSheet(null)}
+            onPick={(p) => {
+              if (!p.personId) return;
+              const nav = sheet.people.filter((x) => x.personId).map((x) => ({ id: x.personId!, name: x.name, note: [x.group, x.meta].filter(Boolean).join(' · ') }));
+              setPerson({ id: p.personId, name: p.name, list: nav.filter((x, i) => nav.findIndex((y) => y.id === x.id) === i) });
+            }} />
         ))}
-        {person && <StaffHistoryModal personId={person.id} name={person.name} onClose={() => setPerson(null)} />}
+        {person && (
+          <StaffHistoryModal key={person.id} personId={person.id} name={person.name} role={person.role} instant={person.instant}
+            list={person.list} onNav={(p) => setPerson((cur) => (cur ? { ...cur, id: p.id, name: p.name, role: p.role, instant: true } : cur))}
+            onClose={() => setPerson(null)} />
+        )}
       </div>
     </DashboardLayout>
   );
