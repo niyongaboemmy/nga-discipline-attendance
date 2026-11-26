@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, ChevronLeft, ChevronRight, Flame, Clock, UserX, LogOut, TimerOff, CalendarCheck, CreditCard } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Flame, Clock, UserX, LogOut, TimerOff, CalendarCheck, CreditCard, Monitor, Smartphone } from 'lucide-react';
 import { ApiError } from '../../api/client';
 import { staffClockApi, initialsOf, type HistoryDay, type HistoryKind, type PersonHistory } from '../../api/staffClock';
 import { Skeleton } from '../../components/common/Skeleton';
@@ -59,7 +59,9 @@ export const StaffHistoryModal: React.FC<{
   const [savingOut, setSavingOut] = useState(false);
   const { can } = usePermissions();
   const canEditPlan = can('STAFF_ATTENDANCE_ZONES_MANAGE');
-  const [tab, setTab] = useState<'history' | 'hours'>(initialTab ?? 'history');
+  const [tab, setTab] = useState<'history' | 'hours' | 'device'>(initialTab ?? 'history');
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [data, setData] = useState<PersonHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [month, setMonth] = useState<string | null>(null);
@@ -160,6 +162,20 @@ export const StaffHistoryModal: React.FC<{
   const sel = picked ? byDate.get(picked) ?? null : null;
   const outTime = sel && outDraft?.date === sel.date ? outDraft.time : '';
   const setOutTime = (time: string) => setOutDraft(sel ? { date: sel.date, time } : null);
+  const signOut = async (deviceId: number) => {
+    setSigningOut(true);
+    try {
+      await staffClockApi.deviceAction(deviceId, 'revoke', 'Signed out by the office');
+      toast.success('Device signed out', 'They sign in with Google again the next time they open the check-in page.');
+      setConfirmSignOut(false);
+      setReloadKey((k) => k + 1);
+      onChanged?.();
+    } catch (e) {
+      toast.error('Not signed out', e instanceof ApiError ? e.message : 'Check the connection and try again.');
+    } finally {
+      setSigningOut(false);
+    }
+  };
   const saveOut = async (recordId: number, time: string) => {
     setSavingOut(true);
     try {
@@ -201,6 +217,7 @@ export const StaffHistoryModal: React.FC<{
           <button role="tab" aria-selected={tab === 'hours'} onClick={() => setTab('hours')} data-testid="tab-hours">
             Working hours{data?.plan?.own && <i className="sh-tab-dot" title="Own hours" />}
           </button>
+          <button role="tab" aria-selected={tab === 'device'} onClick={() => setTab('device')} data-testid="tab-device">Device</button>
         </div>
 
         {error ? (
@@ -211,6 +228,45 @@ export const StaffHistoryModal: React.FC<{
             <div className="sh-stats">{[0, 1, 2, 3].map((i) => <Skeleton key={i} h={64} r={16} />)}</div>
             <Skeleton h={128} r={16} />
             <Skeleton h={260} r={16} />
+          </div>
+        ) : tab === 'device' ? (
+          <div className="sh-body" data-testid="staff-device">
+            {data.device ? (
+              <div className="sd">
+                <div className="sd-head">
+                  <span className="sd-ico">{data.device.form_factor === 'desktop' ? <Monitor size={20} /> : <Smartphone size={20} />}</span>
+                  <div className="sd-main">
+                    <b className="sc-clip">{data.device.label || 'Registered device'}</b>
+                    <small className="sc-clip">{data.device.google_email}</small>
+                  </div>
+                  <span className={`sc-pill ${data.device.status === 'active' ? 'sc-tone-blue' : 'sc-tone-amber'}`}><i />{data.device.status === 'active' ? 'Signed in' : 'Waiting for approval'}</span>
+                </div>
+                <dl className="sd-facts">
+                  <div><dt>Registered</dt><dd>{fmtDay(data.device.registered_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' })}</dd></div>
+                  <div><dt>Last check-in tap</dt><dd>{data.device.last_used_at ? fmtDay(data.device.last_used_at.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : 'Not yet'}</dd></div>
+                  <div><dt>Reminders</dt><dd>{data.device.reminders ? 'On' : 'Off'}</dd></div>
+                  <div><dt>Staff card</dt><dd>{data.card ? 'Has one' : 'None'}</dd></div>
+                </dl>
+                <p className="sp-help">The check-in page has no sign-out button. Signing the device out here removes it from {data.person.name.split(' ')[0]}'s account: the page asks them to sign in with Google again, on this or another phone. Their attendance history stays.</p>
+                {canFixOut && (confirmSignOut ? (
+                  <div className="sd-confirm" role="alertdialog" aria-label="Sign out this device?">
+                    <b>Sign {data.person.name.split(' ')[0]} out of this device?</b>
+                    <div className="sd-actions">
+                      <button className="sc-btn sc-btn-sm" disabled={signingOut} onClick={() => setConfirmSignOut(false)}>Cancel</button>
+                      <button className="sc-btn sc-btn-primary sc-btn-sm" disabled={signingOut} onClick={() => void signOut(data.device!.id)} data-testid="device-signout-yes">{signingOut ? <Spinner /> : null} {signingOut ? 'Signing out…' : 'Yes, sign out'}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="sd-actions">
+                    <button className="sc-btn sc-btn-sm sc-btn-danger" onClick={() => setConfirmSignOut(true)} data-testid="device-signout"><LogOut size={15} /> Sign out this device</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="sc-empty">
+                No phone or browser is signed in for {data.person.name.split(' ')[0]}.{data.card ? ' They check in with a staff card.' : ' They register from the school\'s check-in link.'}
+              </div>
+            )}
           </div>
         ) : tab === 'hours' ? (
           <div className="sh-body">

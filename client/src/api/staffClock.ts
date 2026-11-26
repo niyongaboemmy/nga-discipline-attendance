@@ -184,6 +184,10 @@ export interface PersonHistory {
   from: string; to: string; today: string; trackingFrom: string;
   rules: { lateAfter: string | null; earlyLeaveBefore: string };
   plan?: StaffPlan;
+  /** the phone or browser they check in with (null: none registered) */
+  device?: { id: number; label: string | null; form_factor: string; google_email: string; status: 'active' | 'pending'; registered_at: string; last_used_at: string | null; reminders: number } | null;
+  /** they have a printed staff card */
+  card?: boolean;
   days: HistoryDay[];
   summary: { schoolDays: number; attended: number; onTime: number; late: number; absent: number; noOut: number; early: number; rate: number | null; punctuality: number | null; avgIn: string | null; streak: number; bestStreak: number };
 }

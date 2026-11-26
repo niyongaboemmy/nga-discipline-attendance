@@ -254,6 +254,8 @@ router.post('/devices/:id/:action(approve|decline|revoke)', authorizePermission(
       if (device.status !== 'active' && device.status !== 'pending') throw new ClockError(409, 'NOT_ACTIVE', 'This device is already removed.');
       if (!reason) throw new ClockError(400, 'REASON_REQUIRED', 'Say why you are removing this device.');
       await db.run(`UPDATE attendance_devices SET status = 'revoked', revoked_at = ?, revoked_by = ?, revoke_reason = ? WHERE id = ?`, nowIso, actor.id, reason, device.id);
+      // A signed-out device gets no more reminders.
+      await db.run(`DELETE FROM staff_clock_push WHERE device_id = ?`, device.id).catch(() => undefined);
     }
     await recordAudit(db, actor, `STAFF_CLOCK_DEVICE_${action.toUpperCase()}`, 'attendance_device', device.id, { user: device.user_name, label: device.label, reason: reason || undefined }, { required: true });
     const updated = await db.get(`SELECT ${DEVICE_COLS} FROM attendance_devices WHERE id = ?`, device.id);
@@ -701,6 +703,13 @@ router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL
         from, to, today, trackingFrom,
         rules: { lateAfter: hhmm(lateAfter), earlyLeaveBefore: rules.earlyLeaveBefore },
         plan: planView(book, id, today),
+        // The phone or browser they check in with (the office can sign it out), and a staff card if they have one.
+        device: (await db.get(
+          `SELECT d.id, d.label, d.form_factor, d.google_email, d.status, d.registered_at, d.last_used_at,
+                  EXISTS(SELECT 1 FROM staff_clock_push p WHERE p.device_id = d.id) AS reminders
+             FROM attendance_devices d WHERE d.user_id = ? AND d.status IN ('active','pending')
+            ORDER BY CASE d.status WHEN 'active' THEN 0 ELSE 1 END, d.registered_at DESC LIMIT 1`, id)) ?? null,
+        card: !!(await db.get(`SELECT 1 FROM staff_clock_cards WHERE user_id = ? AND status = 'active'`, id)),
         days: out,
         summary: {
           ...sum,
