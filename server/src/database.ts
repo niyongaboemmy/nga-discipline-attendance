@@ -356,6 +356,15 @@ export async function migrateTenantDb(db: Database, { tid, isPrimary }: { tid: n
   }
   await db.run(`CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id)`);
 
+  // Additive column migration: is this account one of this school's people?
+  // NULL = not known yet (treated as a member); 0 = the school's MIS does not
+  // list it (a row from another school's session): kept for old records, hidden
+  // from every list (routes/admin.ts syncMisUsers).
+  const userColsForSchool = await db.all(`PRAGMA table_info(users)`);
+  if (!userColsForSchool.some((c: any) => c.name === 'school_member')) {
+    await db.run(`ALTER TABLE users ADD COLUMN school_member INTEGER`);
+  }
+
   await seedRbac(db);
   await backfillUserRoleIds(db);
 
