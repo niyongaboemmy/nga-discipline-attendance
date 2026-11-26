@@ -28,15 +28,15 @@ function Sheet(p: { label: string; closeLabel: string; onClose: () => void; chil
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
   }, []);
   return (
-    <div className="ck-sheet-back" onMouseDown={(e) => e.target === e.currentTarget && p.onClose()}>
-      <div className="ck-sheet" role="dialog" aria-modal="true" aria-label={p.label} tabIndex={-1} ref={box} data-testid="ck-sheet">
-        <div className="ck-sheet-bar">
-          <span className="ck-sheet-grip" aria-hidden="true" />
-          <button className="ck-sheet-close" onClick={p.onClose} aria-label={p.closeLabel}>
+    <div className="ck-pop-back" onMouseDown={(e) => e.target === e.currentTarget && p.onClose()}>
+      <div className="ck-pop" role="dialog" aria-modal="true" aria-label={p.label} tabIndex={-1} ref={box} data-testid="ck-sheet">
+        <div className="ck-pop-bar">
+          <span className="ck-pop-grip" aria-hidden="true" />
+          <button className="ck-pop-close" onClick={p.onClose} aria-label={p.closeLabel}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
           </button>
         </div>
-        <div className="ck-sheet-body">{p.children}</div>
+        <div className="ck-pop-body">{p.children}</div>
       </div>
     </div>
   );

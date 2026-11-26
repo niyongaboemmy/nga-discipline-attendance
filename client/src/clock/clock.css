@@ -671,31 +671,31 @@ span.ck-cal-cell { cursor: default; }
 .ck-quick-btn.on { background: var(--ck-blue-tint); border-color: transparent; color: var(--ck-blue-text); }
 .ck-quick-btn.warn { flex-basis: 100%; background: var(--ck-amber-bg); border-color: transparent; color: var(--ck-amber); }
 .ck-quick-btn:focus-visible { outline: 2px solid var(--ck-blue); outline-offset: 2px; }
-.ck-sheet-back { position: fixed; inset: 0; z-index: 60; background: rgba(2, 6, 23, .55); display: flex; align-items: flex-end; justify-content: center; animation: ck-sheet-fade .16s ease-out; }
-.ck-sheet { width: 100%; max-width: 560px; max-height: 92dvh; display: flex; flex-direction: column; background: var(--ck-bg); color: var(--ck-text); border-radius: 26px 26px 0 0; outline: none; padding-bottom: env(safe-area-inset-bottom); animation: ck-sheet-up .24s cubic-bezier(.2, .9, .3, 1); }
-.ck-sheet-bar { position: relative; display: flex; justify-content: flex-end; align-items: center; padding: 10px 12px 2px; min-height: 44px; flex: none; }
-.ck-sheet-grip { position: absolute; left: 50%; top: 8px; width: 40px; height: 4px; margin-left: -20px; border-radius: 999px; background: var(--ck-border-strong); }
-.ck-sheet-close { width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--ck-border); background: transparent; color: var(--ck-muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
-.ck-sheet-body { overflow: auto; padding: 4px 18px 20px; }
-.ck-sheet .ck-x, .ck-sheet .ck-cal { border: 0; padding: 0; margin: 0; }
+.ck-pop-back { position: fixed; inset: 0; z-index: 60; background: rgba(2, 6, 23, .55); display: flex; align-items: flex-end; justify-content: center; animation: ck-sheet-fade .16s ease-out; }
+.ck-pop { width: 100%; max-width: 560px; max-height: 92dvh; display: flex; flex-direction: column; background: var(--ck-bg); color: var(--ck-text); border-radius: 26px 26px 0 0; outline: none; padding-bottom: env(safe-area-inset-bottom); animation: ck-sheet-up .24s cubic-bezier(.2, .9, .3, 1); }
+.ck-pop-bar { position: relative; display: flex; justify-content: flex-end; align-items: center; padding: 10px 12px 2px; min-height: 44px; flex: none; }
+.ck-pop-grip { position: absolute; left: 50%; top: 8px; width: 40px; height: 4px; margin-left: -20px; border-radius: 999px; background: var(--ck-border-strong); }
+.ck-pop-close { width: 40px; height: 40px; border-radius: 999px; border: 1px solid var(--ck-border); background: transparent; color: var(--ck-muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.ck-pop-body { overflow: auto; padding: 4px 18px 20px; }
+.ck-pop .ck-x, .ck-pop .ck-cal { border: 0; padding: 0; margin: 0; }
 @keyframes ck-sheet-fade { from { opacity: 0; } }
 @keyframes ck-sheet-up { from { transform: translateY(24px); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .ck-sheet, .ck-sheet-back { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ck-pop, .ck-pop-back { animation: none; } }
 @media (min-width: 700px) {
-  .ck-sheet-back { align-items: center; padding: 24px; }
-  .ck-sheet { border-radius: 26px; max-height: min(86dvh, 820px); border: 1px solid var(--ck-border); }
-  .ck-sheet-grip { display: none; }
+  .ck-pop-back { align-items: center; padding: 24px; }
+  .ck-pop { border-radius: 26px; max-height: min(86dvh, 820px); border: 1px solid var(--ck-border); }
+  .ck-pop-grip { display: none; }
   .ck-quick { justify-content: center; }
   .ck-quick-btn { flex: 0 1 auto; padding: 0 20px; }
   .ck-quick-btn.warn { flex-basis: auto; }
 }
 
 /* Compact popups: short phone screens must see the whole month without scrolling far */
-.ck-sheet-bar { min-height: 0; padding: 14px 12px 0; height: 0; z-index: 1; }
-.ck-sheet-close { width: 34px; height: 34px; margin-top: 44px; background: var(--ck-bg); }
-.ck-sheet-body { padding: 18px 14px 14px; }
-.ck-sheet .ck-cal-head, .ck-sheet .ck-x-head { padding-right: 42px; min-height: 34px; }
-.ck-sheet .ck-x-icon { width: 30px; height: 30px; }
+.ck-pop-bar { min-height: 0; padding: 14px 12px 0; height: 0; z-index: 1; }
+.ck-pop-close { width: 34px; height: 34px; margin-top: 44px; background: var(--ck-bg); }
+.ck-pop-body { padding: 18px 14px 14px; }
+.ck-pop .ck-cal-head, .ck-pop .ck-x-head { padding-right: 42px; min-height: 34px; }
+.ck-pop .ck-x-icon { width: 30px; height: 30px; }
 .ck-cal { gap: 8px; }
 .ck-cal-seg button { height: 28px; padding: 0 10px; font-size: 12.5px; }
 .ck-cal-nav button { width: 34px; height: 34px; }
@@ -715,22 +715,25 @@ span.ck-cal-cell { cursor: default; }
 .ck-cal-legend { flex-wrap: nowrap; overflow-x: auto; gap: 10px; font-size: 11px; white-space: nowrap; scrollbar-width: none; }
 .ck-cal-legend::-webkit-scrollbar { display: none; }
 .ck-hours li { min-height: 34px; font-size: 14px; }
-.ck-sheet .ck-x { gap: 6px; }
+.ck-pop .ck-x { gap: 6px; }
 .ck-time { height: 42px; }
 .ck-x-row .ck-x-btn { height: 42px; }
 @media (max-height: 700px) {
   .ck-cal-cell { height: 36px; }
   .ck-cal-t { font-size: 9.5px; }
   .ck-cal-legend { display: none; }
-  .ck-sheet { max-height: 96dvh; }
+  .ck-pop { max-height: 96dvh; }
   .ck-quick-btn { height: 40px; font-size: 13px; }
   .ck-quick { margin-top: 8px; }
 }
 /* Popup: the close button sits on the title's own row */
-.ck-sheet { position: relative; }
-.ck-sheet-bar { position: static; height: 0; min-height: 0; padding: 0; }
-.ck-sheet-grip { top: 6px; }
-.ck-sheet-close { position: absolute; top: 16px; right: 14px; margin: 0; z-index: 2; }
-.ck-sheet-body { padding: 16px 14px 14px; }
-.ck-sheet .ck-cal-head, .ck-sheet .ck-x-head { padding-right: 44px; min-height: 34px; }
-.ck-sheet .ck-cal-head .ck-x-icon { display: none; }
+.ck-pop { position: relative; }
+.ck-pop-bar { position: static; height: 0; min-height: 0; padding: 0; }
+.ck-pop-grip { top: 6px; }
+.ck-pop-close { position: absolute; top: 16px; right: 14px; margin: 0; z-index: 2; }
+.ck-pop-body { padding: 16px 14px 14px; }
+.ck-pop .ck-cal-head, .ck-pop .ck-x-head { padding-right: 44px; min-height: 34px; }
+.ck-pop .ck-cal-head .ck-x-icon { display: none; }
+
+.ck-pop-body { padding: 14px 12px 12px; }
+.ck-pop-close { right: 12px; top: 14px; }

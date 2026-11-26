@@ -462,7 +462,7 @@ async function extrasFlow(browser, theme) {
   await page.waitForTimeout(250);
   {
     const fits = await page.evaluate(() => {
-      const body = document.querySelector('.ck-sheet-body');
+      const body = document.querySelector('.ck-pop-body');
       const day = document.querySelector('.ck-cal-day');
       return !!body && !!day && body.scrollHeight <= body.clientHeight + 1 && day.getBoundingClientRect().bottom <= window.innerHeight;
     });
