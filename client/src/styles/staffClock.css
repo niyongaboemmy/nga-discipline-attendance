@@ -1235,3 +1235,13 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
   .zr-input:not(.zr-input-text) { width: 140px; }
   .zr-num .zr-input { width: 110px; }
 }
+
+/* Rules: lighter words. The day's legend is four short chips (no tick labels to collide). */
+.zr-day { gap: 10px; padding: 12px; }
+.zr-day figcaption { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; font-size: 12.5px; }
+.zr-day figcaption span { align-items: center; white-space: nowrap; gap: 6px; }
+.zr-day figcaption b { color: var(--text-primary); font-variant-numeric: tabular-nums; font-weight: 600; }
+.zr-key { margin-top: 0; }
+.zr-field { padding: 10px 0; row-gap: 6px; }
+.zr-text small { font-size: 12.5px; }
+.zr { gap: 14px; }

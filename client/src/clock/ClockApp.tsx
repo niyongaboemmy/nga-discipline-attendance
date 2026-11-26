@@ -107,7 +107,6 @@ export function ClockApp() {
   const [installEvt, setInstallEvt] = useState<InstallPromptEvent | null>(null);
   const [tipHidden, setTipHidden] = useState(() => localStorage.getItem('tendo.clock.tipHidden') === '1');
   const [justRegistered, setJustRegistered] = useState(false);
-  const [howSeen, setHowSeen] = useState(() => localStorage.getItem('tendo.clock.howSeen') === '1');
   /** the phone QR panel: null = automatic (open on a computer whose location fails), true/false = the person chose */
   const [phoneChoice, setPhoneChoice] = useState<boolean | null>(null);
   const googleSlot = useRef<HTMLDivElement>(null);
@@ -756,8 +755,6 @@ export function ClockApp() {
           locale={locale}
           tz={tz}
           showTip={justRegistered && !tipHidden && !window.matchMedia('(display-mode: standalone)').matches && me.today != null}
-          showHow={!howSeen && !me.week.some((d) => d.checkIn)}
-          onHowSeen={() => { setHowSeen(true); localStorage.setItem('tendo.clock.howSeen', '1'); }}
           onInstall={() => void installApp()}
           onHelp={() => setHelp(true)}
           onTap={() => {
@@ -796,6 +793,14 @@ export function ClockApp() {
           <div className="ck-sheet" role="dialog" aria-modal="true" aria-label={t('help')}>
             <div className="ck-grabber" />
             <div className="ck-help-head"><h2>{t('help')}</h2><button className="ck-help-close" onClick={() => setHelp(false)}>{t('close')}</button></div>
+            <div className="ck-how" role="note" data-testid="help-how">
+              <div className="ck-how-head"><b>{t('howTitle')}</b></div>
+              <ol>
+                <li><span className="ck-how-num">1</span>{t('how1')}</li>
+                <li><span className="ck-how-num">2</span>{t('how2')}</li>
+                <li><span className="ck-how-num">3</span>{t('how3')}</li>
+              </ol>
+            </div>
             <Troubleshoot t={t} topic={helpTopic} setTopic={setHelpTopic} profileUrl={boot?.profileUrl} />
             <div className="ck-help-card ck-help-row"><b>{t('language')}</b><LangPills lang={lang} setLang={setLang} short /></div>
             <div className="ck-help-card ck-help-row">
@@ -1048,8 +1053,6 @@ interface DailyProps {
   locale: string;
   tz: string;
   showTip: boolean;
-  showHow: boolean;
-  onHowSeen: () => void;
   onInstall: () => void;
   onHelp: () => void;
   onTap: () => void;
@@ -1113,8 +1116,35 @@ function Daily(p: DailyProps) {
     const kind = !w ? 'off' : w.checkIn ? (w.status === 'late' ? 'late' : 'ok') : isToday ? 'today' : w.future ? 'next' : 'absent';
     const part = w ? share(w.checkIn, w.checkOut, w.start, w.end, isToday) : 0;
     const text = !w ? t('myHoursOff') : w.checkIn ? `${w.checkIn} – ${w.checkOut ?? '…'}` : w.future || isToday ? w.start ?? '' : t('calAbsentK');
-    return { date, isToday, kind, part, name: letter(date), label: `${longDay(date)}: ${text}` };
+    return { date, isToday, kind, part, name: letter(date), label: `${longDay(date)}: ${text}`, start: w?.start ?? null, end: w?.end ?? null, checkIn: w?.checkIn ?? null, checkOut: w?.checkOut ?? null };
   });
+  // A day's details in a small popup: on hover or focus, and pinned by a tap (touch).
+  const [dayOpen, setDayOpen] = useState<string | null>(null);
+  const [dayPinned, setDayPinned] = useState(false);
+  const weekRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!dayPinned) return;
+    const away = (e: Event) => { if (!weekRef.current?.contains(e.target as Node)) { setDayPinned(false); setDayOpen(null); } };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDayPinned(false); setDayOpen(null); } };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', esc); };
+  }, [dayPinned]);
+  const openDay = dayOpen ? week7.find((d) => d.date === dayOpen) ?? null : null;
+  const openAt = openDay ? week7.indexOf(openDay) : 0;
+  const KIND_WORD = { ok: t('calOnTime'), late: t('calLateK'), absent: t('calAbsentK'), today: t('calTodayK'), next: t('calPlanned'), off: t('calOff') } as const;
+  const dayDate = (date: string) => {
+    try {
+      return new Intl.DateTimeFormat(p.locale, { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`));
+    } catch {
+      return date;
+    }
+  };
+  const spent = (d: { checkIn: string | null; checkOut: string | null; isToday: boolean }) => {
+    const a = hm(d.checkIn);
+    const b = hm(d.checkOut) ?? (d.isToday ? nowM : null);
+    return a != null && b != null && b > a ? `${Math.floor((b - a) / 60)} h ${String((b - a) % 60).padStart(2, '0')}` : null;
+  };
   const done = me.week.filter((d) => d.checkIn).length;
   const late = me.week.filter((d) => d.status === 'late').length;
   const minutes = me.week.reduce((n, d) => {
@@ -1184,17 +1214,6 @@ function Daily(p: DailyProps) {
 
       <div className="ck-e-gap ck-e-gap-3" />
 
-      {p.showHow && (
-        <div className="ck-how" role="note">
-          <div className="ck-how-head"><b>{t('howTitle')}</b><button onClick={p.onHowSeen}>{t('gotIt')}</button></div>
-          <ol>
-            <li><span className="ck-how-num">1</span>{t('how1')}</li>
-            <li><span className="ck-how-num">2</span>{t('how2')}</li>
-            <li><span className="ck-how-num">3</span>{t('how3')}</li>
-          </ol>
-        </div>
-      )}
-
       {p.showTip && (
         <div className="ck-tip">
           <IconAddHome />
@@ -1203,9 +1222,24 @@ function Daily(p: DailyProps) {
         </div>
       )}
 
-      <div className="ck-e-week" role="group" aria-label={t('thisWeek')}>
+      <div className="ck-e-week" role="group" aria-label={t('thisWeek')} ref={weekRef}>
+        {openDay && (
+          <div className="ck-e-pop" role="status" style={{ '--e-at': openAt } as React.CSSProperties} data-testid="day-pop">
+            <b>{dayDate(openDay.date)}</b>
+            <span className={`ck-e-pop-pill k-${openDay.kind}`}><i />{KIND_WORD[openDay.kind as keyof typeof KIND_WORD]}</span>
+            {openDay.start && openDay.end && <span>{t('calExpected', { start: openDay.start, end: openDay.end })}</span>}
+            {openDay.checkIn && <span>{t('calIn', { time: openDay.checkIn })}{openDay.checkOut ? ` · ${t('calOut', { time: openDay.checkOut })}` : ''}</span>}
+            {spent(openDay) && <span className="ck-e-pop-strong">{spent(openDay)}</span>}
+            {dayPinned && <button className="ck-e-pop-link" onClick={() => { setDayPinned(false); setDayOpen(null); p.onCalendar(); }}>{t('calTitle')}</button>}
+          </div>
+        )}
         {week7.map((d) => (
-          <button key={d.date} className={`ck-e-day k-${d.kind}${d.isToday ? ' is-today' : ''}`} onClick={p.onCalendar} aria-label={d.label} title={d.label}>
+          <button key={d.date} className={`ck-e-day k-${d.kind}${d.isToday ? ' is-today' : ''}${dayOpen === d.date ? ' is-open' : ''}`} aria-label={d.label} aria-expanded={dayOpen === d.date}
+            onPointerEnter={(e) => { if (e.pointerType === 'mouse' && !dayPinned) setDayOpen(d.date); }}
+            onPointerLeave={(e) => { if (e.pointerType === 'mouse' && !dayPinned) setDayOpen(null); }}
+            onFocus={() => { if (!dayPinned) setDayOpen(d.date); }}
+            onBlur={() => { if (!dayPinned) setDayOpen(null); }}
+            onClick={() => { const same = dayPinned && dayOpen === d.date; setDayPinned(!same); setDayOpen(same ? null : d.date); }}>
             <svg aria-hidden="true" viewBox="0 0 36 36">
               <circle cx="18" cy="18" r="15" fill="none" className="ck-e-dtrack" strokeWidth="3.5" />
               {d.part > 0 && <circle cx="18" cy="18" r="15" fill="none" className="ck-e-dprog" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(c * d.part).toFixed(1)} ${c.toFixed(1)}`} transform="rotate(-90 18 18)" />}

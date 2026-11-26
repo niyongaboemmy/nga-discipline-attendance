@@ -505,8 +505,8 @@ async function run(browser, vp) {
   await page.goto(`${BASE}/staff/clock/zone#zone-rules`);
   await expectText(page, 'Check-in rules', `${tag} zone rules drawer`);
   // The rules explain themselves: a picture of the day, a plain line under each rule, and a tip on the "i".
-  await expectText(page, 'Before 05:00: check-in is closed', `${tag} rules day picture`);
-  await expectText(page, 'Before this time the check-in button is closed.', `${tag} rule help line`);
+  await expectText(page, 'Closed before', `${tag} rules day picture`);
+  await expectText(page, 'Earliest check-in.', `${tag} rule help line`);
   await page.getByRole('button', { name: 'About Check-in opens' }).click();
   await expectText(page, 'nobody can check in before this time', `${tag} rule tooltip`);
   {
