@@ -49,7 +49,8 @@ export const StaffClockDashboard: React.FC = () => {
 
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [person, setPerson] = useState<{ id: string; name: string; role?: string | null; list?: HistoryNavPerson[]; instant?: boolean } | null>(null);
-  const [reportFlash, setReportFlash] = useState(false);
+  /** the selected day's staff, open in a window on request */
+  const [dayOpen, setDayOpen] = useState(false);
   // Escape also closes the side sheet while it is still loading its names.
   useEffect(() => {
     if (!sheet?.loading) return;
@@ -113,18 +114,9 @@ export const StaffClockDashboard: React.FC = () => {
     return { from: monthStart < report.from ? report.from : monthStart, to: today };
   }, [range, today, report]);
 
-  /** A day was picked: the day card and the staff report below follow it; bring the report into view. */
-  const showReport = () => {
-    window.setTimeout(() => {
-      const el = document.getElementById('scr-day-report');
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      if (r.top > window.innerHeight - 140 || r.bottom < 80) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      setReportFlash(true);
-      window.setTimeout(() => setReportFlash(false), 1200);
-    }, 60);
-  };
-  const pick = (date: string) => { setSelected(date); setDateNote(''); showReport(); };
+  const pick = (date: string) => { setSelected(date); setDateNote(''); };
+  /** Open the picked day's staff (all statuses) in a window. */
+  const openDay = (date?: string) => { if (date) pick(date); setDayOpen(true); };
   const goToday = () => { if (today) { setSelected(today); setMode('today'); setDateNote(''); } };
   const pickTyped = (value: string) => {
     if (!value) return;
@@ -240,7 +232,7 @@ export const StaffClockDashboard: React.FC = () => {
         split: counted ? { onTime: d.onTime, late: d.late, absent: d.absent } : { onTime: 0, late: 0, absent: 0 },
         legend: counted ? [`${d.onTime} on time`, `${d.late} late`, `${d.absent} ${isToday ? 'not in yet' : 'absent'}`] : [],
         button: isToday ? "View today's details" : "View this day's details",
-        onClick: () => pick(scope.from),
+        onClick: () => openDay(scope.from),
       };
     }
     const s = scope.sum;
@@ -409,15 +401,13 @@ export const StaffClockDashboard: React.FC = () => {
                       <div className="scr-tile"><b className="sc-num">{vsTerm ? vsTerm.text : '–'}</b><small>against the {report.term ? 'term' : 'period'}</small></div>
                     </div>
                     <span className="scr-spacer" />
-                    <button type="button" className="sc-btn sc-btn-soft scr-hero-btn" onClick={showReport} data-testid="see-day-staff">
+                    <button type="button" className="sc-btn sc-btn-soft scr-hero-btn" onClick={() => openDay()} data-testid="see-day-staff">
                       {lateOrOut === 0 ? `Everyone was in on time · see all ${panel.kpis.staff}` : `See all ${panel.kpis.staff} staff · ${lateOrOut} late or ${panel.isToday ? 'not in' : 'absent'}`}
                     </button>
                   </>
                 )}
               </section>
             </div>
-
-            <DayReport overview={panel} loading={!panel || (dayLoading && !panelIsToday)} flash={reportFlash} onOpen={(r, list) => panel && openRow(r, list, panel)} />
 
             <div className="scr-row-3">
               <section className="sc-card scr-pattern">
@@ -522,6 +512,13 @@ export const StaffClockDashboard: React.FC = () => {
               setPerson({ id: p.personId, name: p.name, list: nav.filter((x, i) => nav.findIndex((y) => y.id === x.id) === i) });
             }} />
         ))}
+        {dayOpen && sel && today && (
+          <DayReport
+            overview={panel} date={sel} loading={!panel || (dayLoading && !panelIsToday)}
+            onOpen={(r, list) => panel && openRow(r, list, panel)} onClose={() => setDayOpen(false)}
+            onStep={(n) => step(n)} canPrev={schoolDates.some((d) => d < sel)} canNext={sel < today && schoolDates.some((d) => d > sel)}
+          />
+        )}
         {person && (
           <StaffHistoryModal key={person.id} personId={person.id} name={person.name} role={person.role} instant={person.instant}
             list={person.list} onNav={(p) => setPerson((cur) => (cur ? { ...cur, id: p.id, name: p.name, role: p.role, instant: true } : cur))}

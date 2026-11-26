@@ -962,6 +962,28 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
 [data-theme='dark'] .dr-warn { color: #fbbf24; }
 @media (prefers-reduced-motion: reduce) { .dr { transition: none; } .sc-item-go { transition: none; } }
 
+/* The day's staff in a window (on request), above the dashboard; a person's history opens above it. */
+.dr-overlay { position: fixed; inset: 0; z-index: var(--z-modal, 1000); background: rgba(2, 6, 23, .55); display: flex; align-items: center; justify-content: center; padding: 24px; animation: sh-fade .18s ease-out; }
+.dr-dialog { width: min(1120px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border); border-radius: 26px; outline: none; overflow: hidden; animation: sh-pop .24s cubic-bezier(.2,.9,.3,1.15); }
+.dr-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 12px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.dr-daynav { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dr-daynav > button { width: 40px; height: 40px; flex: none; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text-primary); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.dr-daynav > button:hover:not(:disabled) { background: var(--bg-hover); }
+.dr-daynav > button:disabled { opacity: .35; cursor: default; }
+.dr-daytitle { min-width: 0; }
+.dr-daytitle h2 { margin: 0; font-size: 19px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dr-actions { display: flex; align-items: center; gap: 8px; }
+.dr-tools { display: flex; align-items: center; gap: 12px; padding: 12px 18px 0; flex-wrap: wrap; }
+.dr-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 18px 18px; display: flex; flex-direction: column; gap: 12px; }
+.dr-body .dr-tabs { position: sticky; top: -12px; z-index: 2; background: var(--bg-card); padding: 4px 0 8px; }
+@media (max-width: 640px) {
+  .dr-overlay { padding: 0; align-items: flex-end; }
+  .dr-dialog { max-height: 94vh; border-radius: 24px 24px 0 0; }
+  .dr-daytitle h2 { font-size: 16px; }
+  .dr-actions .sc-btn { padding: 0 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .dr-overlay, .dr-dialog { animation: none; } }
+
 /* ---- A person's working week (history window > Working hours) ---- */
 .sh-tabs { display: flex; gap: 4px; padding: 10px 22px 0; }
 .sh-tabs button { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 999px; border: 1px solid transparent; background: transparent; color: var(--text-secondary); font: 600 14px inherit; font-family: inherit; cursor: pointer; }

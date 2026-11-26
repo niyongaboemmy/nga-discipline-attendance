@@ -449,6 +449,19 @@ describe('the school admin side', () => {
     expect((await request(app).get('/api/staff/clock/people/888/history').set(authHeader(token))).status).toBe(403);
   });
 
+  it('names the school and its documents logo for exported reports', async () => {
+    const { brandingOf } = await import('../routes/sso.js');
+    expect(brandingOf({ data: { school_name: 'NGA', logoUrl: 'https://x/l/primary', logos: { documents: 'https://x/l/documents' } } }, 1))
+      .toMatchObject({ name: 'NGA', logoUrl: 'https://x/l/primary', documentsLogoUrl: 'https://x/l/documents' });
+    expect(brandingOf({ data: { school_name: 'NGA', logoUrl: 'https://x/l/primary' } }, 1)).toMatchObject({ documentsLogoUrl: null });
+    const res = await request(app).get('/api/staff/clock/document-brand').set(authHeader(adminToken));
+    expect(res.status).toBe(200);
+    expect(typeof res.body.data.name).toBe('string');
+    expect(res.body.data.logo === null || String(res.body.data.logo).startsWith('data:image/')).toBe(true);
+    const { token } = await createTestUser(db, { id: '956', name: 'T7', email: 't7@x', roleLevel: 'TEACHER' });
+    expect((await request(app).get('/api/staff/clock/document-brand').set(authHeader(token))).status).toBe(403);
+  });
+
   it('reviews a flagged check-in and exports CSV', async () => {
     misPerson(110, 'Twin One', 'twin1@gmail.com');
     now = kigali('07:05', '2026-12-02');
