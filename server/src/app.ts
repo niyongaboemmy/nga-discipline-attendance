@@ -28,6 +28,7 @@ import rfidRoutes from './modules/rfid/rfid.routes.js';
 import tenantRoutes from './routes/tenants.js';
 import clockRoutes from './modules/clock/clock.routes.js';
 import clockAdminRoutes from './modules/clock/clockAdmin.routes.js';
+import { installMisTenantFetch } from './tenancy/misTenantFetch.js';
 
 /** The Express app, with no side effects (no DB init, no `listen`) — so
  *  tests can import it directly against an in-memory DB via supertest.
@@ -40,6 +41,9 @@ app.disable('x-powered-by');
 // visitor rather than 127.0.0.1 -- per-IP rate limits and usage analytics
 // both depend on it.
 app.set('trust proxy', 'loopback');
+// Every user-token MIS call names this request's school (tenancy/misTenantFetch.ts).
+installMisTenantFetch();
+
 app.use(cors({
   origin: config.corsOrigins,
   credentials: true,
