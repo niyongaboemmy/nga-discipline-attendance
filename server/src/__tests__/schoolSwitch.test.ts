@@ -248,7 +248,7 @@ describe('my-schools, branding and SCHOOL_CHANGED', { timeout: 30_000 }, () => {
 
   it('reads school_name and logoUrl from /tenant/branding', () => {
     expect(brandingOf({ data: { school_name: ' New Generation Academy ', logoUrl: 'https://cdn/x.png' } }, 2))
-      .toEqual({ tid: 2, name: 'New Generation Academy', logoUrl: 'https://cdn/x.png' });
+      .toEqual({ tid: 2, name: 'New Generation Academy', documentsLogoUrl: null, logoUrl: 'https://cdn/x.png' });
     expect(brandingOf({ data: {} }, 2)).toBeNull();
   });
 
@@ -274,7 +274,7 @@ describe('my-schools, branding and SCHOOL_CHANGED', { timeout: 30_000 }, () => {
     const urls: string[] = [];
     globalThis.fetch = (async (url: any) => (urls.push(String(url)), new Response(JSON.stringify({ data: { school_name: 'NGA', logoUrl: 'https://cdn/l.png' } })))) as typeof fetch;
     const r = await request(app).get('/api/sso/branding').set(authHeader(session('9201', misToken({}))));
-    expect(r.body.data).toEqual({ tid: 1, name: 'NGA', logoUrl: 'https://cdn/l.png' });
+    expect(r.body.data).toEqual({ tid: 1, name: 'NGA', documentsLogoUrl: null, logoUrl: 'https://cdn/l.png' });
     expect(urls[0]).toMatch(/\/tenant\/branding\?tid=1$/);
   });
 
