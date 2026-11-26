@@ -45,24 +45,33 @@ const Field: React.FC<{
 }> = ({ id, label, help, tip, open, setOpen, wide, children }) => {
   const shown = open === id;
   const pinned = useRef(false);
+  const box = useRef<HTMLDivElement>(null);
+  /** The tip floats over the panel (it never pushes the rules down). Near the bottom it opens upwards. */
+  const [up, setUp] = useState(false);
+  const show = () => {
+    const el = box.current;
+    const scroller = el?.closest('.zc-drawer-body');
+    if (el && scroller) setUp(scroller.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom < 120);
+    setOpen(id);
+  };
   return (
-    <div className={`zr-field${wide ? ' zr-wide' : ''}`} data-rule={id}>
+    <div className={`zr-field${wide ? ' zr-wide' : ''}${shown ? ' is-tip' : ''}`} data-rule={id} ref={box}>
       <div className="zr-text">
         <span className="zr-label">
           <b id={`zr-l-${id}`}>{label}</b>
           <button
             type="button" className={`zr-info${shown ? ' on' : ''}`} aria-label={`About ${label}`} aria-expanded={shown} aria-controls={`zr-t-${id}`}
-            onMouseEnter={() => { if (!pinned.current) setOpen(id); }}
+            onMouseEnter={() => { if (!pinned.current) show(); }}
             onMouseLeave={() => { if (!pinned.current) setOpen(null); }}
-            onFocus={() => { if (!pinned.current) setOpen(id); }}
+            onFocus={() => { if (!pinned.current) show(); }}
             onBlur={() => { pinned.current = false; setOpen(null); }}
-            onClick={() => { pinned.current = !(pinned.current && shown); setOpen(pinned.current ? id : null); }}
+            onClick={() => { pinned.current = !(pinned.current && shown); if (pinned.current) show(); else setOpen(null); }}
           ><Info size={15} /></button>
         </span>
         <small>{help}</small>
       </div>
       <div className="zr-control">{children}</div>
-      {shown && <div className="zr-tip" role="tooltip" id={`zr-t-${id}`}>{tip}</div>}
+      {shown && <div className={`zr-tip${up ? ' zr-tip-up' : ''}`} role="tooltip" id={`zr-t-${id}`}>{tip}</div>}
     </div>
   );
 };

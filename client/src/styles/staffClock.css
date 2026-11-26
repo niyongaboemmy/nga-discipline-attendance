@@ -1245,3 +1245,9 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
 .zr-field { padding: 10px 0; row-gap: 6px; }
 .zr-text small { font-size: 12.5px; }
 .zr { gap: 14px; }
+
+/* Rules: the tip floats over the panel instead of pushing the rules down */
+.zr-field.is-tip { z-index: 5; }
+.zr-tip { position: absolute; left: 0; right: 0; top: calc(100% - 4px); grid-column: auto; z-index: 6; box-shadow: 0 14px 34px rgba(2, 6, 23, .35); pointer-events: none; }
+.zr-tip-up { top: auto; bottom: calc(100% - 4px); }
+.zr-tip-up::before { top: auto; bottom: -5px; }
