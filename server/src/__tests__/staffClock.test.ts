@@ -920,6 +920,17 @@ describe('reminders and forgotten check-outs', () => {
     const saved = await setOut(before.id, { time: '14:10', note: 'Confirmed with the gate book' });
     expect(saved.body).toMatchObject({ success: true, message: 'Check-out saved: 14:10', data: { outStatus: 'on_time' } }); // their end is 14:00
     expect((await setOut(before.id, { time: '15:00' })).status).toBe(409);
+    // The office signs a person's device out from their window: the phone is refused until they sign in again.
+    const who = (await request(app).get('/api/staff/clock/people/140/history?days=7').set(authHeader(adminToken))).body.data;
+    expect(who.device).toMatchObject({ label: expect.any(String), status: 'active', google_email: 'remind@gmail.com', reminders: 1 });
+    expect((await request(app).post(`/api/staff/clock/devices/${who.device.id}/revoke`).set(authHeader(adminToken)).send({ reason: 'Signed out by the office' })).status).toBe(200);
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone.token!)).body).toMatchObject({ code: 'DEVICE_REVOKED' });
+    expect(await db.get(`SELECT 1 FROM staff_clock_push WHERE device_id = ?`, who.device.id)).toBeUndefined();
+    expect((await request(app).get('/api/staff/clock/people/140/history?days=7').set(authHeader(adminToken))).body.data.device).toBeNull();
+    // They sign in again with Google on the same phone and carry on.
+    expect((await register('nga', 'remind@gmail.com', phone)).body.data).toMatchObject({ deviceStatus: 'active' });
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', phone.token!)).status).toBe(200);
+
     const h = (await request(app).get('/api/staff/clock/people/141/history?days=7').set(authHeader(adminToken))).body.data;
     expect(h.days.find((d: any) => d.date === '2027-02-02')).toMatchObject({ out: '14:10', noOut: false, manualOut: true, minutes: 265 });
   });

@@ -300,6 +300,8 @@ async function edgeStates(browser, vp, theme) {
     await page.reload();
     await expectText(page, 'from school', `${tag} outside`);
     await page.waitForTimeout(300);
+    // A phone or tablet never offers "Use my phone", even when its location fails.
+    if (await page.getByTestId('use-phone').count()) fail(`${tag}: "Use my phone" is shown on a phone or tablet`);
     await shot(page, `${tag}-10-outside`);
     await ctx.close();
   }
@@ -356,6 +358,9 @@ async function phoneTapFlow(browser, theme) {
   // Hide -> the offer pill; open again.
   await page.getByRole('button', { name: 'Hide' }).click();
   await page.getByTestId('use-phone').waitFor();
+  // On a computer the offer and its hint appear once.
+  if ((await page.getByTestId('use-phone').count()) !== 1) fail(`${tag}: "Use my phone" should appear once`);
+  if ((await page.getByText('Computers have no GPS: scan with your phone').count()) !== 1) fail(`${tag}: the "Use my phone" hint should appear once`);
   await shot(page, `${tag}-21-use-phone-offer`);
   await page.getByTestId('use-phone').click();
   await page.locator('.ck-ptap-qr img').waitFor();

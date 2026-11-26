@@ -115,6 +115,8 @@ const SCHOOL_WEEK = Object.fromEntries(['0', '1', '2', '3', '4', '5', '6'].map((
 const PLANS = new Map();
 /** people whose forgotten check-out the office has saved during the run */
 const FIXED = new Set();
+/** people whose device the office signed out during the run */
+const SIGNED_OUT = new Set();
 const planOf = (id) => {
   const own = PLANS.get(id);
   return { own: !!own, days: own?.days ?? SCHOOL_WEEK, school: SCHOOL_WEEK, effectiveFrom: own ? '2026-11-24' : null, note: own?.note ?? null, updatedByName: own ? 'Admin Office' : null, updatedAt: own ? '2026-11-24T08:16:00Z' : null, upcoming: null, versions: [] };
@@ -149,6 +151,8 @@ function history(id) {
   }
   return { person: { id, name: people.find((p) => p[0] === id)?.[1] ?? 'Staff', role: 'Teacher' }, from: days[0].date, to: '2026-11-24', today: '2026-11-24', trackingFrom: days[64].date,
     rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00' }, plan: planOf(id), days,
+    device: SIGNED_OUT.has(id) ? null : { id: 700 + Number(id), label: 'Tecno Spark 20 · Chrome', form_factor: 'phone', google_email: 'staff.member@gmail.com', status: 'active', registered_at: '2026-11-03T06:00:00Z', last_used_at: '2026-11-24T05:28:00Z', reminders: 1 },
+    card: false,
     summary: { ...sum, rate: Math.round((sum.attended / sum.schoolDays) * 100), punctuality: Math.round((sum.onTime / sum.attended) * 100), avgIn: '07:24', streak: 6, bestStreak: 19 } };
 }
 const DEVICES = [
@@ -213,6 +217,7 @@ async function context(browser, { width, height, theme, mobile = false }) {
     if (p === '/api/staff/clock/cards') return ok([{ id: 1, user_id: '108', user_name: 'Solange Iradukunda', issued_at: '2026-11-20T08:00:00Z', last_used_at: '2026-11-24T05:05:00Z' }]);
     if (p === '/api/staff/clock/cards' || (p.endsWith('/cards') && route.request().method() === 'POST')) return ok({ school: 'New Generation Academy', cards: [] });
     if (p === '/api/staff/clock/scan') return ok({ action: 'check_in', at: '07:10', status: 'present', distance: 30, person: { name: 'Solange Iradukunda', firstName: 'Solange', initials: 'SI' }, checkIn: '07:10', checkOut: null });
+    { const m = p.match(/^\/api\/staff\/clock\/devices\/(\d+)\/revoke$/); if (m && Number(m[1]) > 700) { SIGNED_OUT.add(String(Number(m[1]) - 700)); return ok({}); } }
     if (p.startsWith('/api/staff/clock/devices/')) return ok({});
     // Phone-GPS pairing: the computer makes a code, the phone posts a reading to it.
     if (p === '/api/staff/clock/pair' && route.request().method() === 'POST') return ok({ code: 'TESTPAIRCODE1234', url: `${BASE}/c/nga/pair/TESTPAIRCODE1234`, expiresIn: 600 });
@@ -417,6 +422,7 @@ async function run(browser, vp) {
   await expectText(page, 'Fabrice Ndayisaba', `${tag} staff list`);
   await shot('02b-staff');
   FIXED.clear();
+  SIGNED_OUT.clear();
   await page.getByText('Fabrice Ndayisaba').locator('visible=true').first().click();
   const modal = page.getByTestId('staff-history');
   await modal.waitFor();
@@ -466,6 +472,19 @@ async function run(browser, vp) {
   await page.getByTestId('plan-reset-yes').click();
   await expectText(page, "Back to the school's hours", `${tag} hours reset toast`);
   await expectText(page, "Follows the school's hours", `${tag} back to school hours`);
+
+  // Device: the check-in page has no sign-out, so the office signs a person's phone out from here.
+  await page.getByTestId('tab-device').click();
+  await expectText(page, 'Tecno Spark 20 · Chrome', `${tag} device shown`);
+  await expectText(page, 'Signed in', `${tag} device state`);
+  await page.waitForTimeout(200);
+  if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: device tab scrolls sideways`);
+  await shot('02g-device');
+  await page.getByTestId('device-signout').click();
+  await page.getByTestId('device-signout-yes').click();
+  await expectText(page, 'Device signed out', `${tag} sign-out toast`);
+  await expectText(page, 'No phone or browser is signed in', `${tag} no device after sign-out`);
+  for (const b of await page.locator('.toast-close').all()) await b.click().catch(() => {});
   await modal.getByRole('button', { name: 'Close' }).click();
   if (await page.getByTestId('staff-history').count()) fail(`${tag}: history did not close`);
 

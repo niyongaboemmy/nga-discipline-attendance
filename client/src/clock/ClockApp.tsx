@@ -492,7 +492,8 @@ export function ClockApp() {
   const computer = me?.device.formFactor === 'desktop';
   const pushCfg = boot?.pushKey && !computer ? { key: boot.pushKey, minutes: boot.rules.remindMinutes ?? 15 } : null;
   const struggling = geoMode === 'vague' || geoMode === 'failed' || geoMode === 'outside';
-  const offerPhone = canTap && !busy && !offline && (computer || struggling);
+  // "Use my phone" is for computers only (they have no GPS). A phone never shows it.
+  const offerPhone = canTap && !busy && !offline && computer;
   const phoneOpen = offerPhone && (phoneChoice ?? (computer && struggling));
   const shared = { t, deviceWord, tablet };
   const school = boot?.school.name ?? '';
@@ -1028,7 +1029,8 @@ function Daily(p: DailyProps) {
   const hours = `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`;
   const C = 2 * Math.PI * 47;
   const c = 2 * Math.PI * 15;
-  const helper = p.phonePanel || (p.phoneOffer && me.device.formFactor === 'desktop') ? t('usePhoneHint') : v.helper;
+  // On a computer the "Use my phone" card (or its QR panel) already says what to do: say it once.
+  const helper = p.phonePanel || p.phoneOffer ? '' : v.helper;
 
   return (
     <main className="ck-screen ck-daily ck-e">

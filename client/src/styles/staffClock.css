@@ -1150,3 +1150,20 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
   .wl-time { font-size: 10.5px; overflow: visible; text-overflow: clip; letter-spacing: -0.2px; }
   .wl-name { letter-spacing: 0; }
 }
+
+/* History window > Device: the phone or browser a person checks in with */
+.sd { display: flex; flex-direction: column; gap: 14px; }
+.sd-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 20px; background: var(--bg-subtle); border: 1px solid var(--border); }
+.sd-ico { width: 42px; height: 42px; flex: none; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: var(--primary-light); color: var(--primary); }
+.sd-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sd-main b { font-size: 15px; }
+.sd-main small { font-size: 13px; color: var(--text-secondary); }
+.sd-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.sd-facts > div { border: 1px solid var(--border); border-radius: 16px; padding: 10px 12px; min-width: 0; }
+.sd-facts dt { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.sd-facts dd { margin: 2px 0 0; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sd-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.sd-actions .sc-btn { height: 38px; }
+.sd-confirm { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--bg-subtle); }
+.sd-confirm b { font-size: 14px; }
+@media (max-width: 640px) { .sd-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sd-head { flex-wrap: wrap; } }
