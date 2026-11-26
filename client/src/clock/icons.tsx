@@ -37,6 +37,9 @@ export const IconShield = (p: { size?: number }) => (
 export const IconWarn = (p: { size?: number }) => (
   <Svg {...p}><path d="M12 3l9 16H3z" /><path d="M12 10v4M12 17h.01" /></Svg>
 );
+export const IconBell = (p: { size?: number }) => (
+  <Svg {...p}><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7 2.5 7h-17S6 15 6 9" /><path d="M10 20a2.2 2.2 0 0 0 4 0" /></Svg>
+);
 export const IconWifi = (p: { size?: number }) => (
   <Svg {...p}><path d="M5 12.5a10 10 0 0 1 14 0" /><path d="M8.5 16a5 5 0 0 1 7 0" /><path d="M12 19.5h.01" /></Svg>
 );

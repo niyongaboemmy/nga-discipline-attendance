@@ -48,7 +48,7 @@ export const StaffClockDashboard: React.FC = () => {
   const [dateNote, setDateNote] = useState('');
 
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const [person, setPerson] = useState<{ id: string; name: string; role?: string | null; list?: HistoryNavPerson[]; instant?: boolean } | null>(null);
+  const [person, setPerson] = useState<{ id: string; name: string; role?: string | null; list?: HistoryNavPerson[]; instant?: boolean; date?: string } | null>(null);
   /** the selected day's staff, open in a window on request */
   const [dayOpen, setDayOpen] = useState(false);
   // Escape also closes the side sheet while it is still loading its names.
@@ -448,7 +448,7 @@ export const StaffClockDashboard: React.FC = () => {
                   <div className="scr-out-rows">
                     <button type="button" className="scr-out" data-kpi="noOut" onClick={() => setSheet({
                       title: 'No check-out', subtitle: long(todayOv.date), empty: todayOv.missing?.checkoutOpen === false ? `Check-out opens at ${todayOv.rules.earlyLeaveBefore}` : 'Everyone checked out',
-                      people: missingOut.map((m) => ({ id: m.userId, personId: m.userId, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, tag: m.autoClosed ? 'Closed' : undefined })),
+                      people: missingOut.map((m) => ({ id: m.userId, personId: m.userId, name: m.name, date: m.date, meta: `In at ${m.checkIn ?? '—'}${m.claim ? ` · says left ${m.claim}` : ''}`, tag: m.claim ? 'To confirm' : m.autoClosed ? 'Closed' : undefined })),
                     })}>
                       <LogOut size={18} />
                       <span><b className="sc-num">{todayOv.missing?.checkoutOpen === false ? '–' : missingOut.length}</b> today</span>
@@ -457,7 +457,7 @@ export const StaffClockDashboard: React.FC = () => {
                     </button>
                     <button type="button" className="scr-out" data-kpi="recent" onClick={() => setSheet({
                       title: 'Missed check-outs', subtitle: 'Checked in, never checked out · last 7 days', empty: 'No missed check-outs',
-                      people: recentOut.map((m) => ({ id: `${m.userId}-${m.date}`, personId: m.userId, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, group: fmtDate(m.date, { weekday: 'long', day: 'numeric', month: 'short' }) })),
+                      people: recentOut.map((m) => ({ id: `${m.userId}-${m.date}`, personId: m.userId, name: m.name, date: m.date, tag: m.claim ? 'To confirm' : undefined, meta: `In at ${m.checkIn ?? '—'}${m.claim ? ` · says left ${m.claim}` : ''}`, group: fmtDate(m.date, { weekday: 'long', day: 'numeric', month: 'short' }) })),
                     })}>
                       <CalendarClock size={18} />
                       <span><b className="sc-num">{recentOut.length}</b> missed</span>
@@ -509,7 +509,7 @@ export const StaffClockDashboard: React.FC = () => {
             onPick={(p) => {
               if (!p.personId) return;
               const nav = sheet.people.filter((x) => x.personId).map((x) => ({ id: x.personId!, name: x.name, note: [x.group, x.meta].filter(Boolean).join(' · ') }));
-              setPerson({ id: p.personId, name: p.name, list: nav.filter((x, i) => nav.findIndex((y) => y.id === x.id) === i) });
+              setPerson({ id: p.personId, name: p.name, date: p.date, list: nav.filter((x, i) => nav.findIndex((y) => y.id === x.id) === i) });
             }} />
         ))}
         {dayOpen && sel && today && (
@@ -520,8 +520,8 @@ export const StaffClockDashboard: React.FC = () => {
           />
         )}
         {person && (
-          <StaffHistoryModal key={person.id} personId={person.id} name={person.name} role={person.role} instant={person.instant}
-            list={person.list} onNav={(p) => setPerson((cur) => (cur ? { ...cur, id: p.id, name: p.name, role: p.role, instant: true } : cur))}
+          <StaffHistoryModal key={person.id} initialDate={person.date} personId={person.id} name={person.name} role={person.role} instant={person.instant}
+            list={person.list} onNav={(p) => setPerson((cur) => (cur ? { ...cur, id: p.id, name: p.name, role: p.role, instant: true, date: undefined } : cur))}
             onClose={() => setPerson(null)} onChanged={() => void load(true)} />
         )}
       </div>

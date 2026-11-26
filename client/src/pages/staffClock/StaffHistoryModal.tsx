@@ -6,6 +6,8 @@ import { Skeleton } from '../../components/common/Skeleton';
 import { Ring } from './StaffClockAttention';
 import { StaffPlanPanel } from './StaffPlanPanel';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useToast } from '../../context/ToastContext';
+import { Spinner } from './StaffClockHeader';
 
 /**
  * One staff member's attendance over the last year: two rings, a few numbers,
@@ -43,11 +45,18 @@ export const StaffHistoryModal: React.FC<{
   onNav?: (p: HistoryNavPerson) => void;
   /** opened by stepping from another person: no entrance animation */
   instant?: boolean;
+  /** open with this day picked (a missed check-out, for instance) */
+  initialDate?: string;
   /** open on the working hours instead of the history */
   initialTab?: 'history' | 'hours';
   /** the person's hours were changed: lists behind this window are out of date */
   onChanged?: () => void;
-}> = ({ personId, name, role, onClose, list, onNav, instant, initialTab, onChanged }) => {
+}> = ({ personId, name, role, onClose, list, onNav, instant, initialTab, initialDate, onChanged }) => {
+  const toast = useToast();
+  const canFixOut = usePermissions().can('STAFF_DEVICES_MANAGE');
+  /** the check-out time being typed, for one day */
+  const [outDraft, setOutDraft] = useState<{ date: string; time: string } | null>(null);
+  const [savingOut, setSavingOut] = useState(false);
   const { can } = usePermissions();
   const canEditPlan = can('STAFF_ATTENDANCE_ZONES_MANAGE');
   const [tab, setTab] = useState<'history' | 'hours'>(initialTab ?? 'history');
@@ -63,10 +72,10 @@ export const StaffHistoryModal: React.FC<{
   useEffect(() => {
     let live = true;
     staffClockApi.history(personId)
-      .then((h) => { if (live) { setData(h); setMonth((m) => m ?? monthKey(h.to)); setPicked((p) => p ?? h.to); } })
+      .then((h) => { if (live) { setData(h); const start = initialDate && initialDate >= h.from && initialDate <= h.to ? initialDate : h.to; setMonth((m) => m ?? monthKey(start)); setPicked((p) => p ?? start); } })
       .catch((e) => { if (live) setError(e instanceof ApiError ? e.message : 'Could not load the history.'); });
     return () => { live = false; };
-  }, [personId, reloadKey]);
+  }, [personId, reloadKey, initialDate]);
 
   const at = list ? list.findIndex((p) => p.id === personId) : -1;
   const prevP = at > 0 ? list![at - 1] : null;
@@ -149,6 +158,22 @@ export const StaffHistoryModal: React.FC<{
   }, [data, month]);
 
   const sel = picked ? byDate.get(picked) ?? null : null;
+  const outTime = sel && outDraft?.date === sel.date ? outDraft.time : '';
+  const setOutTime = (time: string) => setOutDraft(sel ? { date: sel.date, time } : null);
+  const saveOut = async (recordId: number, time: string) => {
+    setSavingOut(true);
+    try {
+      const res = await staffClockApi.setCheckout(recordId, time);
+      toast.success(res.message || 'Check-out saved', res.data?.outStatus === 'early' ? 'Counted as leaving early for that day.' : 'The day is complete now.');
+      setOutTime('');
+      setReloadKey((k) => k + 1);
+      onChanged?.();
+    } catch (e) {
+      toast.error('Check-out not saved', e instanceof ApiError ? e.message : 'Check the connection and try again.');
+    } finally {
+      setSavingOut(false);
+    }
+  };
   const s = data?.summary;
   const pick = (d: HistoryDay) => { setPicked(d.date); setMonth(monthKey(d.date)); };
 
@@ -302,8 +327,22 @@ export const StaffHistoryModal: React.FC<{
                       {sel.kind === 'late' && (sel.start ?? data.rules.lateAfter) && <span data-tone="amber"><TimerOff size={14} />after {sel.start ?? data.rules.lateAfter}</span>}
                       {sel.early && <span data-tone="amber"><LogOut size={14} />left before {sel.end ?? data.rules.earlyLeaveBefore}</span>}
                       {sel.noOut && <span data-tone="amber"><LogOut size={14} />no check-out</span>}
+                      {sel.manualOut && <span><LogOut size={14} />check-out entered by the office</span>}
                       {sel.card && <span><CreditCard size={14} />staff card</span>}
                     </div>
+                    {sel.noOut && sel.recordId != null && canFixOut && (
+                      <div className="sh-fixout" data-testid="fix-out">
+                        <b>Forgot to check out</b>
+                        <small>{sel.claim ? `${(data.person.name.split(' ')[0])} says they left at ${sel.claim}. Confirm it or enter another time.` : 'Enter the time they left. Early or on time follows their hours that day.'}</small>
+                        <div className="sh-fixout-row">
+                          <input className="sp-time" type="time" aria-label="Check-out time" value={outTime || sel.claim || ''} onChange={(e) => setOutTime(e.target.value)} />
+                          <button className="sc-btn sc-btn-primary sc-btn-sm" disabled={savingOut || !(outTime || sel.claim) || (!!sel.in && (outTime || sel.claim || '') <= sel.in)} onClick={() => void saveOut(sel.recordId as number, outTime || sel.claim || '')}>
+                            {savingOut ? <Spinner /> : null} {savingOut ? 'Saving…' : sel.claim && !outTime ? 'Confirm' : 'Save check-out'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {sel.noOut && sel.claim && !canFixOut && <small className="sc-muted">Says they left at {sel.claim}. Waiting for the office.</small>}
                   </>
                 ) : (
                   <span className="sh-label">Pick a day</span>

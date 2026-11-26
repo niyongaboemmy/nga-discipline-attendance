@@ -677,6 +677,7 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     ['minShiftMinutes', 'Check-out opens after', 'Minutes after check-in', 'number', 'min'],
     ['maxAccuracy', 'Location precision', 'Vaguer readings are refused', 'number', 'm'],
     ['allowance', 'Edge tolerance', 'A phone this close outside the edge still counts (its own error, up to this)', 'number', 'm'],
+    ['remindMinutes', 'Reminders', 'Minutes before each person\'s own start and end that their phone reminds them to check in and out. 0 turns reminders off', 'number', 'min before'],
     ['selfReplaceDays', 'New phone approval', 'A second phone within this many days needs approval', 'number', 'days'],
   ];
 
