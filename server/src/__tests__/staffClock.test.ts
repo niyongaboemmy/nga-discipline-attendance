@@ -936,6 +936,67 @@ describe('reminders and forgotten check-outs', () => {
   });
 });
 
+describe('the installed app (Add to Home Screen) and signing out', () => {
+  it('installs for THIS school, carries the sign-in over on the same phone, and lets a person sign out', async () => {
+    misPerson(150, 'Home Screen', 'home@gmail.com');
+    const safari = await newDevice();
+    now = kigali('07:30', '2027-03-02');
+    await register('nga', 'home@gmail.com', safari);
+
+    // The icon starts at this school, never at a bare /c/.
+    const man = await request(app).get('/api/clock/nga/manifest.webmanifest');
+    expect(man.headers['content-type']).toContain('application/manifest+json');
+    expect(JSON.parse(man.text)).toMatchObject({ id: '/c/nga', start_url: '/c/nga', scope: '/c/', display: 'standalone', name: expect.stringContaining('Check-in') });
+    expect((await request(app).get('/api/clock/nope-school/manifest.webmanifest')).status).toBe(404);
+
+    // The signed-in page gets a code; it rides in the icon's start address.
+    const ho = await request(app).post('/api/clock/nga/handoff').set('X-Clock-Device', safari.token!);
+    expect(ho.status).toBe(200);
+    const code = ho.body.data.code;
+    expect(JSON.parse((await request(app).get(`/api/clock/nga/manifest.webmanifest?h=${code}`)).text).start_url).toBe(`/c/nga?h=${code}`);
+    expect(JSON.parse((await request(app).get('/api/clock/nga/manifest.webmanifest?h=<script>')).text).start_url).toBe('/c/nga');
+    expect((await request(app).post('/api/clock/nga/handoff').send({})).status).toBe(401);
+
+    // The installed app (empty storage, a new key) trades the code once: same person, no Google, no approval.
+    const installed = await newDevice();
+    const claim = (c: string, d: FakeDevice) => request(app).post('/api/clock/nga/handoff/claim')
+      .set('User-Agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148')
+      .send({ code: c, publicKeyJwk: d.jwk, installUuid: d.installUuid, device: { browser: 'Safari', os: 'iOS', model: 'iPhone', formFactor: 'phone' } });
+    expect((await claim('nope-nope-nope-nope-nope-nope', installed)).status).toBe(410);
+    const got = await claim(code, installed);
+    expect(got.status).toBe(200);
+    expect(got.body.data).toMatchObject({ deviceStatus: 'active', email: 'home@gmail.com', person: { firstName: 'Home' } });
+    installed.token = got.body.data.deviceToken;
+    expect((await claim(code, await newDevice())).status).toBe(410); // single use
+    expect((await tap('nga', installed, INSIDE)).body.data).toMatchObject({ action: 'check_in' });
+    // The browser's old registration is replaced, without using the person's "new phone" allowance.
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', safari.token!)).body.code).toBe('DEVICE_REVOKED');
+    expect(await db.get(`SELECT revoke_reason FROM attendance_devices WHERE user_id = '150' AND status = 'replaced'`)).toEqual({ revoke_reason: 'moved_to_installed_app' });
+    expect(await db.get(`SELECT 1 FROM attendance_events WHERE user_id = '150' AND kind = 'register' AND reason = 'replace'`)).toBeUndefined();
+
+    // Without a code, Safari and the installed app on one iPhone still count as the same phone.
+    const { sameBrowserFamily } = await import('../modules/clock/clock.service.js');
+    expect(sameBrowserFamily(
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148')).toBe(true);
+    expect(sameBrowserFamily('Mozilla/5.0 (Linux; Android 13) Chrome/131', 'Mozilla/5.0 (Linux; Android 14) Chrome/131')).toBe(false);
+
+    // The person signs the device out on the page itself: it is refused until they sign in again.
+    expect((await request(app).post('/api/clock/nga/signout').set('X-Clock-Device', installed.token!)).body.data).toEqual({ signedOut: true });
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', installed.token!)).body.code).toBe('DEVICE_REVOKED');
+    expect((await register('nga', 'home@gmail.com', installed)).body.data.deviceStatus).toBe('active');
+
+    // ...or from their Tendo account (a lost phone): their own week shows the device, and they sign it out there.
+    const { token: self } = await createTestUser(db, { id: '150', name: 'Home Screen', email: 'home@gmail.com', roleLevel: 'TEACHER' });
+    const mine = (await request(app).get('/api/staff/clock/my-week').set(authHeader(self))).body.data;
+    expect(mine.device).toMatchObject({ status: 'active', google_email: 'home@gmail.com' });
+    expect((await request(app).post('/api/staff/clock/my-device/signout').set(authHeader(self))).body).toMatchObject({ success: true, message: 'Device signed out' });
+    expect((await request(app).get('/api/clock/nga/me').set('X-Clock-Device', installed.token!)).body.code).toBe('DEVICE_REVOKED');
+    expect((await request(app).get('/api/staff/clock/my-week').set(authHeader(self))).body.data.device).toBeNull();
+    expect((await request(app).post('/api/staff/clock/my-device/signout').set(authHeader(self))).status).toBe(404);
+  });
+});
+
 describe('another school, another timezone', () => {
   it('a UTC-5 school decides today and lateness in its own zone', async () => {
     __setTenants([primaryTenantCtx(), { tid: 7, slug: 'nyc', name: 'NYC School', status: 'ACTIVE', isPrimary: false, timezone: 'America/New_York', pkg: 'max' }]);
