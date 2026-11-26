@@ -14,6 +14,7 @@ import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { announceClockChange } from './clockEvents';
 import { evaluateTest, isComputer, type TestOutcome } from './locationTest';
 import { PhoneGps } from './PhoneGps';
+import { RulesPanel } from './StaffClockRules';
 
 /**
  * Zone & settings (design "C1"): the map fills the page and never scrolls. A
@@ -670,16 +671,6 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
     }
   };
 
-  const ruleRows: Array<[keyof ClockRules, string, string, 'time' | 'number', string?]> = [
-    ['opens', 'Check-in opens', 'Earliest tap, school time', 'time'],
-    ['lateAfter', 'Late after', 'Check-in later than this is late', 'time'],
-    ['earlyLeaveBefore', 'Early leave before', 'Check-out earlier than this is early', 'time'],
-    ['minShiftMinutes', 'Check-out opens after', 'Minutes after check-in', 'number', 'min'],
-    ['maxAccuracy', 'Location precision', 'Vaguer readings are refused', 'number', 'm'],
-    ['allowance', 'Edge tolerance', 'A phone this close outside the edge still counts (its own error, up to this)', 'number', 'm'],
-    ['remindMinutes', 'Reminders', 'Minutes before each person\'s own start and end that their phone reminds them to check in and out. 0 turns reminders off', 'number', 'min before'],
-    ['selfReplaceDays', 'New phone approval', 'A second phone within this many days needs approval', 'number', 'days'],
-  ];
 
   const tag = current ? tagOf(current) : null;
   const activeCount = zones.filter((z) => z.active).length;
@@ -892,42 +883,10 @@ export const StaffClockZone: React.FC<{ embedded?: { onSaved?: () => void } }> =
           </div>
 
           {drawer === 'rules' && (
-            <div className="zc-drawer" id="zone-rules" role="dialog" aria-label="Check-in rules">
+            <div className="zc-drawer zc-drawer-rules" id="zone-rules" role="dialog" aria-label="Check-in rules">
               <div className="zc-drawer-head"><b>Check-in rules</b><button className="zc-icon" onClick={() => setDrawer(null)} aria-label="Close rules"><X size={16} /></button></div>
               <div className="zc-drawer-body">
-                {ruleRows.map(([key, label, hint, type, unit]) => (
-                  <label className="zc-rule" key={key} title={hint}>
-                    <span>{label}</span>
-                    <span className="zc-rule-in">
-                      <input className="zc-input zc-input-sm" type={type} aria-label={label} disabled={!canEdit} value={String(rules[key])} min={type === 'number' ? 0 : undefined}
-                        onChange={(e) => patchRules({ [key]: type === 'number' ? Number(e.target.value) : e.target.value } as Partial<ClockRules>)} />
-                      {unit && <small>{unit}</small>}
-                    </span>
-                  </label>
-                ))}
-                <label className="zc-rule" title="Empty = any Google account. Or list domains: gmail.com, school.rw">
-                  <span>Google accounts</span>
-                  <input className="zc-input zc-input-md" aria-label="Allowed Google domains" placeholder="Any" disabled={!canEdit} value={rules.googleDomains} onChange={(e) => patchRules({ googleDomains: e.target.value })} />
-                </label>
-                <label className="zc-rule" title="Optional fixed IP range of the school Wi-Fi; counts as at school">
-                  <span>School Wi-Fi</span>
-                  <input className="zc-input zc-input-md" aria-label="School network" placeholder="41.186.10.0/24" disabled={!canEdit} value={rules.schoolNetworks} onChange={(e) => patchRules({ schoolNetworks: e.target.value })} />
-                </label>
-                <div className="zc-rule" title="On mobile data indoors a phone's GPS can be vaguer than the precision above. Accept: the check-in counts while the reading still reaches the school, and waits in Needs review. Refuse: only precise readings count.">
-                  <span>Weak GPS on own network</span>
-                  <div className="zc-shape" role="group" aria-label="Weak GPS on a person's own network">
-                    <button aria-pressed={rules.weakLocation !== 'refuse'} disabled={!canEdit} onClick={() => patchRules({ weakLocation: 'review' })}>Accept, review</button>
-                    <button aria-pressed={rules.weakLocation === 'refuse'} disabled={!canEdit} onClick={() => patchRules({ weakLocation: 'refuse' })} data-testid="weak-refuse">Refuse</button>
-                  </div>
-                </div>
-                <div className="zc-rule" title="A day off is a day a person is not expected: their own working week, a weekend, a school day off. Closed: they cannot check in and see when their next day is. Allowed: the check-in counts and is flagged.">
-                  <span>Check-in on a day off</span>
-                  <div className="zc-shape" role="group" aria-label="Check-in on a day off">
-                    <button aria-pressed={rules.nonSchoolDays !== 'allow_flag'} disabled={!canEdit} onClick={() => patchRules({ nonSchoolDays: 'refuse' })}>Closed</button>
-                    <button aria-pressed={rules.nonSchoolDays === 'allow_flag'} disabled={!canEdit} onClick={() => patchRules({ nonSchoolDays: 'allow_flag' })} data-testid="dayoff-allow">Allowed, flagged</button>
-                  </div>
-                </div>
-                <p className="zc-rule-note">These hours are for everyone. Someone with different days or times? Open them on the <Link to="/staff/clock/people">Staff</Link> tab, then Working hours.</p>
+                <RulesPanel rules={rules} canEdit={canEdit} onChange={patchRules} />
               </div>
               {canEdit && <div className="zc-drawer-foot">Changes save with the areas</div>}
             </div>

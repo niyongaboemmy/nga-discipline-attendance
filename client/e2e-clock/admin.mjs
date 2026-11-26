@@ -504,6 +504,19 @@ async function run(browser, vp) {
   // The setup step links straight to the rules: the Rules drawer opens over the map.
   await page.goto(`${BASE}/staff/clock/zone#zone-rules`);
   await expectText(page, 'Check-in rules', `${tag} zone rules drawer`);
+  // The rules explain themselves: a picture of the day, a plain line under each rule, and a tip on the "i".
+  await expectText(page, 'Before 05:00: check-in is closed', `${tag} rules day picture`);
+  await expectText(page, 'Before this time the check-in button is closed.', `${tag} rule help line`);
+  await page.getByRole('button', { name: 'About Check-in opens' }).click();
+  await expectText(page, 'nobody can check in before this time', `${tag} rule tooltip`);
+  {
+    const fit = await page.locator('#zone-rules .zc-drawer-body').evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && [...el.querySelectorAll('.zr-label b, .zr-seg-pick button')].every((n) => n.scrollWidth <= n.clientWidth + 1));
+    if (!fit) fail(`${tag}: a rule label or choice is cut off in the rules drawer`);
+  }
+  await page.waitForTimeout(250);
+  await shot('03r-rules');
+  await page.keyboard.press('Escape');
+  if (await page.locator('.zr-tip').count()) fail(`${tag}: Escape did not close the rule tip`);
   await expectText(page, 'Edge tolerance', `${tag} edge tolerance rule`);
   await page.waitForTimeout(1500);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: zone page scrolls sideways`);
