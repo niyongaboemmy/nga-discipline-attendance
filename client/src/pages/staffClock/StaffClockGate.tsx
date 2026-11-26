@@ -22,7 +22,8 @@ import { agoText, gateHeadline, gateModel, hhmm, toMin, type GateCheck, type Gat
 
 const REFRESH_MS = 20_000;
 const SOUND_KEY = 'tendo.gate.sound';
-type Tab = 'wait' | 'events' | 'check';
+type Tab = 'wait' | 'events' | 'check' | 'off';
+type Filter = 'all' | GateKind | 'off';
 type Sheet = { kind: 'person'; who: GateWaiting } | { kind: 'all' } | null;
 
 /** A short, soft tone for each new arrival (only after the leader turns sound on). */
@@ -67,7 +68,7 @@ export const StaffClockGate: React.FC = () => {
   const [now, setNow] = useState(() => Date.now());
   const [mode, setMode] = useState<GateMode>('in');
   const [tab, setTab] = useState<Tab>('wait');
-  const [filter, setFilter] = useState<'all' | GateKind>('all');
+  const [filter, setFilter] = useState<Filter>('all');
   const [sent, setSent] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -168,7 +169,10 @@ export const StaffClockGate: React.FC = () => {
     ? { ring: 'here', wait: 'Expected', waitTitle: 'Still expected', events: 'Arrived', eventsTitle: 'Live arrivals', emptyWait: 'Everyone expected today is in.', emptyEvents: 'Nobody has checked in yet.', late: 'Late', soon: 'Due soon', later: 'Later' }
     : { ring: 'left', wait: 'Inside', waitTitle: 'Still inside', events: 'Left', eventsTitle: 'Just left', emptyWait: 'Nobody is inside.', emptyEvents: 'Nobody has checked out yet.', late: 'Day over', soon: 'Ending soon', later: 'Later' };
 
-  const waiting = model ? (filter === 'all' ? model.waiting : model.waiting.filter((w) => w.kind === filter)) : [];
+  const showOff = filter === 'off';
+  const waiting = model && !showOff ? (filter === 'all' ? model.waiting : model.waiting.filter((w) => w.kind === filter)) : [];
+  /** The day-off list: a tab on a phone, a filter on a desktop, and the day-off numbers open it. */
+  const openOff = () => { setFilter('off'); setTab('off'); };
   const clock = hhmm(nowMin);
   const dateLabel = ov ? new Date(`${ov.date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }) : '';
   const remindLabel = toRemind.length ? `Remind ${toRemind.length === 1 ? '1 person' : `all ${toRemind.length}`}` : model?.remindIds.length ? 'All reminded' : 'Nobody to remind';
@@ -213,7 +217,7 @@ export const StaffClockGate: React.FC = () => {
                 <p className="gt-mini sc-num">
                   <span><b>{model.waiting.length}</b> {mode === 'in' ? 'expected' : 'inside'}</span>
                   <span data-warn={model.counts.late > 0 || undefined}><b>{model.counts.late}</b> {mode === 'in' ? 'late' : 'over'}</span>
-                  <span><b>{model.dayOff}</b> off</span>
+                  <button type="button" onClick={openOff} aria-label={`${model.dayOff} on a day off today. Show the list`}><b>{model.dayOff}</b> off</button>
                 </p>
               </div>
             </div>
@@ -222,7 +226,7 @@ export const StaffClockGate: React.FC = () => {
               <div><dt><i data-dot="amber" />Arrived late</dt><dd>{model.lateArrived}</dd></div>
               <div><dt><i data-dot="gray" />{words.waitTitle}</dt><dd>{model.waiting.length}</dd></div>
               <div><dt><i data-dot="amber" />To check</dt><dd>{model.checks.length}</dd></div>
-              <div><dt><i data-dot="muted" />Day off today</dt><dd>{model.dayOff}</dd></div>
+              <div><dt><i data-dot="muted" /><button type="button" onClick={openOff} data-testid="gate-off-count">Day off today<ChevronRight size={16} /></button></dt><dd>{model.dayOff}</dd></div>
             </dl>
             <div className="gt-actions">
               <button type="button" className="gt-btn gt-btn-primary" disabled={!toRemind.length || !!busy} onClick={() => setSheet({ kind: 'all' })} data-testid="gate-remind-all"><BellRing size={20} />{remindLabel}</button>
@@ -231,22 +235,33 @@ export const StaffClockGate: React.FC = () => {
           </div>
 
           <div className="gt-seg gt-tabs" role="group" aria-label="Lists">
-            <button type="button" aria-pressed={tab === 'wait'} onClick={() => setTab('wait')}>{words.wait} <b className="sc-num">{model.waiting.length}</b></button>
+            <button type="button" aria-pressed={tab === 'wait'} onClick={() => { setTab('wait'); if (showOff) setFilter('all'); }}>{words.wait} <b className="sc-num">{model.waiting.length}</b></button>
             <button type="button" aria-pressed={tab === 'events'} onClick={() => setTab('events')} data-testid="gate-tab-events">{words.events} <b className="sc-num">{model.events.length}</b></button>
             <button type="button" aria-pressed={tab === 'check'} onClick={() => setTab('check')} data-testid="gate-tab-check" data-warn={model.checks.length > 0 || undefined}>Check <b className="sc-num">{model.checks.length}</b></button>
+            <button type="button" aria-pressed={tab === 'off'} onClick={openOff} data-testid="gate-tab-off">Off <b className="sc-num">{model.dayOff}</b></button>
           </div>
 
-          <section className="gt-col gt-col-wait" aria-label={words.waitTitle}>
+          <section className="gt-col gt-col-wait" aria-label={showOff ? 'Day off today' : words.waitTitle}>
             <div className="gt-col-head">
-              <h2>{words.waitTitle}</h2>
+              <h2>{showOff ? 'Day off today' : words.waitTitle}</h2>
               <div className="gt-chips" role="group" aria-label="Filter">
-                {([['all', `All ${model.waiting.length}`], ['late', `${words.late} ${model.counts.late}`], ['soon', `${words.soon} ${model.counts.soon}`], ['later', `${words.later} ${model.counts.later}`]] as Array<['all' | GateKind, string]>).map(([k, label]) => (
-                  <button key={k} type="button" aria-pressed={filter === k} onClick={() => setFilter(k)}>{label}</button>
+                {([['all', `All ${model.waiting.length}`], ['late', `${words.late} ${model.counts.late}`], ['soon', `${words.soon} ${model.counts.soon}`], ['later', `${words.later} ${model.counts.later}`], ['off', `Day off ${model.dayOff}`]] as Array<[Filter, string]>).map(([k, label]) => (
+                  <button key={k} type="button" aria-pressed={filter === k} onClick={() => { setFilter(k); setTab(k === 'off' ? 'off' : 'wait'); }}>{label}</button>
                 ))}
               </div>
             </div>
             <div className="gt-list" data-testid="gate-waiting">
-              {waiting.length === 0 && <p className="gt-empty"><Check size={26} />{model.waiting.length ? 'Nobody in this group.' : words.emptyWait}</p>}
+              {showOff && model.off.length === 0 && <p className="gt-empty"><Check size={26} />Nobody has a day off today.</p>}
+              {showOff && model.off.map((p) => (
+                <div key={p.userId} className="gt-row" data-kind="off">
+                  <button type="button" className="gt-row-main" onClick={() => setPerson({ id: p.userId, name: p.name })} aria-label={`${p.name}, day off. Open history`}>
+                    <UserAvatar decorative userId={p.userId} name={p.name} px={44} className="gt-av" />
+                    <span className="gt-row-text"><b>{p.name}</b><small>{[p.role, p.note].filter(Boolean).join(' · ')}</small></span>
+                    <span className="gt-tag">Day off</span>
+                  </button>
+                </div>
+              ))}
+              {!showOff && waiting.length === 0 && <p className="gt-empty"><Check size={26} />{model.waiting.length ? 'Nobody in this group.' : words.emptyWait}</p>}
               {waiting.map((w) => {
                 const done = sent.has(key(w.userId));
                 return (
@@ -345,7 +360,7 @@ export const StaffClockGate: React.FC = () => {
 
       {person && (
         <StaffHistoryModal key={person.id} personId={person.id} name={person.name}
-          list={model ? [...model.waiting, ...model.events].map((p) => ({ id: p.userId, name: p.name })).filter((p, i, a) => a.findIndex((x) => x.id === p.id) === i) : []}
+          list={model ? [...model.waiting, ...model.events, ...model.off].map((p) => ({ id: p.userId, name: p.name })).filter((p, i, a) => a.findIndex((x) => x.id === p.id) === i) : []}
           onNav={(p) => setPerson({ id: p.id, name: p.name })} onClose={() => setPerson(null)} onChanged={() => void load()} />
       )}
     </div>

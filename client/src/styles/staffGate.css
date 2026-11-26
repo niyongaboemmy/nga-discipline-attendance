@@ -245,3 +245,15 @@
   .gt-checks:not(:empty) { margin-bottom: 8px; }
   .gt-empty { margin: 0 12px; }
 }
+
+/* Day off today: a filter on a desktop, a fourth tab on a phone; the numbers open it */
+.gt-row[data-kind="off"] .gt-tag { color: var(--g-ink2); }
+.gt-counts dt button, .gt-mini button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; padding: 0; color: inherit; font: inherit; cursor: pointer; border-radius: 999px; }
+.gt-counts dt button { min-height: 44px; padding: 0 10px 0 0; }
+.gt-counts dt button:hover { color: var(--g-blue-ink); }
+.gt-counts dt button svg { color: var(--g-ink2); }
+@media (max-width: 899px) {
+  .gt[data-tab="off"] .gt-col-feed { display: none; }
+  .gt-tabs button { padding: 0 4px; font-size: 14px; }
+  .gt-mini button { min-height: 32px; text-decoration: underline; text-underline-offset: 3px; }
+}

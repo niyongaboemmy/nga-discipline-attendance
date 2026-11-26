@@ -182,6 +182,14 @@ async function run(browser, vp) {
     await page.locator('.gt-chips button', { hasText: 'All 7' }).click();
   }
 
+  // Day off today: the list behind the number (a tab on a phone, the count or a filter on a desktop).
+  await page.getByTestId(phone ? 'gate-tab-off' : 'gate-off-count').click();
+  const offRows = await texts(page, '[data-testid="gate-waiting"] .gt-row[data-kind="off"] .gt-row-text b');
+  check(JSON.stringify(offRows) === JSON.stringify(['Person Fifteen Oscar']), `${tag}: day-off list ${JSON.stringify(offRows)}`);
+  check((await page.locator('[data-testid="gate-waiting"] .gt-row').count()) === 1, `${tag}: day-off list mixes in other people`);
+  await shot('3b-day-off');
+  if (phone) await page.getByTestId('gate-tab-check').click(); else await page.locator('.gt-chips button', { hasText: 'All 7' }).click();
+
   // Confirm the check-in that waits for a yes.
   await page.getByTestId('gate-confirm').click();
   await page.getByText('Nothing to check', { exact: false }).first().waitFor({ state: phone ? 'visible' : 'attached', timeout: 5000 });

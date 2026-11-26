@@ -120,3 +120,11 @@ test('words for time', () => {
   assert.equal(agoText(0), 'just now');
   assert.equal(agoText(3), '3 min ago');
 });
+
+test('the day-off list names who is not expected today, and why', () => {
+  const m = gateModel(morning(), NOW, 'in');
+  assert.deepEqual(m.off, [{ userId: '10', name: 'Agnes', role: 'Teacher', note: 'Own hours: day off' }]);
+  assert.equal(m.dayOff, 1);
+  const closed = gateModel({ ...overview([row('1', 'Zed', { expected: false, status: 'day_off', moment: 'day_off' }), row('2', 'Abe', { expected: false, status: 'day_off', moment: 'day_off' })]), holiday: true }, NOW, 'out');
+  assert.deepEqual(closed.off.map((p) => [p.name, p.note]), [['Abe', 'School closed today'], ['Zed', 'School closed today']]);
+});
