@@ -87,14 +87,14 @@ export async function resolveAndPersistUser(
       const roleId = await systemRoleIdFor(finalRole);
       await db.run(
         `UPDATE users
-           SET name = ?, email = COALESCE(?, email), role = ?, role_id = ?, last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           SET name = ?, email = COALESCE(?, email), role = ?, role_id = ?, status = CASE WHEN school_member = 0 THEN 'active' ELSE status END, school_member = 1, last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         name, email || null, finalRole, roleId, id
       );
     } else {
       await db.run(
         `UPDATE users
-           SET name = ?, email = COALESCE(?, email), last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+           SET name = ?, email = COALESCE(?, email), status = CASE WHEN school_member = 0 THEN 'active' ELSE status END, school_member = 1, last_login = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         name, email || null, id
       );
@@ -104,8 +104,8 @@ export async function resolveAndPersistUser(
 
   const roleId = await systemRoleIdFor(computedRole);
   await db.run(
-    `INSERT INTO users (id, name, email, role, role_id, source, last_login)
-     VALUES (?, ?, ?, ?, ?, 'sso', CURRENT_TIMESTAMP)`,
+    `INSERT INTO users (id, name, email, role, role_id, source, last_login, school_member)
+     VALUES (?, ?, ?, ?, ?, 'sso', CURRENT_TIMESTAMP, 1)`,
     id, name, email || null, computedRole, roleId
   );
   return computedRole;

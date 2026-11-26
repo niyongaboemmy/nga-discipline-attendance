@@ -332,6 +332,33 @@ describe('active users only', () => {
       expect((await db.get(`SELECT status FROM users WHERE id = '802'`)).status).toBe('active');
     });
 
+    it("hides accounts this school's MIS does not list (another school's rows), only on a complete list", async () => {
+      await db.run(`INSERT INTO users (id, name, role, status) VALUES ('770', 'Our Teacher', 'teacher', 'active'), ('771', 'Other School Person', 'teacher', 'active'), ('772', 'Me Admin', 'admin', 'active')`);
+      const mis = (rows: any[], total: number | null) => vi.stubGlobal('fetch', vi.fn(async () =>
+        new Response(JSON.stringify({ success: true, data: rows }), { status: 200, headers: total == null ? {} : { 'X-Total-Count': String(total) } })));
+      const member = async (id: string) => (await db.get(`SELECT school_member AS m, status FROM users WHERE id = ?`, id));
+      // A partial page (total says more exist) proves nothing: nobody is hidden.
+      mis([{ user: { user_id: 770, username: 'ours', status: 'ACTIVE' } }], 5);
+      await syncMisUsers('mis-tok', '772');
+      expect(await member('771')).toMatchObject({ status: 'active' });
+      expect((await member('771')).m).not.toBe(0);
+      // No total at all: nobody is hidden either.
+      mis([{ user: { user_id: 770, username: 'ours', status: 'ACTIVE' } }], null);
+      await syncMisUsers('mis-tok', '772');
+      expect((await member('771')).m).not.toBe(0);
+      // The complete list: 771 is not of this school; the signed-in admin (772) is never hidden.
+      const everyone = (await db.all<{ id: string }[]>(`SELECT id FROM users WHERE id NOT IN ('771', '772')`)).map((r) => ({ user: { user_id: r.id, username: r.id, status: 'ACTIVE' } }));
+      mis(everyone, everyone.length);
+      await syncMisUsers('mis-tok', '772');
+      expect(await member('771')).toMatchObject({ m: 0, status: 'inactive' });
+      expect((await member('772')).m).not.toBe(0);
+      expect(await member('770')).toMatchObject({ m: 1, status: 'active' });
+      // Listed again later (added to this school in the MIS): back, and active.
+      mis([...everyone, { user: { user_id: 771, username: 'back' } }], everyone.length + 1);
+      await syncMisUsers('mis-tok', '772');
+      expect(await member('771')).toMatchObject({ m: 1, status: 'active' });
+    });
+
     it('the roster sync writes users.status for everyone it sees, and REMOVED students become inactive', async () => {
       vi.stubEnv('MIS_INTEGRATION_TOKEN', 'svc');
       await db.run(`INSERT INTO users (id, name, role) VALUES ('901', 'Kid', 'student'), ('902', 'Staffer', 'teacher'), ('903', 'Leaver', 'student')`);
@@ -374,6 +401,14 @@ describe('active users only', () => {
       expect(await ids('?status=inactive')).toEqual(['a2', 'a3']);
       expect(await ids('?status=all')).toEqual(['9001', '9002', 'a1', 'a2', 'a3']);
       expect((await get('/api/admin/users?status=bogus')).status).toBe(400);
+    });
+
+    it("never lists another school's hidden accounts, not even under ?status=all", async () => {
+      await db.run(`INSERT INTO users (id, name, role, status, school_member) VALUES ('a9', 'Other School', 'teacher', 'inactive', 0)`);
+      const ids = (await get('/api/admin/users?status=all')).body.data.map((u: any) => u.id);
+      expect(ids).not.toContain('a9');
+      const o = (await get('/api/admin/overview')).body.data;
+      expect(o.inactiveByRole.teachers).toBe(1);
     });
 
     it('overview counts active roles and inactive accounts separately', async () => {

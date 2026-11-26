@@ -15,8 +15,16 @@ router.use(authMiddleware);
  * The remote MIS exposes a token-gated GET /users; any users it returns are
  * upserted as 'unassigned' if we don't already track them. Failures (e.g. the
  * MIS being unreachable) are swallowed so the local roster is still served.
+ *
+ * School membership: the MIS token speaks for this school, so the list it
+ * returns IS this school's people. When the list is complete (its length
+ * reaches the MIS X-Total-Count), anyone in this school's file the MIS no
+ * longer lists -- typically a row written here by another school's session
+ * before tenancy was enforced -- is marked school_member = 0 and inactive.
+ * The row stays (old records keep their names) but leaves every list.
+ * `selfId` (the signed-in person, proven to be of this school) is never marked.
  */
-export async function syncMisUsers(misToken?: string) {
+export async function syncMisUsers(misToken?: string, selfId?: string) {
   if (!misToken) return;
   try {
     // limit=1000: the MIS defaults to 10 per page, so without this only the
@@ -34,7 +42,9 @@ export async function syncMisUsers(misToken?: string) {
     if (!resp.ok) return;
     const body = (await resp.json()) as any;
     const list: any[] = Array.isArray(body) ? body : body.data || body.users || [];
+    const totalHeader = Number(resp.headers.get('x-total-count'));
     const db = getDb();
+    const seen = new Set<string>();
     for (const entry of list) {
       // MIS returns nested { user, profile, roles, permissions } records and
       // its PK is user_id, not id. Reading u.id/u.name/u.email off the top
@@ -55,16 +65,32 @@ export async function syncMisUsers(misToken?: string) {
       // that doesn't send it: then a new row defaults to active and an
       // existing row keeps whatever status it has.
       const status = localUserStatus(user.status ?? entry.status);
+      seen.add(String(id));
       await db.run(
-        `INSERT INTO users (id, name, email, role, source, status)
-         VALUES (?, ?, ?, 'unassigned', 'mis', COALESCE(?, 'active'))
+        `INSERT INTO users (id, name, email, role, source, status, school_member)
+         VALUES (?, ?, ?, 'unassigned', 'mis', COALESCE(?, 'active'), 1)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            email = COALESCE(excluded.email, users.email),
-           status = COALESCE(?, users.status),
+           status = CASE WHEN users.school_member = 0 AND ? IS NULL THEN 'active' ELSE COALESCE(?, users.status) END,
+           school_member = 1,
            updated_at = CURRENT_TIMESTAMP`,
-        String(id), name, user.email || null, status, status
+        String(id), name, user.email || null, status, status, status
       );
+    }
+    // Only a complete list can say who is NOT of this school.
+    const complete = Number.isFinite(totalHeader) && totalHeader > 0 && list.length >= totalHeader && seen.size > 0;
+    if (complete) {
+      const local = await db.all<{ id: string }[]>(`SELECT id FROM users WHERE COALESCE(school_member, 1) = 1`);
+      const gone = local.map((r) => String(r.id)).filter((id) => !seen.has(id) && id !== selfId);
+      for (let i = 0; i < gone.length; i += 400) {
+        const part = gone.slice(i, i + 400);
+        await db.run(
+          `UPDATE users SET school_member = 0, status = 'inactive', updated_at = CURRENT_TIMESTAMP WHERE id IN (${part.map(() => '?').join(',')})`,
+          ...part
+        );
+      }
+      if (gone.length) console.info(`[users] ${gone.length} account(s) not listed by this school's MIS are hidden (school_member = 0)`);
     }
   } catch (err) {
     console.warn('MIS user sync skipped:', (err as Error).message);
@@ -81,12 +107,13 @@ router.get('/users', authorizePermission('USERS_VIEW', 'USERS_MANAGE'), async (r
     return res.status(400).json({ success: false, message: "status must be 'active', 'inactive' or 'all'." });
   }
   try {
-    await syncMisUsers(authReq.user?.misToken);
+    await syncMisUsers(authReq.user?.misToken, authReq.user?.id ? String(authReq.user.id) : undefined);
     const db = getDb();
+    // Only this school's people: accounts the MIS does not list for it are hidden.
     const users = await db.all(
       `SELECT id, name, email, role, status, source, last_login, created_at
        FROM users
-       ${status === 'all' ? '' : 'WHERE status = ?'}
+       WHERE COALESCE(school_member, 1) = 1 ${status === 'all' ? '' : 'AND status = ?'}
        ORDER BY (role = 'unassigned') DESC, name ASC`,
       ...(status === 'all' ? [] : [status])
     );
@@ -115,7 +142,8 @@ router.get('/overview', authorizePermission('USERS_VIEW', 'USERS_MANAGE'), async
          SUM(CASE WHEN status = 'inactive' AND role = 'teacher' THEN 1 ELSE 0 END) AS inactive_teachers,
          SUM(CASE WHEN status = 'inactive' AND role = 'admin' THEN 1 ELSE 0 END) AS inactive_admins,
          SUM(CASE WHEN status = 'inactive' AND role = 'unassigned' THEN 1 ELSE 0 END) AS inactive_unassigned
-       FROM users`
+       FROM users
+       WHERE COALESCE(school_member, 1) = 1`
     );
     return res.json({
       success: true,
