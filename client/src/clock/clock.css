@@ -737,3 +737,183 @@ span.ck-cal-cell { cursor: default; }
 
 .ck-pop-body { padding: 14px 12px 12px; }
 .ck-pop-close { right: 12px; top: 14px; }
+
+/* =====================================================================
+   The daily screen, essentials only (phone first, then tablet): header
+   icons, the clock, one ring button, one status line, seven week rings.
+   ===================================================================== */
+.ck-e { align-items: center; gap: 0; --e-ring: 228px; --e-btn: 190px; padding: calc(12px + env(safe-area-inset-top)) 20px calc(18px + env(safe-area-inset-bottom)); }
+.ck-e-top { align-self: stretch; display: flex; align-items: center; gap: 4px; min-height: 48px; }
+.ck-e-top > :first-child { margin-right: 8px; flex: none; }
+.ck-e-hello { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; white-space: nowrap; }
+.ck-e-icon { width: 48px; height: 48px; flex: none; border-radius: 999px; border: 0; background: transparent; color: var(--ck-muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.ck-e-icon.on { color: var(--ck-blue-text); }
+.ck-e-icon:hover { background: var(--ck-surface-2); }
+.ck-e-icon:focus-visible, .ck-e-day:focus-visible, .ck-e-alert:focus-visible { outline: 2px solid var(--ck-blue); outline-offset: 2px; }
+.ck-e-gap { flex: 1 1 0; min-height: 6px; }
+.ck-e-gap-2 { flex-grow: 1.2; }
+.ck-e-gap-3 { flex-grow: 1.4; }
+.ck-e-clock { font-size: 76px; line-height: 76px; font-weight: 700; letter-spacing: -3px; font-variant-numeric: tabular-nums; }
+.ck-e-date { margin-top: 4px; font-size: 16px; color: var(--ck-muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ck-e-date::first-letter { text-transform: uppercase; }
+.ck-e-ring { position: relative; width: var(--e-ring); height: var(--e-ring); flex: none; }
+.ck-e-ring > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ck-e-track { stroke: var(--ck-border); }
+.ck-e-prog { stroke: var(--ck-blue); transition: stroke-dasharray .6s cubic-bezier(.2, .9, .3, 1); }
+.ck-e .ck-big { position: absolute; left: 50%; top: 50%; width: var(--e-btn); height: var(--e-btn); margin: calc(var(--e-btn) / -2) 0 0 calc(var(--e-btn) / -2); gap: 6px; }
+.ck-e .ck-big-label { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+.ck-e .ck-big-sub { font-size: 16px; opacity: 1; font-weight: 500; font-variant-numeric: tabular-nums; }
+.ck-e .ck-big-outline { border-width: 1.5px; }
+.ck-e .ck-big-grey { background: transparent; border: 1.5px solid var(--ck-border-strong); color: var(--ck-muted); }
+.ck-e-note { margin-top: 14px; font-size: 16px; font-weight: 500; text-align: center; font-variant-numeric: tabular-nums; max-width: 100%; }
+.ck-e-note-green { color: var(--ck-blue-text); }
+.ck-e-note-amber { color: var(--ck-amber); }
+.ck-e-note-muted { color: var(--ck-muted); }
+.ck-e-help { margin: 4px 0 0; font-size: 14px; line-height: 1.4; color: var(--ck-faint); text-align: center; max-width: 340px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ck-e .ck-phone-offer { margin-top: 12px; }
+.ck-e-phone { margin-top: 0; align-self: stretch; }
+.ck-e-alert { margin-top: 12px; height: 46px; padding: 0 18px; border-radius: 999px; border: 0; background: var(--ck-amber-bg); color: var(--ck-amber); font: 600 15px inherit; font-family: inherit; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap; }
+.ck-e .ck-how, .ck-e .ck-tip { align-self: stretch; margin-bottom: 10px; }
+.ck-e-week { display: grid; grid-template-columns: repeat(7, 40px); gap: 8px; }
+.ck-e-day { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--ck-faint); font: 500 14px inherit; font-family: inherit; cursor: pointer; }
+.ck-e-day svg { width: 36px; height: 36px; }
+.ck-e-dtrack { stroke: var(--ck-border); }
+.ck-e-dprog { stroke: var(--ck-blue); }
+.ck-e-day.k-late .ck-e-dprog { stroke: #f59e0b; }
+.ck-e-day.k-absent .ck-e-dtrack { stroke: #dc2626; opacity: .55; }
+.ck-e-day.k-off .ck-e-dtrack { stroke: var(--ck-border-strong); stroke-dasharray: 2 5; }
+.ck-e-day.is-today { color: var(--ck-text); font-weight: 700; }
+.ck-e-day.is-today .ck-e-dtrack { stroke: var(--ck-blue-line); }
+.ck-e-total { margin-top: 12px; font-size: 15px; color: var(--ck-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ck-e-total b { color: var(--ck-text); font-weight: 700; }
+.ck-e-total .late { color: var(--ck-amber); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .ck-e-prog { transition: none; } }
+/* Short phones (about 640 px tall): everything still fits without scrolling. */
+@media (max-height: 700px) and (max-width: 767px) {
+  .ck-e { --e-ring: 200px; --e-btn: 166px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .ck-e-clock { font-size: 64px; line-height: 64px; letter-spacing: -2.4px; }
+  .ck-e .ck-big-label { font-size: 26px; }
+  .ck-e .ck-big-sub { font-size: 15px; }
+  .ck-e-note { margin-top: 10px; }
+  .ck-e-total { margin-top: 8px; }
+  .ck-e-day svg { width: 32px; height: 32px; }
+}
+@media (max-width: 359px) {
+  .ck-e { --e-ring: 190px; --e-btn: 158px; }
+  .ck-e-week { grid-template-columns: repeat(7, 36px); gap: 5px; }
+  .ck-e-clock { font-size: 60px; line-height: 60px; }
+}
+/* Tablets and computers: the same single column, larger. */
+@media (min-width: 768px) {
+  .ck-e { max-width: 560px; --e-ring: 300px; --e-btn: 252px; padding-top: 28px; padding-bottom: 28px; }
+  .ck-e-hello { font-size: 18px; }
+  .ck-e-clock { font-size: 104px; line-height: 104px; letter-spacing: -4px; }
+  .ck-e-date { font-size: 18px; }
+  .ck-e .ck-big-label { font-size: 36px; }
+  .ck-e .ck-big-sub { font-size: 18px; }
+  .ck-e-note { font-size: 18px; }
+  .ck-e-help { font-size: 16px; max-width: 460px; }
+  .ck-e-week { grid-template-columns: repeat(7, 52px); gap: 12px; }
+  .ck-e-day { font-size: 16px; }
+  .ck-e-day svg { width: 46px; height: 46px; }
+  .ck-e-total { font-size: 17px; }
+  .ck-e .ck-big svg { width: auto; height: auto; }
+}
+@media (min-width: 768px) and (max-height: 760px) {
+  .ck-e { --e-ring: 240px; --e-btn: 200px; }
+  .ck-e-clock { font-size: 80px; line-height: 80px; }
+}
+
+/* Essentials: room for the greeting beside three header icons; long labels fit the button */
+.ck-e-top .ck-logo, .ck-e-top > :first-child { width: 36px; height: 36px; border-radius: 12px; font-size: 13px; }
+.ck-e-icon { width: 44px; height: 44px; }
+.ck-e-top { gap: 2px; }
+.ck-e .ck-big-label { font-size: 27px; max-width: 92%; text-align: center; line-height: 1.1; }
+@media (max-height: 700px) and (max-width: 767px) { .ck-e .ck-big-label { font-size: 24px; } }
+@media (min-width: 768px) { .ck-e .ck-big-label { font-size: 36px; } .ck-e-top .ck-logo, .ck-e-top > :first-child { width: 48px; height: 48px; border-radius: 16px; } .ck-e-icon { width: 52px; height: 52px; } }
+
+/* =====================================================================
+   Popups on the check-in page look like popups: a raised card with a
+   shadow, floating off the screen edges on a phone, over a dimmed and
+   softly blurred page. Covers my calendar / reminders / forgotten
+   check-out (.ck-pop) and check-out confirm / help (.ck-sheet).
+   ===================================================================== */
+:root { --ck-pop-bg: #ffffff; --ck-pop-shadow: 0 24px 60px rgba(15, 23, 42, .28), 0 4px 14px rgba(15, 23, 42, .12); --ck-pop-line: rgba(15, 23, 42, .06); }
+[data-theme='dark'] { --ck-pop-bg: #111a2e; --ck-pop-shadow: 0 28px 70px rgba(0, 0, 0, .72), 0 6px 18px rgba(0, 0, 0, .5); --ck-pop-line: rgba(255, 255, 255, .09); }
+.ck-pop-back, .ck-overlay { background: var(--ck-overlay); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
+.ck-pop-back { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); box-sizing: border-box; }
+.ck-pop { background: var(--ck-pop-bg); border-radius: 28px; border: 1px solid var(--ck-pop-line); box-shadow: var(--ck-pop-shadow); padding-bottom: 0; max-height: calc(100dvh - 28px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow: hidden; }
+.ck-pop-close { background: var(--ck-pop-bg); }
+.ck-pop-grip { width: 36px; }
+.ck-overlay { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); box-sizing: border-box; }
+.ck-sheet { background: var(--ck-pop-bg); border-radius: 28px; border: 1px solid var(--ck-pop-line); box-shadow: var(--ck-pop-shadow); padding: 10px 20px 20px; max-height: calc(100dvh - 28px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); box-sizing: border-box; }
+@media (min-width: 700px) {
+  .ck-pop-back { padding: 24px; }
+  .ck-pop { border: 1px solid var(--ck-pop-line); }
+}
+@media (min-width: 768px) {
+  .ck-overlay { padding: 24px; }
+  .ck-sheet { padding: 28px; border: 1px solid var(--ck-pop-line); }
+  .ck-overlay-side { padding: 0; }
+  .ck-overlay-side .ck-sheet { border-radius: 0; box-shadow: var(--ck-pop-shadow); }
+}
+@media (max-height: 700px) { .ck-pop { max-height: calc(100dvh - 16px); } }
+
+/* =====================================================================
+   Popups, the iPhone way (both themes): an elevated sheet, a small
+   grabber, a filled round close button, filled controls with no
+   outlines, hairline separators. Dark uses iOS's elevated greys so the
+   sheet reads as a layer above the near-black page.
+   ===================================================================== */
+.ck-pop, .ck-sheet { --ck-fill: #eeeef0; --ck-fill-2: #e4e4e8; --ck-hair: rgba(60, 60, 67, .16); }
+[data-theme='dark'] .ck-pop, [data-theme='dark'] .ck-sheet {
+  --ck-pop-bg: #1c1c1e; --ck-bg: #1c1c1e; --ck-fill: #2c2c2e; --ck-fill-2: #3a3a3c; --ck-hair: rgba(84, 84, 88, .65);
+  --ck-surface: #2c2c2e; --ck-surface-2: #2c2c2e; --ck-border: rgba(84, 84, 88, .65); --ck-border-strong: rgba(120, 120, 128, .7);
+  --ck-text: #ffffff; --ck-text-2: rgba(235, 235, 245, .86); --ck-muted: rgba(235, 235, 245, .74); --ck-faint: rgba(235, 235, 245, .62);
+  --ck-blue-tint: rgba(37, 99, 235, .26); --ck-blue-tint-2: rgba(37, 99, 235, .42); --ck-blue-line: rgba(96, 165, 250, .55);
+  --ck-blue-text: #8ab4ff; --ck-blue-deep: #d6e4ff; --ck-amber: #ffd60a; --ck-amber-bg: rgba(255, 214, 10, .16);
+  --ck-pop-line: rgba(255, 255, 255, .08);
+  color: #ffffff;
+}
+[data-theme='dark'] .ck-pop-back, [data-theme='dark'] .ck-overlay { background: rgba(0, 0, 0, .5); }
+.ck-pop { border-radius: 30px; }
+.ck-pop-grip, .ck-sheet .ck-grabber { width: 36px; height: 5px; margin-left: -18px; border-radius: 999px; background: var(--ck-fill-2); }
+.ck-sheet .ck-grabber { margin: 0 auto 16px; }
+.ck-pop-close { width: 32px; height: 32px; border: 0; background: var(--ck-fill); color: var(--ck-muted); top: 16px; right: 14px; }
+.ck-pop-close:active { background: var(--ck-fill-2); }
+.ck-pop-close svg { width: 15px; height: 15px; stroke-width: 2.6; }
+.ck-pop-body { padding: 18px 14px 16px; }
+.ck-pop .ck-cal-head > b, .ck-pop .ck-x-head b { font-size: 19px; font-weight: 700; letter-spacing: -0.3px; }
+/* Segmented control: a filled track, the choice as a pill */
+.ck-pop .ck-cal-seg { border: 0; background: var(--ck-fill); padding: 2px; }
+.ck-pop .ck-cal-seg button { height: 30px; padding: 0 14px; color: var(--ck-text); font-weight: 500; }
+.ck-pop .ck-cal-seg button[aria-pressed='true'] { background: var(--ck-blue); color: #fff; font-weight: 600; }
+.ck-pop .ck-cal-nav button { border: 0; background: var(--ck-fill); width: 34px; height: 34px; color: var(--ck-blue-text); }
+.ck-pop .ck-cal-nav button:active { background: var(--ck-fill-2); }
+.ck-pop .ck-cal-nav b { font-size: 17px; font-weight: 600; }
+.ck-pop .ck-cal-chips span { background: var(--ck-fill); color: var(--ck-text-2); }
+.ck-pop .ck-cal-chips span.on { background: var(--ck-blue-tint); color: var(--ck-blue-text); }
+.ck-pop .ck-cal-chips span.late { background: var(--ck-amber-bg); color: var(--ck-amber); }
+.ck-pop .ck-cal-wd { color: var(--ck-faint); font-weight: 600; }
+.ck-pop .ck-cal-cell.k-planned, .ck-pop .ck-cal-cell.k-today { background: var(--ck-blue-tint); color: var(--ck-blue-deep); }
+.ck-pop .ck-cal-cell.k-closed { background: repeating-linear-gradient(135deg, transparent 0 5px, var(--ck-fill) 5px 10px); }
+.ck-pop .ck-cal-cell.is-picked { border-color: var(--ck-text); }
+.ck-pop .ck-cal-day { background: var(--ck-fill); border-radius: 16px; }
+.ck-pop .ck-cal-pill { background: var(--ck-fill-2); color: var(--ck-text); }
+.ck-pop .ck-cal-legend { color: var(--ck-faint); padding-top: 8px; border-top: 1px solid var(--ck-hair); }
+.ck-pop .ck-hours li { border-bottom: 1px solid var(--ck-hair); border-radius: 0; padding: 0 4px; min-height: 40px; }
+.ck-pop .ck-hours li:last-child { border-bottom: 0; }
+.ck-pop .ck-hours li.today { background: transparent; color: var(--ck-blue-text); }
+.ck-pop .ck-hours li.today b { color: var(--ck-blue-text); }
+/* Reminders / forgotten check-out inside a sheet */
+.ck-pop .ck-x-icon { background: var(--ck-fill); color: var(--ck-blue-text); }
+.ck-pop .ck-x-warn .ck-x-icon { background: var(--ck-amber-bg); color: var(--ck-amber); }
+.ck-pop .ck-x-on .ck-x-icon { background: var(--ck-blue); color: #fff; }
+.ck-pop .ck-x p { color: var(--ck-text-2); font-size: 15px; }
+.ck-pop .ck-x small { color: var(--ck-faint); }
+.ck-pop .ck-x-btn-quiet { border: 0; background: var(--ck-fill); color: var(--ck-text); }
+.ck-pop .ck-time { border: 0; background: var(--ck-fill); color: var(--ck-text); }
+[data-theme='dark'] .ck-pop .ck-time { color-scheme: dark; }
+/* Check-out confirm and help sheets */
+.ck-sheet { color: var(--ck-text); }
+.ck-sheet h2 { letter-spacing: -0.4px; }
