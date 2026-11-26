@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { Gavel, Award, ShieldCheck, AlertTriangle, MapPin, Info } from 'lucide-react';
 import { disciplineApi, type TermBalance } from '../api/discipline';
@@ -75,7 +75,7 @@ export const MyConduct: React.FC = () => {
       </div>
 
       {loading ? (
-        <div style={{ padding: '80px 0' }}><LoadingSpinner /></div>
+        <PageSkeleton variant="dashboard" head={false} />
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : (

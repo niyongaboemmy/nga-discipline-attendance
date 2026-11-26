@@ -2,7 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { usePermissions } from '../hooks/usePermissions';
 import {
@@ -362,7 +362,7 @@ export const MarkAttendance: React.FC = () => {
   };
 
   if (loadingClasses) {
-    return <DashboardLayout><div style={{ padding: '80px 0' }}><LoadingSpinner /></div></DashboardLayout>;
+    return <DashboardLayout><PageSkeleton variant="list" /></DashboardLayout>;
   }
 
   // Every student starts Present, so "n of n marked" was always complete and
@@ -779,7 +779,7 @@ export const MarkAttendance: React.FC = () => {
                   onClick={() => handleSave(false)}
                   data-track="tendo.register.submit"
                 >
-                  <Save size={16} /> {saving ? 'Saving…' : isEditing ? `Update register${changedIds.size ? ` (${changedIds.size})` : ''}` : 'Save & done'}
+                  {saving ? <span className="btn-spin" aria-hidden /> : <Save size={16} />} {saving ? 'Saving…' : isEditing ? `Update register${changedIds.size ? ` (${changedIds.size})` : ''}` : 'Save & done'}
                 </button>
               </div>
             </div>

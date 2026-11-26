@@ -453,7 +453,7 @@ export const RegisterDrawer: React.FC<{
                     </button>
                     {canMark && (
                       <button className="btn btn-primary" disabled={saveDisabled} onClick={attemptSave} data-track="tendo.register.submit">
-                        <Save size={15} /> {saving ? 'Saving…' : isEditing ? `Update${dirty ? ` (${changedIds.size})` : ''}` : 'Save register'}
+                        {saving ? <span className="btn-spin" aria-hidden /> : <Save size={15} />} {saving ? 'Saving…' : isEditing ? `Update${dirty ? ` (${changedIds.size})` : ''}` : 'Save register'}
                       </button>
                     )}
                   </div>

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton, SkeletonList } from '../components/common/Skeleton';
 import { HeroBanner } from '../components/common/HeroBanner';
 import { attendanceReportApi, type OwnSubjectSummary } from '../api/attendanceReport';
 import { rateColor, COMMENT_META, type AttendanceCommentTier } from '../utils/attendanceComment';
@@ -198,7 +198,7 @@ const AlertsPanel: React.FC = () => {
       </div>
       <div className="card-body" style={{ padding: 0 }}>
         {loading ? (
-          <div style={{ padding: 24 }}><LoadingSpinner /></div>
+          <SkeletonList rows={3} />
         ) : shown.length === 0 ? (
           <div className="empty-state"><CheckCircle2 size={22} /><span className="text-sm">You're all caught up</span></div>
         ) : (
@@ -577,7 +577,7 @@ export const Dashboard: React.FC = () => {
       {user && user.role !== 'student' && <ClockHomeCard />}
 
       {loading ? (
-        <div style={{ padding: '80px 0' }}><LoadingSpinner /></div>
+        <PageSkeleton variant="dashboard" head={false} />
       ) : error ? (
         <div className="card"><div className="empty-state"><AlertCircle size={28} /><span className="text-sm">{error}</span>
           <button className="btn btn-outline btn-sm mt-2" onClick={load}>Retry</button></div></div>

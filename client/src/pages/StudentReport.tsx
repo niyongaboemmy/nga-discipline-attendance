@@ -2,7 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
 import { Printer, ArrowLeft, ExternalLink } from 'lucide-react';
@@ -62,7 +62,7 @@ export const StudentReport: React.FC = () => {
       </div>
 
       {loading ? (
-        <div style={{ padding: '64px 0' }}><LoadingSpinner /></div>
+        <PageSkeleton variant="detail" head={false} />
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : (

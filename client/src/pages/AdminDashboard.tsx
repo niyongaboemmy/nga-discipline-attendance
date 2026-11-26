@@ -2,7 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { Users, GraduationCap, Briefcase, ShieldCheck, HelpCircle, Search, Check, AlertCircle, Inbox, KeyRound, RefreshCw, X, ArrowUpDown, ChevronRight } from 'lucide-react';
 import { useAuth, type Role } from '../context/AuthContext';
 import { usePermissions } from '../hooks/usePermissions';
@@ -228,7 +228,7 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {loading ? (
-        <div style={{ padding: '80px 0' }}><LoadingSpinner /></div>
+        <PageSkeleton variant="dashboard" head={false} />
       ) : error && !users.length ? (
         <div className="card"><div className="empty-state"><AlertCircle size={28} /><span className="text-sm">{error}</span>
           <button className="btn btn-outline btn-sm mt-2" onClick={load}>Retry</button></div></div>

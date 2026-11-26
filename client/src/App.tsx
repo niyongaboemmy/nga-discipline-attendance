@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { AcademicPeriodProvider } from './context/AcademicPeriodContext';
 import { ToastProvider } from './context/ToastContext';
+import { NetActivity } from './net/NetActivity';
 import { ProtectedRoute } from './components/common/ProtectedRoute';
 import { ActivityRouterTracker } from './vendor/nga-activity/react';
 
@@ -37,6 +38,7 @@ import { SessionDetail } from './pages/SessionDetail';
 import { RfidCards } from './pages/RfidCards';
 import { RfidCardDetail } from './pages/RfidCardDetail';
 import { StaffClockDashboard } from './pages/staffClock/StaffClockDashboard';
+import { StaffClockPeople } from './pages/staffClock/StaffClockPeople';
 import { StaffClockZone } from './pages/staffClock/StaffClockZone';
 import { StaffClockDevices } from './pages/staffClock/StaffClockDevices';
 import { StaffClockScan } from './pages/staffClock/StaffClockScan';
@@ -51,6 +53,7 @@ export const App: React.FC = () => {
       <BrowserRouter>
         {/* Usage analytics: inside the router so public AND protected routes count. */}
         <ActivityRouterTracker />
+        <NetActivity />
         <Routes>
           {/* Public Portal Routes */}
           <Route path="/" element={<Login />} />
@@ -255,6 +258,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher']}>
                 <StaffClockDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock/people"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockPeople />
               </ProtectedRoute>
             }
           />

@@ -106,7 +106,7 @@ export const ScannersTab: React.FC<{ canManage: boolean; version: number; onChan
         <Modal open title={`Scanner ${editing.code}`} onClose={() => setEditing(null)} maxWidth={440}
           footer={<>
             <button className="btn btn-outline" onClick={() => setEditing(null)} disabled={busy}>Cancel</button>
-            <button className="btn btn-primary" onClick={save} disabled={busy || !form.name.trim()}>{busy ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-primary" onClick={save} disabled={busy || !form.name.trim()}>{busy && <span className="btn-spin" aria-hidden />}{busy ? 'Saving…' : 'Save'}</button>
           </>}>
           <div className="flex flex-col gap-3">
             <div className="field">

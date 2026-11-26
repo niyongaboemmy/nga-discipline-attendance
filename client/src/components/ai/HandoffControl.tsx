@@ -151,7 +151,7 @@ export const HandoffControl: React.FC<Props> = ({ requestPrompt, importAnswer, p
           />
           <div className="flex gap-2 mt-2">
             <button type="button" className="btn btn-secondary btn-sm" disabled={busy || !answer.trim()} onClick={submit}>
-              {busy ? 'Checking…' : 'Use this answer'}
+              {busy && <span className="btn-spin" aria-hidden />}{busy ? 'Checking…' : 'Use this answer'}
             </button>
             <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { setHandoff(null); setAnswer(''); }}>
               Cancel

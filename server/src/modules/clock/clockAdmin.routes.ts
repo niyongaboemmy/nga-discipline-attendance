@@ -5,10 +5,10 @@ import { getDb } from '../../database.js';
 import { authMiddleware, type AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
 import { recordAudit } from '../../shared/audit.js';
-import { addDays, safeClockLabel, schoolDateString, schoolMinutesOfDay, timeToMinutes } from '../../shared/schoolTime.js';
-import { setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
+import { addDays, dayOfWeekFor, safeClockLabel, schoolDateString, schoolMinutesOfDay, timeToMinutes } from '../../shared/schoolTime.js';
+import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
 import { currentTenant } from '../../tenancy/index.js';
-import { loadStaffRoster } from '../../routes/mis.js';
+import { fullName, loadStaffRoster } from '../../routes/mis.js';
 import { ClockError, clockNow, clockRules, issueCards, loadZones, needsReview, scanCard } from './clock.service.js';
 import { validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
@@ -419,6 +419,111 @@ router.get('/overview', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async 
         phones: { registered: activeByUser.size, staff: people.size, pending, unregistered },
         missing: { checkoutOpen: outOpen, noCheckoutToday, recentNoCheckout },
         health,
+      },
+    });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// One person's history: every day over a period, for the year grid + calendar.
+// ---------------------------------------------------------------------------
+
+type DayKind = 'on_time' | 'late' | 'absent' | 'invalid' | 'off' | 'today' | 'future' | 'untracked';
+
+router.get('/people/:id/history', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
+  try {
+    const db = getDb();
+    const id = String(req.params.id || '').slice(0, 64);
+    const today = schoolDateString(new Date(clockNow()));
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')) && String(req.query.to) <= today ? String(req.query.to) : today;
+    const days = Math.min(371, Math.max(7, Number(req.query.days) || 365));
+    const from = addDays(to, -(days - 1));
+    const rules = clockRules();
+    const lateAfter = staffLateCutoffMinutes();
+
+    const records = await db.all<any[]>(
+      `SELECT date, clock_in, clock_out, status, out_status, review_state, source, flags, staff_name FROM staff_attendance WHERE staff_id = ? AND date >= ? AND date <= ? ORDER BY date`,
+      id, from, to
+    );
+    // Before the school's first staff check-in there is nothing to count as absent.
+    const first = await db.get<{ d: string | null }>(`SELECT MIN(date) AS d FROM staff_attendance WHERE source IN ('device','card')`);
+    const trackingFrom = first?.d && first.d <= today ? first.d : today;
+    let offDays = new Set<string>();
+    try {
+      offDays = new Set((await db.all<{ session_date: string }[]>(`SELECT session_date FROM rfid_days_off WHERE session_date >= ? AND session_date <= ?`, from, to)).map((r) => r.session_date));
+    } catch { /* no days-off table */ }
+    const weekdays = schoolDays();
+    const byDate = new Map(records.map((r) => [String(r.date), r]));
+
+    const user = await db.get<{ name: string; role: string | null }>(`SELECT name, role FROM users WHERE id = ?`, id);
+    const cachedRoster = rosterCache.get(currentTenant('history').tid)?.roster.find((p) => p.id === id);
+    const rawName = cachedRoster?.name || user?.name || records[records.length - 1]?.staff_name || 'Staff member';
+    const name = fullName(...String(rawName).split(/\s+/)) || 'Staff member';
+
+    const out: Array<{ date: string; kind: DayKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean }> = [];
+    const sum = { schoolDays: 0, attended: 0, onTime: 0, late: 0, absent: 0, noOut: 0, early: 0 };
+    const inMinutes: number[] = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const r = byDate.get(d);
+      const schoolDay = weekdays.has(dayOfWeekFor(d)) && !offDays.has(d);
+      let kind: DayKind;
+      if (r && r.review_state === 'invalid') kind = 'invalid';
+      else if (r && r.clock_in) kind = r.status === 'late' ? 'late' : 'on_time';
+      else if (!schoolDay) kind = 'off';
+      else if (d < trackingFrom) kind = 'untracked';
+      else if (d === today) kind = 'today';
+      else kind = 'absent';
+      const inLabel = r ? safeClockLabel(r.clock_in) : null;
+      const outLabel = r ? safeClockLabel(r.clock_out) : null;
+      const noOut = !!r?.clock_in && !r?.clock_out && d < today;
+      const early = r?.out_status === 'early';
+      const minutes = r?.clock_in && r?.clock_out ? Math.max(0, Math.round((Date.parse(r.clock_out) - Date.parse(r.clock_in)) / 60000)) : null;
+      out.push({ date: d, kind, in: inLabel, out: outLabel, early, noOut, minutes, card: r?.source === 'card' });
+      if (schoolDay && d >= trackingFrom && d < today) sum.schoolDays += 1;
+      else if (schoolDay && d === today && r?.clock_in) sum.schoolDays += 1;
+      if (kind === 'on_time' || kind === 'late') {
+        sum.attended += 1;
+        if (kind === 'on_time') sum.onTime += 1; else sum.late += 1;
+        const m = timeToMinutes(inLabel);
+        if (inLabel) inMinutes.push(m);
+      }
+      if (kind === 'absent') sum.absent += 1;
+      if (noOut) sum.noOut += 1;
+      if (early) sum.early += 1;
+    }
+    // Streaks: consecutive school days on time (today counts once checked in).
+    let streak = 0;
+    let best = 0;
+    let run = 0;
+    for (const day of out) {
+      if (day.kind === 'off' || day.kind === 'untracked' || day.kind === 'future' || (day.kind === 'today')) continue;
+      run = day.kind === 'on_time' ? run + 1 : 0;
+      best = Math.max(best, run);
+    }
+    for (let i = out.length - 1; i >= 0; i--) {
+      const k = out[i].kind;
+      if (k === 'off' || k === 'today' || k === 'untracked') continue;
+      if (k === 'on_time') streak += 1; else break;
+    }
+    const avg = inMinutes.length ? Math.round(inMinutes.reduce((a, b) => a + b, 0) / inMinutes.length) : null;
+    const hhmm = (m: number | null) => (m == null ? null : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+    return res.json({
+      success: true,
+      data: {
+        person: { id, name, role: cachedRoster?.role ?? user?.role ?? null },
+        from, to, today, trackingFrom,
+        rules: { lateAfter: hhmm(lateAfter), earlyLeaveBefore: rules.earlyLeaveBefore },
+        days: out,
+        summary: {
+          ...sum,
+          rate: sum.schoolDays ? Math.round((sum.attended / sum.schoolDays) * 100) : null,
+          punctuality: sum.attended ? Math.round((sum.onTime / sum.attended) * 100) : null,
+          avgIn: hhmm(avg),
+          streak,
+          bestStreak: best,
+        },
       },
     });
   } catch (err) {

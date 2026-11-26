@@ -1924,7 +1924,7 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 
 /* A user with no role can't do anything yet — make that scannable rather
    than something you have to read every badge to find. */
-.table tr.is-unassigned td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+.table tr.is-unassigned td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
 
 @media (max-width: 640px) {
   .admin-users-head .rp-search { width: 100%; min-width: 0 !important; }
@@ -2102,14 +2102,9 @@ input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 .excuse-item {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
-  /* A left edge keyed to status makes the outcome readable while scanning,
-     without relying on colour alone — the badge carries icon + text too. */
-  border-left: 3px solid transparent;
+  /* The status badge (icon + text) carries the outcome; no coloured side strip. */
 }
 .excuse-item:last-child { border-bottom: none; }
-.excuse-item.is-pending  { border-left-color: var(--warning); }
-.excuse-item.is-approved { border-left-color: var(--success); }
-.excuse-item.is-rejected { border-left-color: var(--danger); }
 .excuse-item:hover { background: var(--bg-hover); }
 
 .excuse-item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }

@@ -343,7 +343,7 @@ export const ExcuseNew: React.FC = () => {
               <div className="flex items-center justify-end gap-2 flex-wrap">
                 <Link to={appealId ? `/excuses/${appealId}` : '/excuses'} className="btn btn-ghost">Cancel</Link>
                 <button type="submit" className="btn btn-primary" disabled={submitting || !!duplicate} data-track="tendo.excuse.submit">
-                  <Send size={15} /> {submitting ? 'Submitting…' : appealId ? 'Submit appeal' : 'Submit request'}
+                  {submitting ? <span className="btn-spin" aria-hidden /> : <Send size={15} />} {submitting ? 'Submitting…' : appealId ? 'Submit appeal' : 'Submit request'}
                 </button>
               </div>
             </>

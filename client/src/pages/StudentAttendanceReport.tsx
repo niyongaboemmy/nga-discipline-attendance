@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { PageSkeleton } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { useAuth } from '../context/AuthContext';
 import { useAcademicPeriod } from '../context/AcademicPeriodContext';
@@ -238,7 +238,7 @@ export const StudentAttendanceReport: React.FC = () => {
 
       {!selected ? (
         loadingOverview ? (
-          <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+          <PageSkeleton variant="dashboard" head={false} />
         ) : error ? (
           <ErrorState message={error} onRetry={loadOverview} />
         ) : overview.length === 0 ? (
@@ -350,7 +350,7 @@ export const StudentAttendanceReport: React.FC = () => {
           </>
         )
       ) : loadingReport ? (
-        <div style={{ padding: '48px 0' }}><LoadingSpinner /></div>
+        <PageSkeleton variant="detail" head={false} />
       ) : error ? (
         <ErrorState message={error} onRetry={loadReport} />
       ) : !report || !me ? (

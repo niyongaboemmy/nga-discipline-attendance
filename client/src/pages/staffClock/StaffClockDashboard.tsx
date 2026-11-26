@@ -1,19 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Check, Clock, AlertTriangle, ChevronLeft, ChevronRight, Search, Download, ArrowUpRight, LogOut, UserX, CalendarClock } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Check, Clock, ChevronLeft, ChevronRight, Download, ArrowUpRight, LogOut, UserX, CalendarClock } from 'lucide-react';
 import { DashboardLayout } from '../../components/Layout/DashboardLayout';
 import { ErrorState } from '../../components/common/ErrorState';
 import { useToast } from '../../context/ToastContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { ApiError } from '../../api/client';
-import { staffClockApi, initialsOf, type Overview, type OverviewRow } from '../../api/staffClock';
+import { staffClockApi, type Overview } from '../../api/staffClock';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
 import { StaffClockSetup } from './StaffClockSetup';
 import { AttentionStrip, ListSheet, Ring, type SheetPerson } from './StaffClockAttention';
+import { StaffHistoryModal } from './StaffHistoryModal';
 
 /** Staff attendance dashboard (prototype "Admin: staff attendance dashboard"). */
-
-type Tab = 'all' | 'late' | 'notIn' | 'review' | 'phones';
 
 const addDays = (date: string, n: number) => {
   const d = new Date(`${date}T12:00:00Z`);
@@ -26,13 +25,6 @@ const dayLabel = (o: Overview | null, date: string | null) => {
   return new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
 };
 
-const STATUS: Record<OverviewRow['status'], [string, string]> = {
-  present: ['On time', 'sc-tone-green'],
-  late: ['Late', 'sc-tone-amber'],
-  not_in: ['Not in yet', 'sc-tone-muted'],
-  invalid: ['Marked invalid', 'sc-tone-red'],
-};
-
 export const StaffClockDashboard: React.FC = () => {
   const toast = useToast();
   const { can } = usePermissions();
@@ -40,8 +32,8 @@ export const StaffClockDashboard: React.FC = () => {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>('all');
-  const [search, setSearch] = useState('');
+  const navigate = useNavigate();
+  const [person, setPerson] = useState<{ id: string; name: string } | null>(null);
   const [hover, setHover] = useState(-1);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<null | 'notIn' | 'noOut' | 'recent'>(null);
@@ -68,17 +60,6 @@ export const StaffClockDashboard: React.FC = () => {
     const id = window.setInterval(() => void staffClockApi.overview().then(setData).catch(() => undefined), 60_000);
     return () => window.clearInterval(id);
   }, [data?.isToday]);
-
-  const rows = useMemo(() => {
-    if (!data) return [];
-    const q = search.trim().toLowerCase();
-    return data.rows.filter((r) => {
-      if (q && !r.name.toLowerCase().includes(q)) return false;
-      if (tab === 'late') return r.status === 'late';
-      if (tab === 'notIn') return r.status === 'not_in';
-      return true;
-    });
-  }, [data, tab, search]);
 
   const act = async (key: string, fn: () => Promise<unknown>, ok: string) => {
     setBusyId(key);
@@ -112,20 +93,14 @@ export const StaffClockDashboard: React.FC = () => {
   };
 
   const k = data?.kpis;
-  const counts: Record<Tab, number> = {
-    all: data?.rows.length ?? 0,
-    late: data?.rows.filter((r) => r.status === 'late').length ?? 0,
-    notIn: data?.rows.filter((r) => r.status === 'not_in').length ?? 0,
-    review: data?.review.length ?? 0,
-    phones: data?.phones.pending.length ?? 0,
-  };
+  const counts = { phones: data?.phones.pending.length ?? 0 };
   const missingOut = data?.missing?.noCheckoutToday ?? [];
   const recentOut = data?.missing?.recentNoCheckout ?? [];
   const dayName = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' });
   const sheetPeople: SheetPerson[] =
-    sheet === 'notIn' ? (data?.rows ?? []).filter((r) => r.status === 'not_in').map((r) => ({ id: r.userId, name: r.name, meta: `${r.role}${r.device ? '' : ' · no phone registered'}` }))
-    : sheet === 'noOut' ? missingOut.map((m) => ({ id: m.userId, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, tag: m.autoClosed ? 'Closed' : undefined }))
-    : sheet === 'recent' ? recentOut.map((m) => ({ id: `${m.userId}-${m.date}`, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, group: dayName(m.date) }))
+    sheet === 'notIn' ? (data?.rows ?? []).filter((r) => r.status === 'not_in').map((r) => ({ id: r.userId, personId: r.userId, name: r.name, meta: `${r.role}${r.device ? '' : ' · no phone registered'}` }))
+    : sheet === 'noOut' ? missingOut.map((m) => ({ id: m.userId, personId: m.userId, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, tag: m.autoClosed ? 'Closed' : undefined }))
+    : sheet === 'recent' ? recentOut.map((m) => ({ id: `${m.userId}-${m.date}`, personId: m.userId, name: m.name, meta: `In at ${m.checkIn ?? '—'}`, group: dayName(m.date) }))
     : [];
   const maxBar = Math.max(4, ...(data?.arrivals ?? []).map((b) => b.onTime + b.late));
   const cutIdx = data ? data.arrivals.findIndex((b) => b.from >= data.rules.lateAfter) : -1;
@@ -156,7 +131,7 @@ export const StaffClockDashboard: React.FC = () => {
           <AttentionStrip
             data={data}
             canSetup={can('STAFF_ATTENDANCE_ZONES_MANAGE')}
-            onReview={() => { setTab('review'); document.getElementById('sc-staff-list')?.scrollIntoView({ behavior: 'smooth' }); }}
+            onReview={() => navigate('/staff/clock/people?tab=review')}
             onPhones={() => document.getElementById('sc-phones')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
           />
         )}
@@ -268,94 +243,6 @@ export const StaffClockDashboard: React.FC = () => {
           </div>
         )}
 
-        {data && (
-          <section className="sc-card" id="sc-staff-list">
-            <div className="sc-filters">
-              <div role="tablist" aria-label="Filter staff" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {([['all', 'Everyone'], ['late', 'Late'], ['notIn', 'Not in yet'], ['review', 'Needs review']] as Array<[Tab, string]>).map(([key, label]) => (
-                  <button key={key} role="tab" aria-selected={tab === key} className="sc-chip" onClick={() => setTab(key)}>
-                    {label}<span className="sc-chip-count">{counts[key]}</span>
-                  </button>
-                ))}
-              </div>
-              <div style={{ flex: 1 }} />
-              {tab !== 'review' && (
-                <label className="sc-search">
-                  <Search size={16} />
-                  <span className="sr-only">Search staff</span>
-                  <input placeholder="Search staff" value={search} onChange={(e) => setSearch(e.target.value)} />
-                </label>
-              )}
-            </div>
-
-            {tab === 'review' ? (
-              data.review.length === 0 ? (
-                <div className="sc-empty">Nothing to review. Every check-in looks normal.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 14 }}>
-                  {data.review.map((r) => (
-                    <div key={r.recordId} className="sc-review">
-                      <span className="sc-avatar" style={{ width: 40, height: 40 }}>{initialsOf(r.name)}</span>
-                      <div className="sc-review-text">
-                        <b>{r.name} · checked in {r.at}</b>
-                        {r.flagText.map((f) => <div key={f} className="sc-flag"><AlertTriangle size={14} />{f}</div>)}
-                        <div className="sc-muted" style={{ fontSize: 13, marginTop: 3 }}>
-                          {r.distance != null ? `${Math.round(r.distance)} m from the zone centre` : ''}{r.accuracy != null ? ` · precision ± ${Math.round(r.accuracy)} m` : ''}
-                        </div>
-                      </div>
-                      {can('STAFF_DEVICES_MANAGE') && (
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button className="sc-btn sc-btn-primary sc-btn-sm" disabled={busyId === `r${r.recordId}`} onClick={() => void act(`r${r.recordId}`, () => staffClockApi.review(r.recordId, 'accepted'), `Accepted: ${r.name}`)}>Accept</button>
-                          <button className="sc-btn sc-btn-sm" disabled={busyId === `r${r.recordId}`} onClick={() => {
-                            const note = window.prompt(`Why is ${r.name}'s check-in invalid?`);
-                            if (note && note.trim()) void act(`r${r.recordId}`, () => staffClockApi.review(r.recordId, 'invalid', note.trim()), 'Marked invalid (reason saved to the audit log)');
-                          }}>Mark invalid</button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )
-            ) : rows.length === 0 ? (
-              <div className="sc-empty">{search ? 'No staff match this search.' : tab === 'late' ? 'Nobody is late.' : tab === 'notIn' ? 'Everyone is in.' : 'No staff yet.'}</div>
-            ) : (
-              <>
-                <div className="sc-table-wrap sc-responsive">
-                  <table className="sc-table">
-                    <thead><tr><th>Staff</th><th>In</th><th>Status</th><th>Out</th><th>Distance</th><th>How</th></tr></thead>
-                    <tbody>
-                      {rows.map((r) => (
-                        <tr key={r.userId}>
-                          <td><span className="sc-who"><span className="sc-avatar">{initialsOf(r.name)}</span><span><b className="sc-clip" title={r.name}>{r.name}</b><small className="sc-clip">{r.role}</small></span></span></td>
-                          <td className="sc-num" style={{ fontWeight: 600 }}>{r.checkIn ?? '—'}</td>
-                          <td><span className={`sc-pill ${STATUS[r.status][1]}`}><i />{STATUS[r.status][0]}</span>{r.needsReview && <span className="sc-pill sc-tone-amber" style={{ marginLeft: 6 }}>Review</span>}</td>
-                          <td className="sc-num sc-muted">{r.checkOut ?? (r.outStatus === 'auto_closed' ? 'Not checked out' : '—')}{r.outStatus === 'early' ? ' · early' : ''}</td>
-                          <td className="sc-num">{r.distance != null ? `${Math.round(r.distance)} m` : '—'}</td>
-                          <td className="sc-muted">{r.source === 'card' ? 'Staff card' : r.device ?? (r.source ? 'Phone' : 'Not registered')}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="sc-list">
-                  {rows.map((r) => (
-                    <div key={r.userId} className="sc-item">
-                      <span className="sc-avatar" style={{ width: 38, height: 38 }}>{initialsOf(r.name)}</span>
-                      <span className="sc-item-main">
-                        <b className="sc-clip" title={r.name}>{r.name}</b>
-                        <small className="sc-clip sc-muted">{r.role}{r.distance != null ? ` · ${Math.round(r.distance)} m` : ''}</small>
-                      </span>
-                      <span className="sc-item-side">
-                        <b className="sc-num">{r.checkIn ?? '—'}</b>
-                        <span className={`sc-pill ${STATUS[r.status][1]}`} style={{ height: 24, fontSize: 12 }}><i />{STATUS[r.status][0]}</span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </section>
-        )}
         {loading && data && <div style={{ position: 'fixed', right: 24, bottom: 24 }} aria-label="Refreshing"><Spinner /></div>}
         {sheet && data && (
           <ListSheet
@@ -364,8 +251,10 @@ export const StaffClockDashboard: React.FC = () => {
             people={sheetPeople}
             empty={sheet === 'notIn' ? 'Everyone is in' : sheet === 'noOut' ? (data.missing?.checkoutOpen === false ? `Check-out opens at ${data.rules.earlyLeaveBefore}` : 'Everyone checked out') : 'No missed check-outs'}
             onClose={() => setSheet(null)}
+            onPick={(p) => p.personId && setPerson({ id: p.personId, name: p.name })}
           />
         )}
+        {person && <StaffHistoryModal personId={person.id} name={person.name} onClose={() => setPerson(null)} />}
       </div>
     </DashboardLayout>
   );

@@ -73,6 +73,32 @@ const OVERVIEW = {
   },
   health: { google: true, zones: 1, enabled: true, tested: false, shared: false, unregistered: 3, staff: 10 },
 };
+/** A year of days for one person: mostly on time, some late, a few absences, weekends off. */
+function history(id) {
+  const days = [];
+  const end = new Date('2026-11-24T12:00:00Z');
+  const sum = { schoolDays: 0, attended: 0, onTime: 0, late: 0, absent: 0, noOut: 0, early: 0 };
+  for (let i = 364; i >= 0; i--) {
+    const d = new Date(end); d.setUTCDate(end.getUTCDate() - i);
+    const date = d.toISOString().slice(0, 10);
+    const wd = d.getUTCDay();
+    const seed = (i * 7 + Number(id)) % 23;
+    let kind = wd === 0 || wd === 6 ? 'off' : i > 300 ? 'untracked' : i === 0 ? 'today' : seed === 3 ? 'absent' : seed % 6 === 1 ? 'late' : 'on_time';
+    const att = kind === 'on_time' || kind === 'late';
+    const din = att ? (kind === 'late' ? '08:4' + (seed % 10) : '07:' + String(10 + seed).padStart(2, '0')) : null;
+    const noOut = att && seed === 11;
+    const early = att && seed === 13;
+    days.push({ date, kind, in: din, out: att && !noOut ? (early ? '14:10' : '16:3' + (seed % 10)) : null, early, noOut, minutes: att && !noOut ? 520 : null, card: false });
+    if (kind !== 'off' && kind !== 'untracked' && kind !== 'today') sum.schoolDays++;
+    if (att) { sum.attended++; kind === 'late' ? sum.late++ : sum.onTime++; }
+    if (kind === 'absent') sum.absent++;
+    if (noOut) sum.noOut++;
+    if (early) sum.early++;
+  }
+  return { person: { id, name: people.find((p) => p[0] === id)?.[1] ?? 'Staff', role: 'Teacher' }, from: days[0].date, to: '2026-11-24', today: '2026-11-24', trackingFrom: days[64].date,
+    rules: { lateAfter: '08:30', earlyLeaveBefore: '16:00' }, days,
+    summary: { ...sum, rate: Math.round((sum.attended / sum.schoolDays) * 100), punctuality: Math.round((sum.onTime / sum.attended) * 100), avgIn: '07:24', streak: 6, bestStreak: 19 } };
+}
 const DEVICES = [
   OVERVIEW.phones.pending[0],
   ...people.filter((p) => p[7]).map(([id, name, , , , , , label], i) => ({ id: i + 1, user_id: id, user_name: name, google_email: `${name.split(' ')[0].toLowerCase()}@gmail.com`, form_factor: i === 2 ? 'tablet' : 'phone', label, status: 'active', registered_at: '2026-11-03T06:00:00Z', approved_at: null, last_used_at: '2026-11-24T05:42:00Z', revoked_at: null, revoke_reason: null })),
@@ -115,6 +141,7 @@ async function context(browser, { width, height, theme, mobile = false }) {
     if (p === '/api/sso/verify-mis') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
     if (p === '/api/roles-permissions/me') return ok({ permissionKeys: PERMS });
     if (p === '/api/staff/clock/overview') return ok(OVERVIEW);
+    { const m = p.match(/^\/api\/staff\/clock\/people\/([^/]+)\/history$/); if (m) return ok(history(m[1])); }
     if (p === '/api/staff/clock/config') return ok(CONFIG);
     if (p === '/api/staff/clock/devices') return ok(DEVICES);
     if (p === '/api/staff/clock/cards') return ok([{ id: 1, user_id: '108', user_name: 'Solange Iradukunda', issued_at: '2026-11-20T08:00:00Z', last_used_at: '2026-11-24T05:05:00Z' }]);
@@ -162,12 +189,12 @@ async function run(browser, vp) {
   await expectText(page, 'Staff attendance', `${tag} dashboard`);
   await expectText(page, 'Arrivals', `${tag} arrivals`);
   await expectText(page, 'New phone waiting', `${tag} pending phone`);
-  // Guided setup: zone drawn and clock on, so the next step is the times.
-  await expectText(page, 'Set up staff check-in', `${tag} setup card`);
-  await expectText(page, 'Next: check the times', `${tag} setup next step`);
+  // Check-in is on: the setup checklist stays on its own tab, not the dashboard; the staff list moved to Staff.
+  await page.waitForTimeout(300);
+  if (await page.getByText('Set up staff check-in').count()) fail(`${tag}: setup card still on the dashboard with check-in on`);
+  if (await page.locator('#sc-staff-list').count()) fail(`${tag}: staff list still on the dashboard`);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: dashboard scrolls sideways`);
   await shot('01-dashboard');
-  await shot('01b-setup');
   // Attention strip: only what needs fixing, each a tap to the fix.
   await page.locator('[data-attn="tested"]').waitFor();
   await page.locator('[data-attn="phones"]').waitFor();
@@ -183,10 +210,37 @@ async function run(browser, vp) {
   await expectText(page, 'Eric Habyarimana', `${tag} missed check-outs`);
   await expectText(page, 'Saturday 21 Nov', `${tag} missed grouped by day`);
   await shot('01c-missed-sheet');
+  // A person in a list opens their history.
+  await page.getByRole('button', { name: /Eric Habyarimana/ }).first().click();
+  await page.getByTestId('staff-history').waitFor();
   await page.keyboard.press('Escape');
-  await page.getByRole('tab', { name: /Needs review/ }).click();
+  await page.keyboard.press('Escape');
+  // "Unusual check-ins" goes to the Staff tab's review list.
+  await page.locator('[data-attn="review"]').click();
+  await page.waitForURL(/\/staff\/clock\/people\?tab=review$/);
   await expectText(page, 'Same spot and time as another check-in', `${tag} review`);
   await shot('02-review');
+  // Staff tab: everyone; a row opens the history modal (year grid + calendar).
+  await page.getByRole('tab', { name: /Everyone/ }).click();
+  await expectText(page, 'Fabrice Ndayisaba', `${tag} staff list`);
+  await shot('02b-staff');
+  await page.getByText('Fabrice Ndayisaba').locator('visible=true').first().click();
+  const modal = page.getByTestId('staff-history');
+  await modal.waitFor();
+  await expectText(page, 'Last 12 months', `${tag} year grid`);
+  await expectText(page, 'day streak', `${tag} streak`);
+  await expectText(page, 'November 2026', `${tag} month calendar`);
+  if ((await modal.locator('.sh-year .sh-cell.k-on').count()) < 100) fail(`${tag}: year grid has too few on-time days`);
+  await modal.locator('.sh-year .sh-cell.k-late').first().hover();
+  await page.locator('.sh-tip').waitFor();
+  await modal.locator('.sh-year .sh-cell.k-late').first().click();
+  await expectText(page, 'after 08:30', `${tag} late day detail`);
+  await page.waitForTimeout(400);
+  if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: history modal scrolls sideways`);
+  await shot('02c-history');
+  await modal.getByRole('button', { name: 'Previous month' }).click();
+  await modal.getByRole('button', { name: 'Close' }).click();
+  if (await page.getByTestId('staff-history').count()) fail(`${tag}: history did not close`);
 
   // No request storm: an idle zone page must not keep refetching (it once looped forever).
   {
@@ -202,10 +256,7 @@ async function run(browser, vp) {
   }
 
   // The setup step links straight to the rules on the zone page.
-  await page.goto(`${BASE}/staff/clock`);
-  await page.getByRole('button', { name: /Set up staff check-in/ }).click(); // folded by default: open it
-  await page.getByRole('button', { name: 'Review times' }).click();
-  await page.waitForURL(/\/staff\/clock\/zone#zone-rules$/);
+  await page.goto(`${BASE}/staff/clock/zone#zone-rules`);
   await expectText(page, 'Check-in rules', `${tag} zone rules`);
   await page.waitForTimeout(1500);
   if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: zone page scrolls sideways`);

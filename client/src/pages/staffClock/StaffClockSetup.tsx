@@ -170,7 +170,9 @@ export const StaffClockSetup: React.FC<{ place: 'dashboard' | 'zone' }> = ({ pla
   const current = steps.find((s) => !s.done);
   const complete = !current || (current.key === 'phones' && cfg.rules.enabled);
   // Set up: the dashboard's Attention strip takes over from here.
-  if (place === 'dashboard' && complete) return null;
+  // On the dashboard the checklist is only for getting started: once check-in is on,
+  // what is left (testing, phones) shows in the attention strip and the Setup guide tab.
+  if (place === 'dashboard' && (complete || cfg.rules.enabled)) return null;
 
   return (
     <section className="sc-card sc-setup" aria-label="Set up staff check-in">

@@ -105,7 +105,18 @@ export interface ScanResult {
 
 const data = async <T>(p: Promise<{ data?: T }>) => (await p).data as T;
 
+export type HistoryKind = 'on_time' | 'late' | 'absent' | 'invalid' | 'off' | 'today' | 'future' | 'untracked';
+export interface HistoryDay { date: string; kind: HistoryKind; in: string | null; out: string | null; early: boolean; noOut: boolean; minutes: number | null; card: boolean }
+export interface PersonHistory {
+  person: { id: string; name: string; role: string | null };
+  from: string; to: string; today: string; trackingFrom: string;
+  rules: { lateAfter: string | null; earlyLeaveBefore: string };
+  days: HistoryDay[];
+  summary: { schoolDays: number; attended: number; onTime: number; late: number; absent: number; noOut: number; early: number; rate: number | null; punctuality: number | null; avgIn: string | null; streak: number; bestStreak: number };
+}
+
 export const staffClockApi = {
+  history: (id: string, days = 365) => data(apiGet<PersonHistory>(`/api/staff/clock/people/${encodeURIComponent(id)}/history?days=${days}`)),
   config: () => data(apiGet<ClockConfig>('/api/staff/clock/config')),
   saveRules: (rules: Partial<ClockRules>) => data(apiPut<{ rules: ClockRules }>('/api/staff/clock/config', rules)),
   createZone: (z: { name: string; lat: number; lng: number; radius: number; active?: boolean }) => data(apiPost<ClockZone>('/api/staff/clock/zones', z)),

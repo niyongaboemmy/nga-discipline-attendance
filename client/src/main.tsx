@@ -4,6 +4,10 @@ import './index.css'
 import App from './App.tsx'
 import { initNgaInstall, NgaInstallPrompt } from './pwa/ngaInstall'
 import { startActivity } from './activity'
+import { installNetActivity } from './net/trackRequests'
+
+// Every change sent to the server shows a small "Saving…" pill (net/NetActivity).
+installNetActivity()
 
 // Installable app + "install this too" when opened from the installed NGA app.
 initNgaInstall()
