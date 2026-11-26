@@ -1251,3 +1251,15 @@ button.sc-item.sc-item-pick:hover .sc-item-go { transform: translateX(3px); colo
 .zr-tip { position: absolute; left: 0; right: 0; top: calc(100% - 4px); grid-column: auto; z-index: 6; box-shadow: 0 14px 34px rgba(2, 6, 23, .35); pointer-events: none; }
 .zr-tip-up { top: auto; bottom: calc(100% - 4px); }
 .zr-tip-up::before { top: auto; bottom: -5px; }
+
+/* Rules drawer: its own save bar (the rules are edited here, so they are saved here) */
+.zc-drawer-save { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 13px; color: var(--text-secondary); }
+.zc-drawer-save.is-dirty { background: var(--bg-subtle); border-radius: 0 0 24px 24px; }
+.zc-drawer-state { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+.zc-drawer-save.is-dirty .zc-drawer-state { color: var(--text-primary); }
+.zc-drawer-save .sc-btn { height: 38px; flex: none; }
+.zc-dot.warn { background: #f59e0b; }
+
+.zc-drawer-state { overflow: hidden; }
+/* Narrow panel: the day's four short lines stack, so a time never touches the next label. */
+@media (max-width: 720px) { .zr-day figcaption { grid-template-columns: minmax(0, 1fr); } }
