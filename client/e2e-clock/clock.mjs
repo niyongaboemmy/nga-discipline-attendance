@@ -7,7 +7,7 @@
 //
 // Exits non-zero on the first failed expectation.
 
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -601,6 +601,48 @@ async function installedFlow(browser, theme) {
   await e.ctx.close();
 }
 
+// Safari's own engine (ENGINE=webkit; `npx playwright install webkit` first): a refusal
+// shows the steps for that Apple browser, and "I have turned it on" loads the page again
+// (Safari never asks twice on one page) and then finds the person.
+const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+const MAC_SAFARI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+async function safariFlow(browser, kind, theme) {
+  const mac = kind === 'mac-safari';
+  const tag = `${kind}-${theme}`;
+  const vp = mac ? { name: 'mac', width: 1280, height: 800, ua: MAC_SAFARI_UA, mobile: false } : { name: 'phone', width: 390, height: 844, ua: IPHONE_UA, mobile: true };
+  const ctx = await browser.newContext({
+    viewport: { width: vp.width, height: vp.height }, userAgent: vp.ua, isMobile: vp.mobile, hasTouch: !mac,
+    colorScheme: theme, timezoneId: 'America/Los_Angeles', locale: 'en-GB', deviceScaleFactor: 2, geolocation: INSIDE, permissions: [], serviceWorkers: 'block',
+  });
+  await ctx.route('https://accounts.google.com/gsi/client', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: GIS_STUB }));
+  await ctx.route('https://fonts.googleapis.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  await ctx.route('https://mis.example/logo.svg', (r) => r.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="#1d4ed8"/></svg>' }));
+  await ctx.route('**/api/clock/nga/**', mockServer());
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => fail(`page error: ${e.message}`));
+  await page.goto(`${BASE}/c/nga`);
+  await page.getByTestId('gis').click();
+  await page.getByRole('button', { name: /Yes, this is my/ }).click();
+  await expectText(page, 'It confirms you are at school', `${tag} location primer`);
+  // Refused (no permission in this browser): the real engine answers PERMISSION_DENIED.
+  await page.getByRole('button', { name: 'Allow location' }).click();
+  await expectText(page, 'Location is off for this page', `${tag} refused`);
+  const how = page.getByTestId('loc-howto');
+  if ((await how.getAttribute('data-browser')) !== kind) fail(`${tag}: steps are for "${await how.getAttribute('data-browser')}", not ${kind}`);
+  await expectText(page, mac ? 'System Settings' : 'Safari Websites', `${tag} steps name the right place`);
+  if (await page.getByText('Tap Permissions, then Location').count()) fail(`${tag}: Chrome's steps are shown in Safari`);
+  if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail(`${tag}: the steps overflow sideways`);
+  if (!(await page.getByTestId('loc-retry').isVisible()) || (await page.getByTestId('loc-retry').boundingBox()).y + 40 > vp.height) fail(`${tag}: the "I have turned it on" button is below the screen`);
+  if (mac) await expectText(page, 'On this Mac (Safari)', `${tag} names the Mac`);
+  await shot(page, `${tag}-01-location-off`);
+  // Turned on in Settings: the button loads the page again, which then finds the person.
+  await ctx.grantPermissions(['geolocation']);
+  await Promise.all([page.waitForEvent('load'), page.getByTestId('loc-retry').click()]);
+  await expectText(page, 'At school', `${tag} found after the reload`);
+  await shot(page, `${tag}-02-found`);
+  await ctx.close();
+}
+
 async function main() {
   const preview = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], { stdio: 'ignore' });
   try {
@@ -612,6 +654,14 @@ async function main() {
       await new Promise((r) => setTimeout(r, 250));
     }
     const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+    if (process.env.ENGINE === 'webkit') {
+      const safari = await webkit.launch();
+      for (const kind of ['ios-safari', 'mac-safari']) for (const theme of ['light', 'dark']) await safariFlow(safari, kind, theme);
+      await safari.close();
+      await browser.close();
+      console.log(`ok Safari (WebKit): refused, steps, reload, found. Screenshots in ${OUT}`);
+      return;
+    }
     for (const vp of process.env.ONLY_EXTRAS ? [] : VIEWPORTS) {
       for (const theme of ['light', 'dark']) {
         await fullFlow(browser, vp, theme);

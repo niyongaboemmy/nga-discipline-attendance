@@ -34,8 +34,50 @@ export async function permissionState(): Promise<'granted' | 'denied' | 'prompt'
 const round = (n: number, d: number) => Math.round(n * 10 ** d) / 10 ** d;
 
 /**
+ * Which Apple browser this is, if any. Safari (and every iPhone/iPad browser, all
+ * WebKit) handles location differently from Chrome:
+ *  - `navigator.permissions.query` is not reliable for location (it can say "prompt"
+ *    after a refusal, "denied" for a site that is allowed, and never "granted" for a
+ *    one-day grant: WebKit bugs 258726, 275479, 275950), so only a real attempt tells;
+ *  - it asks again on most visits, and the question can stay open for a long time;
+ *  - a refusal lasts for the life of the page: it asks again only after a reload;
+ *  - a Mac can answer "position unavailable" (location unknown) before it finds itself.
+ */
+export type AppleBrowser = 'ios-safari' | 'ios-other' | 'ios-app' | 'mac-safari' | null;
+export function appleBrowser(ua: string = navigator.userAgent, touchPoints: number = navigator.maxTouchPoints ?? 0, standalone: boolean = isStandalone()): AppleBrowser {
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && touchPoints > 1);
+  if (ios) {
+    if (standalone) return 'ios-app';
+    return /CriOS|FxiOS|EdgiOS|OPiOS|GSA\//.test(ua) ? 'ios-other' : 'ios-safari';
+  }
+  return /Macintosh/.test(ua) && /Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\/|OPR\/|Firefox\//.test(ua) ? 'mac-safari' : null;
+}
+function isStandalone(): boolean {
+  try {
+    return window.matchMedia?.('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  } catch {
+    return false;
+  }
+}
+
+/** A refusal Safari will not reconsider on this page: reload so it can ask again. */
+export function reloadToAskAgain(): boolean {
+  if (!appleBrowser()) return false;
+  window.location.reload();
+  return true;
+}
+
+/** Extra time for the person to answer the browser's "allow location?" question. */
+export const PROMPT_WAIT_MS = 25_000;
+
+/**
  * Watch up to `maxMs` (default 8 s) or until a fix of `goodEnough` metres arrives.
  * Resolves with the best fix and up to 5 samples; rejects with a GeoError.
+ *
+ * The `maxMs` clock starts once the browser is actually looking (permission already
+ * given, or the first reading or error arrives), not while its question is on screen:
+ * Safari asks on most visits, and a person who took longer than `maxMs` to tap Allow
+ * used to get "location not found" with the question still open.
  */
 export function sampleLocation(opts: {
   maxMs?: number;
@@ -52,40 +94,84 @@ export function sampleLocation(opts: {
     const samples: Fix[] = [];
     let best: Fix | null = null;
     let done = false;
+    let looking = false;
+    let lastErr: GeoError | null = null;
+    let coarse = false;
+    const ids: number[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
     // A reading that stops improving (a laptop's Wi-Fi estimate never does) ends the wait.
     let stall: ReturnType<typeof setTimeout> | undefined;
+    let giveUp: ReturnType<typeof setTimeout> | undefined;
     const finish = (err?: GeoError) => {
       if (done) return;
       done = true;
-      navigator.geolocation.clearWatch(id);
+      for (const id of ids) navigator.geolocation.clearWatch(id);
       clearTimeout(timer);
       clearTimeout(settle);
       clearTimeout(stall);
+      clearTimeout(giveUp);
       if (best) resolve({ best, samples: samples.slice(-5) });
-      else reject(err ?? new GeoError('timeout'));
+      else reject(err ?? lastErr ?? new GeoError('timeout'));
     };
-    const id = navigator.geolocation.watchPosition(
-      (p) => {
-        const fix: Fix = { lat: round(p.coords.latitude, 7), lng: round(p.coords.longitude, 7), accuracy: round(p.coords.accuracy, 1), ts: p.timestamp };
-        samples.push(fix);
-        if (!best || fix.accuracy < best.accuracy - 1) {
-          best = !best || fix.accuracy < best.accuracy ? fix : best;
-          clearTimeout(stall);
-          // Usable already: stop once it no longer improves. Still too vague: give GPS the full time.
-          if (opts.patientUntil == null || best.accuracy <= opts.patientUntil) stall = setTimeout(() => finish(), 3000);
-          opts.onProgress?.(best);
-        } else if (fix.accuracy < best.accuracy) best = fix;
-        // A good reading: take one more if it comes quickly, else go with this one.
-        if (fix.accuracy <= goodEnough) {
-          if (samples.length >= 2) finish();
-          else if (!settle) settle = setTimeout(() => finish(), 1500);
-        }
-      },
-      (e) => finish(new GeoError(e.code === e.PERMISSION_DENIED ? 'denied' : e.code === e.TIMEOUT ? 'timeout' : 'unavailable')),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: maxMs },
-    );
-    const timer = setTimeout(() => finish(), maxMs);
+    /** The browser is looking for the position now: the real wait starts here. */
+    const startClock = () => {
+      if (looking || done) return;
+      looking = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(), maxMs);
+    };
+    const onFix = (p: GeolocationPosition) => {
+      if (done) return;
+      startClock();
+      clearTimeout(giveUp);
+      const fix: Fix = { lat: round(p.coords.latitude, 7), lng: round(p.coords.longitude, 7), accuracy: round(p.coords.accuracy, 1), ts: p.timestamp };
+      samples.push(fix);
+      if (!best || fix.accuracy < best.accuracy - 1) {
+        best = !best || fix.accuracy < best.accuracy ? fix : best;
+        clearTimeout(stall);
+        // Usable already: stop once it no longer improves. Still too vague: give GPS the full time.
+        if (opts.patientUntil == null || best.accuracy <= opts.patientUntil) stall = setTimeout(() => finish(), 3000);
+        opts.onProgress?.(best);
+      } else if (fix.accuracy < best.accuracy) best = fix;
+      // A good reading: take one more if it comes quickly, else go with this one.
+      if (fix.accuracy <= goodEnough) {
+        if (samples.length >= 2) finish();
+        else if (!settle) settle = setTimeout(() => finish(), 1500);
+      }
+    };
+    const onError = (fromCoarse: boolean) => (e: GeolocationPositionError) => {
+      if (done) return;
+      // 1 = PERMISSION_DENIED (the numbers, not e.PERMISSION_DENIED: safe on every engine).
+      if (e.code === 1) return finish(new GeoError('denied'));
+      lastErr = new GeoError(e.code === 3 ? 'timeout' : 'unavailable');
+      startClock();
+      if (best) return; // a reading is in hand; the watch may still improve it
+      if (fromCoarse) return finish(lastErr); // neither way can place this device
+      // "Position unavailable" from the precise watch (a Mac that has not found itself yet,
+      // GPS off): the watch keeps trying; meanwhile ask for any reading, and do not wait long.
+      if (!coarse) {
+        coarse = true;
+        watch(false);
+        giveUp = setTimeout(() => finish(), Math.min(maxMs, 6000));
+      }
+    };
+    const watch = (precise: boolean) => {
+      try {
+        // No `timeout`: our own clock decides (WebKit's can run while its question is open).
+        const id = navigator.geolocation.watchPosition(onFix, onError(!precise), precise ? { enableHighAccuracy: true, maximumAge: 0 } : { enableHighAccuracy: false, maximumAge: 10_000 });
+        if (done) navigator.geolocation.clearWatch(id);
+        else ids.push(id);
+      } catch {
+        finish(new GeoError('unavailable'));
+      }
+    };
+    // Until we know the question is answered, allow time to answer it.
+    timer = setTimeout(() => finish(), maxMs + PROMPT_WAIT_MS);
+    watch(true);
+    void permissionState().then((st) => {
+      if (st === 'granted') startClock();
+    });
   });
 }
 

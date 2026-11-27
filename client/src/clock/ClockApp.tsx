@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clockApi, ClockApiError, OfflineError, type Bootstrap, type DayState, type Me, type PunchResult, type RegisterPreview, type Registered } from './api';
 import { askPersistentStorage, deviceInfo, ensureKeys, forgetDevice, installUuid, isTabletDevice, loadDevice, ngaDeviceId, saveToken, signMessage, supportsDeviceKeys } from './device';
-import { formatDistance, GeoError, permissionState, sampleLocation, weakButPlausible, zoneHint, type Fix, type ZoneHint } from './geo';
+import { appleBrowser, formatDistance, GeoError, permissionState, reloadToAskAgain, sampleLocation, weakButPlausible, zoneHint, type Fix, type GeoErrorKind, type ZoneHint } from './geo';
 import { renderGoogleButton } from './google';
 import { PhoneTap } from './PhoneTap';
 import { QuickIcons, QuickMissed, QuickSheets, type QuickWhich } from './Quick';
@@ -90,6 +90,9 @@ export function ClockApp() {
   const [seeking, setSeeking] = useState<number | null>(null);
   /** the reading is vague but the school accepts it for review */
   const [weak, setWeak] = useState(false);
+  /** Why the last reading failed (no position at all), for the right advice. */
+  const [geoFail, setGeoFail] = useState<GeoErrorKind | null>(null);
+  const deniedRef = useRef(false);
   const [schoolCode, setSchoolCode] = useState('');
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -175,6 +178,8 @@ export function ClockApp() {
       setServerOutside(null);
       setSeeking(null);
       setWeak(false);
+      setGeoFail(null);
+      deniedRef.current = false;
       try {
         // A phone or tablet off the school Wi-Fi starts from a cell-tower guess: GPS needs
         // up to 20 s to settle, so wait for it instead of giving up on the first vague reading.
@@ -196,11 +201,13 @@ export function ClockApp() {
         return r;
       } catch (err) {
         if (err instanceof GeoError && err.kind === 'denied') {
+          deniedRef.current = true;
           setGeoMode('failed');
           setView('denied');
         } else {
           setGeoMode('vague');
           setHint(null);
+          setGeoFail(err instanceof GeoError ? err.kind : null);
         }
         return null;
       }
@@ -220,7 +227,9 @@ export function ClockApp() {
         return setView('fatal');
       }
       const perm = await permissionState();
-      if (perm === 'denied') return setView('denied');
+      // Safari's answer here cannot be trusted (it can say "denied" for a site that is
+      // allowed): there, only a real attempt tells, and a real refusal opens the same screen.
+      if (perm === 'denied' && !appleBrowser()) return setView('denied');
       if (perm !== 'granted' && !localStorage.getItem('tendo.clock.locPrimed')) return setView('location');
       setView('daily');
       if (m.next === 'check_in' || m.next === 'check_out') void locate();
@@ -427,8 +436,7 @@ export function ClockApp() {
     localStorage.setItem('tendo.clock.locPrimed', '1');
     setView('daily');
     if (me && (me.next === 'check_in' || me.next === 'check_out')) {
-      const r = await locate();
-      if (!r && (await permissionState()) === 'denied') setView('denied');
+      await locate(); // a refusal opens the "location is off" screen from there
     }
   };
 
@@ -687,9 +695,12 @@ export function ClockApp() {
 
       {view === 'denied' && (
         <DeniedScreen {...shared} onRetry={async () => {
+          // Safari keeps a refusal for the life of the page: load it again so it can ask.
+          // The page looks for the position again by itself once it is back.
+          if (reloadToAskAgain()) return;
           setView('daily');
           const r = await locate();
-          if (!r && (await permissionState()) === 'denied') { setView('denied'); flash(t('locationOff'), true); }
+          if (!r && deniedRef.current) flash(t('locationOff'), true);
         }} />
       )}
 
@@ -746,6 +757,7 @@ export function ClockApp() {
           geoMode={geoMode}
           seeking={seeking}
           weak={weak}
+          geoFail={geoFail}
           maxAccuracy={boot?.rules.maxAccuracy ?? 100}
           hint={hint}
           fix={fix?.best ?? null}
@@ -968,9 +980,15 @@ function MessageScreen({ tone, icon, title, lead, extra, action }: { tone: 'blue
 }
 
 function DeniedScreen({ t, deviceWord, tablet, onRetry }: { t: T; deviceWord: string; tablet: boolean; onRetry: () => void }) {
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-  const browser = ios ? 'Safari' : 'Chrome';
-  const steps = ios ? (['locStepIos1', 'locStepIos2', 'locStepIos3'] as const) : (['locStepChrome1', 'locStepChrome2', 'locStepChrome3'] as const);
+  // Each Apple browser hides the switch somewhere else; Chrome's steps do not exist in Safari.
+  const apple = appleBrowser();
+  const browser = apple === 'mac-safari' || apple === 'ios-safari' ? 'Safari' : apple === 'ios-app' ? 'Tendo' : apple === 'ios-other' ? 'iPhone' : 'Chrome';
+  const steps =
+    apple === 'mac-safari' ? (['locStepMac1', 'locStepMac2', 'locStepMac3'] as const)
+    : apple === 'ios-safari' ? (['locStepIos1', 'locStepIos2', 'locStepIos3', 'locStepIos4'] as const)
+    : apple === 'ios-app' ? (['locStepIos1', 'locStepIosApp2', 'locStepIosApp3'] as const)
+    : apple === 'ios-other' ? (['locStepIos1', 'locStepIosOther2', 'locStepIosOther3'] as const)
+    : (['locStepChrome1', 'locStepChrome2', 'locStepChrome3'] as const);
   return (
     <main className="ck-screen ck-cardscreen">
       <div className="ck-card">
@@ -979,16 +997,17 @@ function DeniedScreen({ t, deviceWord, tablet, onRetry }: { t: T; deviceWord: st
           <h1>{t('locationOff')}</h1>
           <p>{t('locationOffLead')}</p>
         </div>
-        <div className="ck-howto">
-          {!tablet && <div className="ck-howto-title">{t('onThisDevice', { device: deviceWord, browser })}</div>}
-          <div className="ck-howto-steps" style={{ display: tablet ? undefined : 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="ck-howto" data-testid="loc-howto" data-browser={apple ?? 'other'}>
+          {!tablet && <div className="ck-howto-title">{t('onThisDevice', { device: apple === 'mac-safari' ? 'Mac' : deviceWord, browser })}</div>}
+          {/* A Mac's wide window keeps the steps side by side, so the button stays in view. */}
+          <div className="ck-howto-steps" style={tablet || apple === 'mac-safari' ? undefined : { display: 'flex', flexDirection: 'column', gap: 16 }}>
             {steps.map((k, i) => (
               <div className="ck-step" key={k}><span className="ck-num">{i + 1}</span><span>{t(k)}</span></div>
             ))}
           </div>
         </div>
         <div className="ck-grow" />
-        <div className="ck-card-actions"><button className="ck-btn ck-btn-primary ck-btn-block" onClick={onRetry}>{t('turnedOn')}</button></div>
+        <div className="ck-card-actions"><button className="ck-btn ck-btn-primary ck-btn-block" data-testid="loc-retry" onClick={onRetry}>{t('turnedOn')}</button></div>
       </div>
     </main>
   );
@@ -1044,6 +1063,7 @@ interface DailyProps {
   geoMode: GeoMode;
   seeking: number | null;
   weak: boolean;
+  geoFail?: GeoErrorKind | null;
   maxAccuracy: number;
   hint: ZoneHint | null;
   fix: Fix | null;
@@ -1321,7 +1341,9 @@ function dailyVisual(p: DailyProps): Visual {
   if (geoMode === 'vague' || geoMode === 'failed') {
     return { style: 'blue', icon: 'retry', label: t('tryAgain'), sub: t('findMyLocation'), pulse: false, disabled: false,
       chip: p.fix ? t('notPrecise', { accuracy: Math.round(p.fix.accuracy) }) : t('locNotFound'), chipTone: 'amber',
-      helper: tablet ? t('notPreciseHelpTablet') : t('notPreciseHelpPhone') };
+      helper: !p.fix && p.geoFail === 'unavailable' && appleBrowser() === 'mac-safari' ? t('locUnavailableMac')
+        : !p.fix && p.geoFail && appleBrowser() ? t('locUnavailableIos')
+        : tablet ? t('notPreciseHelpTablet') : t('notPreciseHelpPhone') };
   }
   if (out) {
     return { style: 'outline', icon: 'out', label: t('checkOut'), sub: t('inSince', { time: today?.checkIn ?? '' }), pulse: false, disabled: false,
