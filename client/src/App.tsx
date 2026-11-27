@@ -43,6 +43,7 @@ import { StaffClockZone } from './pages/staffClock/StaffClockZone';
 import { StaffClockDevices } from './pages/staffClock/StaffClockDevices';
 import { StaffClockScan } from './pages/staffClock/StaffClockScan';
 import { StaffClockGate } from './pages/staffClock/StaffClockGate';
+import { StaffClockReports } from './pages/staffClock/StaffClockReports';
 import { StaffClockPoster } from './pages/staffClock/StaffClockPoster';
 import { StaffClockGuide } from './pages/staffClock/StaffClockGuide';
 
@@ -259,6 +260,14 @@ export const App: React.FC = () => {
             element={
               <ProtectedRoute allowedRoles={['admin', 'teacher']}>
                 <StaffClockDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/staff/clock/reports"
+            element={
+              <ProtectedRoute allowedRoles={['admin', 'teacher']}>
+                <StaffClockReports />
               </ProtectedRoute>
             }
           />

@@ -5,7 +5,7 @@ import { getDb } from '../../database.js';
 import { authMiddleware, type AuthenticatedRequest } from '../../middleware/auth.js';
 import { authorizePermission } from '../../middleware/authorize.js';
 import { recordAudit } from '../../shared/audit.js';
-import { addDays, dayOfWeekFor, safeClockLabel, schoolDateString, schoolMinutesOfDay, timeToMinutes } from '../../shared/schoolTime.js';
+import { addDays, dayOfWeekFor, safeClockLabel, schoolDateString, schoolMinutesOfDay, timeToMinutes, weekStartFor } from '../../shared/schoolTime.js';
 import { schoolDays, setSchoolSetting, staffLateCutoffMinutes, type SchoolSettingKey } from '../../tenancy/settings.js';
 import { currentTenant, currentTid } from '../../tenancy/index.js';
 import { fullName, loadStaffRoster } from '../../routes/mis.js';
@@ -14,6 +14,7 @@ import { ClockError, clockNow, clockRules, isHoliday, issueCards, loadZones, nee
 import { haversine, validCidrList } from './geofence.js';
 import { createPairing, readPairing } from './pairing.js';
 import { buildReport, reportStaff } from './clockReport.js';
+import { buildPeriod, presetRange, previousRange, type PeriodPreset, type PeriodRecord } from './clockReports.js';
 import { sendNudges } from './reminders.js';
 import { announceClock, clockLive, type ClockLiveEvent } from './clockLive.js';
 import { loadPlanBook, parseWeekPlan, sameWeek, savePlan, schoolWeek, type DayRule, type PlanBook } from './workPlan.js';
@@ -634,6 +635,88 @@ async function loadReport(req: any) {
   });
   return { report: { ...report, ownPlans: book.ownCount(roster.map((p) => p.id), today) }, term, rosterSource };
 }
+
+// ---------------------------------------------------------------------------
+// Reports page: one period as facts (a line per person per day, per person, per
+// day, the headline numbers and the same numbers for the period just before).
+// Names are part of it: these are the documents the office downloads.
+// ---------------------------------------------------------------------------
+
+const PRESETS = new Set<PeriodPreset>(['today', 'yesterday', 'week', 'month', 'term']);
+const MAX_REPORT_DAYS = 370;
+
+router.get('/reports/data', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
+  try {
+    const db = getDb();
+    const today = schoolDateString(new Date(clockNow()));
+    const term = await currentTerm(db, today);
+    const q = (k: string) => (ISO_DATE.test(String(req.query[k] || '')) ? String(req.query[k]) : null);
+    const asked = String(req.query.preset || '') as PeriodPreset;
+    let preset: PeriodPreset | 'custom' = PRESETS.has(asked) ? asked : 'custom';
+    let range = preset !== 'custom' ? presetRange(preset, today, weekStartFor(today), term) : null;
+    if (preset === 'term' && !range) return res.status(400).json({ success: false, code: 'NO_TERM', message: 'The current term has no dates yet. Choose dates instead.' });
+    if (!range) {
+      const from = q('from');
+      if (!from) { preset = 'today'; range = { from: today, to: today }; }
+      else range = { from, to: q('to') ?? from };
+    }
+    let { from, to } = range;
+    if (to > today) to = today;
+    if (from > to) from = to;
+    if (from < addDays(to, -(MAX_REPORT_DAYS - 1))) from = addDays(to, -(MAX_REPORT_DAYS - 1));
+    const prev = previousRange(from, to);
+
+    const rows = await db.all<any[]>(
+      `SELECT id, staff_id, staff_name, date, clock_in, clock_out, status, out_status, review_state, source, flags, in_distance_m
+         FROM staff_attendance WHERE date >= ? AND date <= ?`, prev.from, to);
+    const first = await db.get<{ d: string | null }>(`SELECT MIN(date) AS d FROM staff_attendance WHERE source IN ('device','card')`);
+    let offDays = new Set<string>();
+    try {
+      offDays = new Set((await db.all<{ session_date: string }[]>(`SELECT session_date FROM rfid_days_off WHERE session_date >= ? AND session_date <= ?`, prev.from, to)).map((r) => r.session_date));
+    } catch { /* no days-off table */ }
+    const { roster, rosterSource } = await staffRoster(req, db, 'reports');
+    const book = await loadPlanBook(db);
+    const roleWord = (r?: string) => (r === 'admin' ? 'Administrator' : r === 'teacher' ? 'Teacher' : r ? String(r).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : 'Staff');
+    const records: PeriodRecord[] = rows.map((r) => {
+      let flags: string[] = [];
+      try { flags = r.flags ? JSON.parse(r.flags) : []; } catch { flags = []; }
+      const inAt = Date.parse(r.clock_in);
+      const outAt = Date.parse(r.clock_out);
+      return {
+        id: r.id, staffId: String(r.staff_id), name: fullName(...String(r.staff_name ?? '').split(/\s+/)) || r.staff_name || 'Staff member', date: String(r.date),
+        inMinutes: timeToMinutesOf(r.clock_in), outMinutes: timeToMinutesOf(r.clock_out),
+        minutes: Number.isFinite(inAt) && Number.isFinite(outAt) ? Math.max(0, Math.round((outAt - inAt) / 60000)) : null,
+        late: r.status === 'late', earlyOut: r.out_status === 'early', invalid: r.review_state === 'invalid',
+        source: r.source ?? null, flags, needsReview: needsReview(r.flags, r.review_state), distance: r.in_distance_m != null ? Math.round(r.in_distance_m) : null,
+      };
+    });
+    const shared = {
+      today,
+      trackingFrom: first?.d && first.d <= today ? first.d : today,
+      offDays,
+      roster: roster.map((p) => ({ id: p.id, name: fullName(...String(p.name).split(/\s+/)) || p.name, role: roleWord(p.role) })),
+      records,
+      ruleFor: (id: string, date: string) => book.dayFor(id, date),
+    };
+    const period = buildPeriod({ ...shared, from, to });
+    const before = buildPeriod({ ...shared, from: prev.from, to: prev.to });
+    const rules = clockRules();
+    return res.json({
+      success: true,
+      data: {
+        ...period,
+        preset,
+        previous: { from: prev.from, to: prev.to, kpis: before.kpis },
+        term,
+        rosterSource,
+        rules: { lateAfter: rules.lateAfter, earlyLeaveBefore: rules.earlyLeaveBefore, enabled: rules.enabled },
+        serverNow: new Date(clockNow()).toISOString(),
+      },
+    });
+  } catch (err) {
+    return fail(res, err);
+  }
+});
 
 router.get('/report', authorizePermission('STAFF_ATTENDANCE_VIEW_ALL'), async (req: any, res) => {
   try {

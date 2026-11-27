@@ -36,6 +36,10 @@ export const searchCatalog: SearchItem[] = [
     roles: ['admin'], keywords: ['staff attendance', 'staff clock', 'check-ins', 'late staff', 'teachers attendance'],
   },
   {
+    label: 'Staff attendance reports', description: 'Download staff attendance as PDF or Excel: register, late arrivals, absences, time at school, summary', path: '/staff/clock/reports',
+    roles: ['admin'], keywords: ['staff report', 'attendance report', 'download', 'pdf', 'excel', 'late report', 'absence report', 'register', 'kpi', 'summary', 'hours worked', 'term report'],
+  },
+  {
     label: 'Gate view', description: 'Live at the gate: who is in, who is still expected, who just arrived, remind them', path: '/staff/clock/gate',
     roles: ['admin'], keywords: ['gate', 'live', 'arrivals', 'who is here', 'monitor staff', 'staff attendance now', 'late staff', 'remind staff', 'entrance'],
   },

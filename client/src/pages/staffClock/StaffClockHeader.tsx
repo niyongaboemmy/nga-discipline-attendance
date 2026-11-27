@@ -10,6 +10,7 @@ export const StaffClockHeader: React.FC<{ title: string; lead: string; actions?:
     { to: '/staff/clock', label: 'Dashboard', show: can('STAFF_ATTENDANCE_VIEW_ALL'), end: true },
     { to: '/staff/clock/gate', label: 'Gate view', show: can('STAFF_ATTENDANCE_VIEW_ALL'), live: true },
     { to: '/staff/clock/people', label: 'Staff', show: can('STAFF_ATTENDANCE_VIEW_ALL') },
+    { to: '/staff/clock/reports', label: 'Reports', show: can('STAFF_ATTENDANCE_VIEW_ALL') },
     { to: '/staff/clock/setup', label: 'Setup guide', show: can('STAFF_ATTENDANCE_ZONES_MANAGE') },
     { to: '/staff/clock/zone', label: 'Zone & settings', show: can(['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL']) },
     { to: '/staff/clock/devices', label: 'Phones & cards', show: can('STAFF_DEVICES_MANAGE'), count: pending },

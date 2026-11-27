@@ -222,8 +222,45 @@ const range = (from?: string, to?: string, group?: string) => {
   return s ? `?${s}` : '';
 };
 
+// ---- Reports page (GET /api/staff/clock/reports/data) ----------------------------
+export type ReportsPreset = 'today' | 'yesterday' | 'week' | 'month' | 'term';
+export interface ReportsEntry {
+  date: string; userId: string; status: 'on_time' | 'late' | 'absent' | 'not_in';
+  in: string | null; out: string | null; start: string | null; end: string | null; own: boolean;
+  lateBy: number; earlyBy: number; outState: 'on_time' | 'early' | 'missing' | 'open' | null;
+  minutes: number | null; expectedMinutes: number | null; source: string | null; flags: string[];
+  needsReview: boolean; invalid: boolean; extra: boolean; distance: number | null;
+}
+export interface ReportsDay {
+  date: string; kind: 'school' | 'off' | 'untracked'; today: boolean; expected: number; present: number; onTime: number;
+  late: number; absent: number; notIn: number; earlyLeave: number; noCheckout: number; rate: number | null;
+}
+export interface ReportsPerson {
+  userId: string; name: string; role: string | null; own: boolean; expectedDays: number; present: number; onTime: number;
+  late: number; absent: number; earlyLeave: number; noCheckout: number; extraDays: number; lateMinutes: number;
+  minutesWorked: number; daysWithHours: number; expectedMinutes: number; avgIn: string | null; avgOut: string | null;
+  rate: number | null; punctuality: number | null; longestAbsence: number;
+}
+export interface ReportsKpis {
+  staff: number; schoolDays: number; expected: number; present: number; onTime: number; late: number; absent: number;
+  notInToday: number; rate: number | null; punctuality: number | null; earlyLeave: number; noCheckout: number;
+  avgIn: string | null; avgLateMinutes: number | null; minutesWorked: number; avgMinutesPerDay: number | null;
+  needsReview: number; invalid: number; cardCheckIns: number; perfect: number;
+}
+export interface ReportsData {
+  from: string; to: string; today: string; trackingFrom: string; preset: ReportsPreset | 'custom';
+  kpis: ReportsKpis; days: ReportsDay[]; persons: ReportsPerson[]; entries: ReportsEntry[];
+  previous: { from: string; to: string; kpis: ReportsKpis };
+  term: { name: string; start: string; end: string } | null;
+  rosterSource: 'mis' | 'local';
+  rules: { lateAfter: string; earlyLeaveBefore: string; enabled: boolean };
+  serverNow: string;
+}
+
 export const staffClockApi = {
   /** the school's name and documents logo (a data URL) for exported reports */
+  /** one period as facts for the Reports page: a named period, one date, or from..to */
+  reportsData: (q: { preset?: ReportsPreset; from?: string; to?: string }) => data(apiGet<ReportsData>(`/api/staff/clock/reports/data?${new URLSearchParams(Object.entries(q).filter(([, v]) => !!v) as string[][]).toString()}`)),
   documentBrand: () => data(apiGet<{ name: string; logo: string | null }>('/api/staff/clock/document-brand')),
   report: (from?: string, to?: string) => data(apiGet<ClockReport>(`/api/staff/clock/report${range(from, to)}`)),
   reportStaff: (from: string, to: string, group?: string) => data(apiGet<{ from: string; to: string; schoolDays: number; people: ReportPerson[] }>(`/api/staff/clock/report/staff${range(from, to, group)}`)),

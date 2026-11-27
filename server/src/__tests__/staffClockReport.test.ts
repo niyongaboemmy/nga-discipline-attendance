@@ -156,7 +156,41 @@ describe('staff attendance report (routes)', () => {
     expect(clipped.body.data).toMatchObject({ from: '2026-11-13', to: '2026-11-13' });
   });
 
+  // The Reports page (Staff check-in -> Reports): one period as facts, names included.
+  it('reports page: today by default, named periods, and the period just before', async () => {
+    const url = '/api/staff/clock/reports/data';
+    const today = (await request(app).get(url).set(authHeader(adminToken))).body.data;
+    expect(today).toMatchObject({ preset: 'today', from: '2026-11-13', to: '2026-11-13', today: '2026-11-13', previous: { from: '2026-11-12', to: '2026-11-12' } });
+    expect(today.kpis).toMatchObject({ present: 1, absent: 0, notInToday: 1 }); // not in yet today is never an absence
+    const y = (await request(app).get(`${url}?preset=yesterday`).set(authHeader(adminToken))).body.data;
+    expect(y).toMatchObject({ preset: 'yesterday', from: '2026-11-12', to: '2026-11-12' });
+    expect((await request(app).get(`${url}?preset=week`).set(authHeader(adminToken))).body.data).toMatchObject({ from: '2026-11-09', to: '2026-11-13' });
+    expect((await request(app).get(`${url}?preset=month`).set(authHeader(adminToken))).body.data).toMatchObject({ from: '2026-11-01', to: '2026-11-13' });
+    const term = (await request(app).get(`${url}?preset=term`).set(authHeader(adminToken))).body.data;
+    expect(term).toMatchObject({ preset: 'term', from: '2026-11-02', to: '2026-11-13', term: { name: 'Term 1' } });
+    expect(term.rules.lateAfter).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it('reports page: a date range lists every person and every expected day', async () => {
+    const d = (await request(app).get('/api/staff/clock/reports/data?from=2026-11-02&to=2026-11-03').set(authHeader(adminToken))).body.data;
+    expect(d).toMatchObject({ preset: 'custom', from: '2026-11-02', to: '2026-11-03' });
+    expect(d.kpis).toMatchObject({ schoolDays: 2, present: 3, late: 1, absent: 1, invalid: 1, rate: 75 });
+    const teacher = d.persons.find((p: any) => p.userId === '901');
+    expect(teacher).toMatchObject({ name: 'Plain Teacher', present: 1, late: 1, absent: 1 });
+    const line = (id: string, date: string) => d.entries.find((e: any) => e.userId === id && e.date === date);
+    expect(line('901', '2026-11-02')).toMatchObject({ status: 'late', in: '08:45', outState: 'missing' });
+    expect(line('901', '2026-11-03')).toMatchObject({ status: 'absent', invalid: true, in: null }); // marked invalid: counts as absent
+    expect(line('900', '2026-11-03')).toMatchObject({ status: 'on_time', in: '07:35' });
+    expect(d.days.map((x: any) => [x.date, x.kind, x.present])).toEqual([['2026-11-02', 'school', 2], ['2026-11-03', 'school', 1]]);
+    // One date, a future end and a reversed range.
+    expect((await request(app).get('/api/staff/clock/reports/data?from=2026-11-03').set(authHeader(adminToken))).body.data).toMatchObject({ from: '2026-11-03', to: '2026-11-03' });
+    expect((await request(app).get('/api/staff/clock/reports/data?from=2026-11-10&to=2026-12-31').set(authHeader(adminToken))).body.data).toMatchObject({ from: '2026-11-10', to: '2026-11-13' });
+    expect((await request(app).get('/api/staff/clock/reports/data?from=2026-11-10&to=2026-11-04').set(authHeader(adminToken))).body.data).toMatchObject({ from: '2026-11-04', to: '2026-11-04' });
+  });
+
   it('is for people who may see all staff attendance', async () => {
+    expect((await request(app).get('/api/staff/clock/reports/data').set(authHeader(teacherToken))).status).toBe(403);
+    expect((await request(app).get('/api/staff/clock/reports/data')).status).toBe(401);
     expect((await request(app).get('/api/staff/clock/report').set(authHeader(teacherToken))).status).toBe(403);
     expect((await request(app).get('/api/staff/clock/report/staff').set(authHeader(teacherToken))).status).toBe(403);
     expect((await request(app).get('/api/staff/clock/report')).status).toBe(401);

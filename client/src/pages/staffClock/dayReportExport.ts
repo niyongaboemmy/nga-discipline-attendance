@@ -34,7 +34,7 @@ const TONE_RGB: Record<DayExportRow['tone'], [number, number, number]> = { on: [
 const TONE_ARGB: Record<DayExportRow['tone'], string> = { on: 'FF2563EB', late: 'FFD97706', abs: 'FFDC2626', off: 'FF64748B' };
 
 /** Any image data URL -> a PNG data URL with its size (jsPDF and exceljs take PNG). */
-async function asPng(src: string | null): Promise<{ data: string; w: number; h: number } | null> {
+export async function asPng(src: string | null): Promise<{ data: string; w: number; h: number } | null> {
   if (!src) return null;
   try {
     const img = new Image();
@@ -54,9 +54,9 @@ async function asPng(src: string | null): Promise<{ data: string; w: number; h: 
   }
 }
 
-const generatedAt = () => new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+export const generatedAt = () => new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-function save(blob: Blob, name: string) {
+export function save(blob: Blob, name: string) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
