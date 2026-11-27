@@ -20,6 +20,7 @@ import {
   Table2,
   Users,
   type LucideIcon,
+  FileBarChart,
 } from 'lucide-react';
 
 export type Role = 'admin' | 'teacher' | 'student' | 'unassigned';
@@ -88,6 +89,7 @@ export const NAV_AREAS: NavArea[] = [
             anyPermission: ['STAFF_ATTENDANCE_ZONES_MANAGE', 'STAFF_ATTENDANCE_VIEW_ALL', 'STAFF_DEVICES_MANAGE'],
           },
           { label: 'Gate View', path: '/staff/clock/gate', icon: DoorOpen, roles: STAFF, anyPermission: ['STAFF_ATTENDANCE_VIEW_ALL'] },
+          { label: 'Staff Reports', path: '/staff/clock/reports', icon: FileBarChart, roles: STAFF, anyPermission: ['STAFF_ATTENDANCE_VIEW_ALL'] },
           { label: 'Scan Staff Card', path: '/staff/clock/scan', icon: ScanLine, roles: STAFF, anyPermission: ['STAFF_CLOCK_SCAN'] },
         ],
       },
