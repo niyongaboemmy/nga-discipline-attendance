@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ClockApiError, clockApi } from './api';
-import { GeoError, sampleLocation } from './geo';
+import { GeoError, reloadToAskAgain, sampleLocation } from './geo';
 import { detectLang, makeT } from './i18n';
 import { IconCheck, IconIn, IconOut, IconPin, IconRetry, IconWarn } from './icons';
 
@@ -112,7 +112,7 @@ export function TapApp({ slug, code }: { slug: string; code: string }) {
           <div className="ck-grow" />
           <div className="ck-card-actions">
             {retry && (
-              <button className="ck-btn ck-btn-primary ck-btn-block" onClick={() => void send()}>
+              <button className="ck-btn ck-btn-primary ck-btn-block" onClick={() => { if (phase === 'denied' && reloadToAskAgain()) return; void send(); }}>
                 <IconRetry size={18} />{t('tryAgain')}
               </button>
             )}
