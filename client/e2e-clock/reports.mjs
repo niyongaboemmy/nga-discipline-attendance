@@ -123,6 +123,8 @@ async function context(browser, { width, height, theme, mobile = false }) {
     if (p === '/api/roles-permissions/me') return ok({ permissionKeys: PERMS });
     if (p === '/api/staff/clock/reports/data') { state.asked.push(u.search); return ok(reportsData(u.searchParams)); }
     if (p === '/api/staff/clock/document-brand') return ok({ name: 'Demo School', logo: LOGO });
+    // The document letterhead (header and footer on every PDF page) reads the school's branding.
+    if (p === '/api/sso/branding') return ok({ tid: 1, name: 'Demo School', logoUrl: null, documentsLogoUrl: LOGO, documentsFooterUrl: LOGO, documentsFooterText: 'PO Box 1, Demo Town' });
     return ok([]);
   });
   const page = await ctx.newPage();
@@ -225,7 +227,7 @@ async function run(browser, vp) {
     check(a.suggested === 'staff-attendance-late-2026-11-09-to-2026-11-20.pdf', `${tag}: PDF named ${a.suggested}`);
     const pdf = readFileSync(a.file);
     check(pdf.subarray(0, 5).toString() === '%PDF-' && pdf.length > 8000, `${tag}: the PDF is not a PDF (${pdf.length} bytes)`);
-    check(pdf.includes('/Subtype /Image'), `${tag}: the PDF has no logo image`);
+    check(pdf.includes('/Subtype /Image'), `${tag}: the PDF has no letterhead image`);
     await page.getByText('Late arrivals (PDF) downloaded').waitFor({ timeout: 5000 }).catch(() => fail(`${tag}: no toast after the PDF`));
     // One report as Excel, opened and read back.
     const b = await grab(page, page.locator('.rp-report[data-report="staff"] [data-act="xlsx"]'));

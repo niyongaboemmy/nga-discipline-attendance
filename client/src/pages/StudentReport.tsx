@@ -2,6 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
+import { PrintLetterhead } from '../components/common/PrintLetterhead';
 import { PageSkeleton } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { apiGet, ApiError } from '../api/client';
@@ -50,6 +51,7 @@ export const StudentReport: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <PrintLetterhead note="Student conduct and attendance summary · Tendo · Amashuri" pageWidthMm={297} sideMm={12} />
       <div className="page-header no-print">
         <div>
           <h1 className="page-title">Student Report</h1>

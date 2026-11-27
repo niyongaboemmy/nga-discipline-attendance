@@ -474,17 +474,22 @@ export interface SchoolBranding {
   logoUrl: string | null;
   /** the school's documents logo (report headers), when it has one */
   documentsLogoUrl?: string | null;
+  /** the document letterhead's footer: an image and/or up to 4 text lines (absent on an older MIS) */
+  documentsFooterUrl?: string | null;
+  documentsFooterText?: string | null;
 }
 
-/** MIS `/tenant/branding` (Appendix A.5): `data.school_name`, `data.logoUrl`, `data.logos.documents`. */
+/** MIS `/tenant/branding` (Appendix A.5): `data.school_name`, `data.logoUrl`, `data.logos.documents`, `data.logos.footer`, `data.documents_footer_text`. */
 export function brandingOf(body: any, tid: number): SchoolBranding | null {
   const d = body?.data ?? body;
   if (!d || typeof d !== 'object') return null;
   const name = [d.school_name, d.name].find((v) => typeof v === 'string' && v.trim());
   const logo = [d.logoUrl, d.logo_url].find((v) => typeof v === 'string' && /^https?:\/\//.test(v));
   const docs = [d.logos?.documents, d.documents_logo_url].find((v) => typeof v === 'string' && /^https?:\/\//.test(v));
+  const footer = [d.logos?.footer, d.documents_footer_url].find((v) => typeof v === 'string' && /^https?:\/\//.test(v));
+  const footerText = typeof d.documents_footer_text === 'string' && d.documents_footer_text.trim() ? d.documents_footer_text.trim() : null;
   if (!name && !logo) return null;
-  return { tid, name: name ? String(name).trim() : null, logoUrl: logo ?? null, documentsLogoUrl: docs ?? null };
+  return { tid, name: name ? String(name).trim() : null, logoUrl: logo ?? null, documentsLogoUrl: docs ?? null, documentsFooterUrl: footer ?? null, documentsFooterText: footerText };
 }
 
 const brandingCache = new Map<number, { at: number; value: SchoolBranding | null }>();
@@ -500,7 +505,7 @@ export async function schoolBranding(tid: number): Promise<SchoolBranding | null
   return value;
 }
 
-/** GET /api/sso/branding -- this session's school name and logo (public MIS data, cached 10 min). */
+/** GET /api/sso/branding -- this session's school name, logo and document letterhead (public MIS data, cached 10 min). */
 router.get('/branding', authMiddleware, async (req: Request, res: Response) => {
   const tid = (req as AuthenticatedRequest).user?.tid;
   if (!tid) return res.json({ success: true, data: null });

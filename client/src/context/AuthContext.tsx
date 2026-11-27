@@ -5,6 +5,7 @@ import { SCHOOL_NAME } from '../utils/rfidCards';
 import {
   RESIGN_CODES, misHomeOf, rememberBranding, storageChange, switchSchoolUrl, type SchoolBranding,
 } from '../tenancy/school.ts';
+import { preloadLetterhead, resetLetterhead } from '../utils/documentLetterhead.ts';
 import { SCHOOL_SWITCH_EVENT, checkSchool, restartSignIn } from '../tenancy/switch';
 import { endActivity } from '../activity';
 import { withPolledAvatar, type MisAvatar } from '../utils/avatar';
@@ -261,8 +262,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Both through this app's server, which holds the MIS token; failures leave
   // the fallback name and no switch item (never a sign-out).
   useEffect(() => {
+    // The document letterhead belongs to this session's school: forget the last one, and
+    // load this one in the background so PDFs and printed pages have it at once.
+    resetLetterhead();
     // Signed out: the header is not shown, so stale values never render.
     if (!token) return;
+    preloadLetterhead();
     let live = true;
     const get = (path: string) =>
       fetch(path, { headers: { Authorization: `Bearer ${token}` } })
@@ -326,6 +331,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // any old copy (waiting registers stay for their owner; other schools'
     // recent copies are kept, see clearCache).
     clearCache(localStorage, currentOwner(localStorage));
+    resetLetterhead();
 
     setToken(null);
     setUser(null);

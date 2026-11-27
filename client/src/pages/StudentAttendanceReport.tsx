@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
+import { PrintLetterhead } from '../components/common/PrintLetterhead';
 import { PageSkeleton } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { useAuth } from '../context/AuthContext';
@@ -195,6 +196,7 @@ export const StudentAttendanceReport: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <PrintLetterhead note="Attendance report · Tendo · Amashuri" pageWidthMm={297} sideMm={12} />
       <div className="page-header no-print">
         <div>
           <h1 className="page-title">Attendance Report</h1>

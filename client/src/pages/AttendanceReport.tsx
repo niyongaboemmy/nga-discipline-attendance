@@ -2,6 +2,7 @@ import { UserAvatar } from '../components/common/UserAvatar';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DashboardLayout } from '../components/Layout/DashboardLayout';
+import { PrintLetterhead } from '../components/common/PrintLetterhead';
 import { PageSkeleton, SkeletonCards } from '../components/common/Skeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { SearchableSelect } from '../components/common/SearchableSelect';
@@ -318,6 +319,7 @@ export const AttendanceReport: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <PrintLetterhead note="Class attendance record · Tendo · Amashuri" pageWidthMm={297} sideMm={12} />
       <div className="page-header no-print">
         <div>
           <h1 className="page-title">Attendance Report</h1>

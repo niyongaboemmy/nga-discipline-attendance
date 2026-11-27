@@ -6,12 +6,24 @@ import { ErrorState } from '../../components/common/ErrorState';
 import { ApiError } from '../../api/client';
 import { staffClockApi, type ClockConfig } from '../../api/staffClock';
 import { StaffClockHeader } from './StaffClockHeader';
+import { PrintLetterhead, supportsMarginBoxes } from '../../components/common/PrintLetterhead';
+import { currentLetterhead, loadLetterhead } from '../../utils/documentLetterhead.ts';
+import { SC_SHEET_PAGE_CSS, SC_SHEET_SIDE_MM, sheetContentHeightMm } from './sheetPage.ts';
 
 /** The A4 staffroom poster: the school's staff link as a real QR code + three steps. */
 export const StaffClockPoster: React.FC = () => {
   const [cfg, setCfg] = useState<ClockConfig | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The school's letterhead goes in the paper's margins: the poster keeps its design and
+  // is only as tall as the room left between the header and the footer (still one sheet).
+  const [lh, setLh] = useState(currentLetterhead);
+  useEffect(() => {
+    let alive = true;
+    void loadLetterhead().then((l) => alive && setLh(l));
+    return () => { alive = false; };
+  }, []);
+  const printHeight = `${sheetContentHeightMm(lh, supportsMarginBoxes())}mm`;
 
   useEffect(() => {
     staffClockApi
@@ -29,13 +41,15 @@ export const StaffClockPoster: React.FC = () => {
 
   return (
     <DashboardLayout>
+      <style>{SC_SHEET_PAGE_CSS}</style>
+      <PrintLetterhead letterhead={lh} note="Staff attendance poster · Tendo · Amashuri" sideMm={SC_SHEET_SIDE_MM} />
       <div className="sc-page">
         <StaffClockHeader title="Staffroom poster" lead="Print it on A4 and put it where staff arrive." actions={<button className="sc-btn sc-btn-primary" onClick={() => { void staffClockApi.saveRules({ setupDone: ['shared'] }).catch(() => undefined); window.print(); }} disabled={!qr}><Printer size={16} /> Print</button>} />
         {error && <ErrorState message={error} />}
         {!cfg && !error && <div className="sc-skel" style={{ width: 595, maxWidth: '100%', aspectRatio: '595 / 842', margin: '0 auto' }} />}
         {cfg && (
           <div className="sc-print">
-            <div className="sc-poster">
+            <div className="sc-poster" style={{ ['--sc-poster-print-height' as string]: printHeight }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ width: 48, height: 48, borderRadius: 16, background: '#2563eb', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 }}>{initials}</div>
                 <span style={{ fontSize: 17, fontWeight: 600, color: '#374151' }}>{name}</span>
