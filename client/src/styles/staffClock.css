@@ -224,14 +224,15 @@
   .sc-poster h1 { font-size: 32px; line-height: 38px; }
 }
 
+/* Only on a page that has a print sheet: the other pages print as they are. */
 @media print {
-  body * { visibility: hidden !important; }
-  .sc-print, .sc-print * { visibility: visible !important; }
+  body:has(.sc-print) * { visibility: hidden !important; }
+  body .sc-print, body .sc-print * { visibility: visible !important; }
   .sc-print { position: absolute; left: 0; top: 0; width: 100%; }
   .sc-cards-sheet { grid-template-columns: repeat(3, 1fr); gap: 8mm; }
   .sc-qr-card { border-color: #9ca3af; }
-  .sc-poster { border: 0; border-radius: 0; width: 100%; min-height: 0; height: 277mm; }
-  @page { size: A4; margin: 10mm; }
+  /* The paper (A4, 10mm) is set by the page itself (SC_SHEET_PAGE_CSS): a rule here would turn every other page's print to portrait. */
+  .sc-poster { border: 0; border-radius: 0; width: 100%; min-height: 0; height: var(--sc-poster-print-height, 277mm); }
 }
 
 /* place search results (school zone) */

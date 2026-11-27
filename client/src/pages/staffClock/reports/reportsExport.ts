@@ -1,15 +1,17 @@
-import { asPng, generatedAt, save } from '../dayReportExport';
-import type { Kpi, ReportTable, Tone } from './reportsModel';
+import { PDF_SIDE, PDF_SIDE_MM, asPng, generatedAt, pdfKit, pdfNote, save, type PdfKit } from '../dayReportExport.ts';
+import { letterheadFrame, loadLetterhead, stampLetterhead, type Letterhead, type LetterheadFrame } from '../../../utils/documentLetterhead.ts';
+import type { Kpi, ReportTable, Tone } from './reportsModel.ts';
 
 /**
  * The Reports page's documents as files: PDF (jsPDF + autotable) and Excel
- * (exceljs). Every file is headed with the school's documents logo and name, the
- * report's title and the period. Both libraries load only when someone downloads.
+ * (exceljs). Every PDF carries the school's document letterhead (header and footer on
+ * every page), then the report's title and the period; every Excel sheet is headed with
+ * the school's documents logo and name. Both libraries load only when someone downloads.
  */
 
 export interface ExportMeta {
   school: string;
-  /** a data URL of the school's documents logo, or null */
+  /** a data URL of the school's documents logo (Excel files), or null */
   logo: string | null;
   /** "23 Nov 2026 to 26 Nov 2026" */
   period: string;
@@ -24,50 +26,21 @@ const TONE_ARGB: Record<Tone, string> = { on: 'FF2563EB', late: 'FFD97706', abs:
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 type Logo = Awaited<ReturnType<typeof asPng>>;
-type Loose = { [k: string]: unknown; default?: Loose & ((...a: unknown[]) => unknown) };
 type Doc = import('jspdf').jsPDF;
-type AutoTable = (doc: unknown, opts: Record<string, unknown>) => void;
+type AutoTable = PdfKit['autoTable'];
 
-async function pdfKit(): Promise<{ jsPDF: typeof import('jspdf').jsPDF; autoTable: AutoTable }> {
-  const [pdfMod, tableMod] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
-  // Either module may arrive as ESM or as a CommonJS wrapper, depending on the build.
-  const pm = pdfMod as unknown as Loose;
-  const jsPDF = (pm.jsPDF ?? (pm.default as Loose | undefined)?.jsPDF ?? pm.default) as typeof import('jspdf').jsPDF;
-  const tm = tableMod as unknown as Loose;
-  const autoTable = [tm.default, tm.autoTable, (tm.default as Loose | undefined)?.default, (tm.default as Loose | undefined)?.autoTable].find((f) => typeof f === 'function') as AutoTable;
-  return { jsPDF, autoTable };
-}
+const M = PDF_SIDE;
+const LH = { sideMm: PDF_SIDE_MM };
 
-const M = 40;
-
-/** Logo, school, title, period: returns the y where the content starts. */
-function pdfHeader(doc: Doc, logo: Logo, meta: ExportMeta, title: string, sub: string): number {
+/** The title block under the school's header: returns the y where the content starts. */
+function pdfTitle(doc: Doc, f: LetterheadFrame, meta: ExportMeta, title: string, sub: string): number {
   const W = doc.internal.pageSize.getWidth();
-  let x = M;
-  if (logo) {
-    const h = 46;
-    const w = Math.min(120, (logo.w / logo.h) * h);
-    doc.addImage(logo.data, 'PNG', M, 34, w, h);
-    x = M + w + 14;
-  }
-  doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(17, 24, 39).text(meta.school, x, 50);
-  doc.setFont('helvetica', 'bold').setFontSize(11).setTextColor(37, 99, 235).text(`Staff attendance · ${title}`, x, 66);
-  doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(75, 85, 99).text(`${meta.period}${meta.live ? ' (today is still in progress)' : ''}`, x, 80);
-  if (sub) doc.setFontSize(9).setTextColor(107, 114, 128).text(sub, W - M, 80, { align: 'right' });
-  doc.setDrawColor(229, 231, 235).line(M, 94, W - M, 94);
-  return 112;
-}
-
-function pdfFooter(doc: Doc): void {
-  const pages = doc.getNumberOfPages();
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i);
-    const W = doc.internal.pageSize.getWidth();
-    const H = doc.internal.pageSize.getHeight();
-    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(156, 163, 175);
-    doc.text(`Generated ${generatedAt()} · Tendo · Amashuri`, M, H - 24);
-    doc.text(`Page ${i} of ${pages}`, W - M, H - 24, { align: 'right' });
-  }
+  const y0 = f.top;
+  doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(17, 24, 39).text(`Staff attendance · ${title}`, M, y0 + 14);
+  doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(75, 85, 99).text(`${meta.school} · ${meta.period}${meta.live ? ' (today is still in progress)' : ''}`, M, y0 + 30);
+  if (sub) doc.setFontSize(9).setTextColor(107, 114, 128).text(sub, W - M, y0 + 14, { align: 'right' });
+  doc.setDrawColor(229, 231, 235).line(M, y0 + 42, W - M, y0 + 42);
+  return y0 + 60;
 }
 
 /** The short facts as a row of number + label; returns the y below them. */
@@ -86,7 +59,7 @@ function pdfFacts(doc: Doc, facts: ReportTable['facts'], y: number): number {
   return y + 46;
 }
 
-function pdfTable(doc: Doc, autoTable: AutoTable, table: ReportTable, startY: number): void {
+function pdfTable(doc: Doc, autoTable: AutoTable, f: LetterheadFrame, table: ReportTable, startY: number): void {
   const W = doc.internal.pageSize.getWidth() - 2 * M;
   const total = table.columns.reduce((a, c) => a + c.width, 0);
   const columnStyles: Record<number, Record<string, unknown>> = {};
@@ -97,7 +70,8 @@ function pdfTable(doc: Doc, autoTable: AutoTable, table: ReportTable, startY: nu
   }
   autoTable(doc, {
     startY,
-    margin: { left: M, right: M, bottom: 48, top: 40 },
+    // The table stays between the school's header and footer on every page it runs to.
+    margin: { left: M, right: M, top: f.top, bottom: f.bottom },
     head: [table.columns.map((c) => c.label)],
     body: table.rows.map((r) => table.columns.map((c) => String(r.cells[c.key] ?? ''))),
     styles: { font: 'helvetica', fontSize: table.columns.length > 9 ? 7.5 : 8.5, cellPadding: 4, textColor: [31, 41, 55], lineColor: [229, 231, 235], lineWidth: 0.5, overflow: 'linebreak' },
@@ -115,32 +89,40 @@ function pdfTable(doc: Doc, autoTable: AutoTable, table: ReportTable, startY: nu
   });
 }
 
-/** One report as a PDF. Wide reports are printed across the page. */
-export async function downloadReportPdf(table: ReportTable, meta: ExportMeta, stem: string): Promise<void> {
-  const [{ jsPDF, autoTable }, logo] = await Promise.all([pdfKit(), asPng(meta.logo)]);
+/** One report as a jsPDF document. Wide reports are printed across the page. */
+export function buildReportPdf({ jsPDF, autoTable }: PdfKit, table: ReportTable, meta: ExportMeta, lh: Letterhead): Doc {
   const doc = new jsPDF({ orientation: table.columns.length > 7 ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
-  let y = pdfHeader(doc, logo, meta, table.title, table.rows.length ? table.countText : '');
+  const f = letterheadFrame(doc, lh, LH);
+  let y = pdfTitle(doc, f, meta, table.title, table.rows.length ? table.countText : '');
   doc.setFont('helvetica', 'italic').setFontSize(9.5).setTextColor(107, 114, 128).text(table.question, M, y);
   y = pdfFacts(doc, table.facts, y + 14);
-  pdfTable(doc, autoTable, table, y);
-  pdfFooter(doc);
-  save(doc.output('blob'), `${stem}.pdf`);
+  pdfTable(doc, autoTable, f, table, y);
+  stampLetterhead(doc, lh, { ...LH, note: pdfNote() });
+  return doc;
 }
 
-/** The headline numbers as a one-page brief: a card per number, then the day-by-day table. */
-export async function downloadSummaryPdf(kpis: Kpi[], daily: ReportTable, meta: ExportMeta, stem: string, context: string): Promise<void> {
-  const [{ jsPDF, autoTable }, logo] = await Promise.all([pdfKit(), asPng(meta.logo)]);
+export async function downloadReportPdf(table: ReportTable, meta: ExportMeta, stem: string): Promise<void> {
+  const [kit, lh] = await Promise.all([pdfKit(), loadLetterhead()]);
+  save(buildReportPdf(kit, table, meta, lh).output('blob'), `${stem}.pdf`);
+}
+
+/** The headline numbers as a brief: a card per number, then the day-by-day table. */
+export function buildSummaryPdf({ jsPDF, autoTable }: PdfKit, kpis: Kpi[], daily: ReportTable, meta: ExportMeta, context: string, lh: Letterhead): Doc {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
-  let y = pdfHeader(doc, logo, meta, 'Summary', context);
+  const f = letterheadFrame(doc, lh, LH);
+  let y = pdfTitle(doc, f, meta, 'Summary', context);
   if (meta.compared) { doc.setFont('helvetica', 'italic').setFontSize(9.5).setTextColor(107, 114, 128).text(meta.compared, M, y); y += 16; }
   const perRow = 2;
   const gap = 12;
   const cw = (W - 2 * M - gap * (perRow - 1)) / perRow;
   const ch = 62;
   kpis.forEach((k, i) => {
+    // A row of cards that would reach the footer starts the next page.
+    if (i % perRow === 0 && i > 0) y += ch + gap;
+    if (i % perRow === 0 && y + ch > f.pageBottom) { doc.addPage(); y = f.top; }
     const cx = M + (i % perRow) * (cw + gap);
-    const cy = y + Math.floor(i / perRow) * (ch + gap);
+    const cy = y;
     doc.setDrawColor(229, 231, 235).setFillColor(248, 250, 252).roundedRect(cx, cy, cw, ch, 10, 10, 'FD');
     doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(107, 114, 128).text(k.label, cx + 14, cy + 18);
     const rgb = k.tone ? TONE_RGB[k.tone] : ([17, 24, 39] as [number, number, number]);
@@ -152,14 +134,21 @@ export async function downloadSummaryPdf(kpis: Kpi[], daily: ReportTable, meta: 
       doc.setFont('helvetica', 'bold').setFontSize(8.5).setTextColor(...c).text(k.change.text, cx + cw - 14, cy + 18, { align: 'right' });
     }
   });
-  y += Math.ceil(kpis.length / perRow) * (ch + gap) + 10;
+  if (kpis.length) y += ch + gap;
+  y += 10;
   if (daily.rows.length > 1) {
-    if (y > doc.internal.pageSize.getHeight() - 160) { doc.addPage(); y = 56; }
+    // The heading needs room for itself and a few rows before the footer.
+    if (y > f.pageBottom - 90) { doc.addPage(); y = f.top + 12; }
     doc.setFont('helvetica', 'bold').setFontSize(11).setTextColor(17, 24, 39).text('Day by day', M, y);
-    pdfTable(doc, autoTable, daily, y + 10);
+    pdfTable(doc, autoTable, f, daily, y + 10);
   }
-  pdfFooter(doc);
-  save(doc.output('blob'), `${stem}.pdf`);
+  stampLetterhead(doc, lh, { ...LH, note: pdfNote() });
+  return doc;
+}
+
+export async function downloadSummaryPdf(kpis: Kpi[], daily: ReportTable, meta: ExportMeta, stem: string, context: string): Promise<void> {
+  const [kit, lh] = await Promise.all([pdfKit(), loadLetterhead()]);
+  save(buildSummaryPdf(kit, kpis, daily, meta, context, lh).output('blob'), `${stem}.pdf`);
 }
 
 // ---- Excel ------------------------------------------------------------------------------

@@ -1,13 +1,15 @@
+import { letterheadFrame, loadLetterhead, stampLetterhead, type Letterhead } from '../../utils/documentLetterhead.ts';
 
 /**
- * The day report as a document: PDF (jsPDF + autotable) or Excel (exceljs), both
- * headed with the school's documents logo and name. Both libraries load only when
- * someone downloads.
+ * The day report as a document: PDF (jsPDF + autotable) or Excel (exceljs). The PDF
+ * carries the school's document letterhead (header and footer on every page); the
+ * Excel file is headed with the school's documents logo and name. Both libraries
+ * load only when someone downloads.
  */
 
 export interface DayExportMeta {
   school: string;
-  /** a data URL (any browser image type) or null */
+  /** the documents logo for the Excel file: a data URL (any browser image type) or null */
   logo: string | null;
   /** e.g. "Thursday, 26 November 2026" */
   dateLabel: string;
@@ -66,30 +68,39 @@ export function save(blob: Blob, name: string) {
   window.setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-export async function downloadDayPdf(rows: DayExportRow[], meta: DayExportMeta): Promise<void> {
-  const [pdfMod, tableMod, logo] = await Promise.all([import('jspdf'), import('jspdf-autotable'), asPng(meta.logo)]);
+export type PdfKit = { jsPDF: typeof import('jspdf').jsPDF; autoTable: (doc: unknown, opts: Record<string, unknown>) => void };
+
+/** jsPDF + autotable, loaded only when someone downloads. */
+export async function pdfKit(): Promise<PdfKit> {
+  const [pdfMod, tableMod] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
   // Either module may arrive as ESM or as a CommonJS wrapper, depending on the build.
   type Loose = { [k: string]: unknown; default?: Loose & ((...a: unknown[]) => unknown) };
   const pm = pdfMod as unknown as Loose;
-  const jsPDF = (pm.jsPDF ?? (pm.default as Loose | undefined)?.jsPDF ?? pm.default) as typeof import('jspdf').jsPDF;
+  const jsPDF = (pm.jsPDF ?? (pm.default as Loose | undefined)?.jsPDF ?? pm.default) as PdfKit['jsPDF'];
   const tm = tableMod as unknown as Loose;
-  const pickFn = (...c: unknown[]) => c.find((f) => typeof f === 'function') as (doc: unknown, opts: Record<string, unknown>) => void;
-  const autoTable = pickFn(tm.default, tm.autoTable, (tm.default as Loose | undefined)?.default, (tm.default as Loose | undefined)?.autoTable);
+  const autoTable = [tm.default, tm.autoTable, (tm.default as Loose | undefined)?.default, (tm.default as Loose | undefined)?.autoTable].find((f) => typeof f === 'function') as PdfKit['autoTable'];
+  return { jsPDF, autoTable };
+}
+
+/** Left/right margin of the staff reports (pt), and the same in mm for the letterhead. */
+export const PDF_SIDE = 40;
+export const PDF_SIDE_MM = (PDF_SIDE * 25.4) / 72;
+export const pdfNote = () => `Generated ${generatedAt()} · Tendo · Amashuri`;
+
+/**
+ * The day report as a jsPDF document. The school's header and footer (the document
+ * letterhead) are on every page; the title block and the table stay between them.
+ */
+export function buildDayPdf({ jsPDF, autoTable }: PdfKit, rows: DayExportRow[], meta: DayExportMeta, lh: Letterhead): import('jspdf').jsPDF {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const W = doc.internal.pageSize.getWidth();
-  const M = 40;
-  // Header: documents logo, school, title, the day and the filter.
-  let x = M;
-  if (logo) {
-    const h = 46;
-    const w = Math.min(120, (logo.w / logo.h) * h);
-    doc.addImage(logo.data, 'PNG', M, 36, w, h);
-    x = M + w + 14;
-  }
-  doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(17, 24, 39).text(meta.school, x, 52);
-  doc.setFont('helvetica', 'normal').setFontSize(11).setTextColor(75, 85, 99).text('Staff attendance report', x, 68);
-  doc.setFontSize(10).text(`${meta.dateLabel}${meta.isToday ? ' (live)' : ''} · ${meta.filterLabel}`, x, 82);
-  doc.setDrawColor(229, 231, 235).line(M, 96, W - M, 96);
+  const M = PDF_SIDE;
+  const f = letterheadFrame(doc, lh, { sideMm: PDF_SIDE_MM });
+  const y0 = f.top;
+  // Title block: the report, then the school, the day and the filter.
+  doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(17, 24, 39).text('Staff attendance report', M, y0 + 14);
+  doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(75, 85, 99).text(`${meta.school} · ${meta.dateLabel}${meta.isToday ? ' (live)' : ''} · ${meta.filterLabel}`, M, y0 + 30, { maxWidth: W - 2 * M });
+  doc.setDrawColor(229, 231, 235).line(M, y0 + 42, W - M, y0 + 42);
   // Summary.
   const absentWord = meta.isToday ? 'Not in yet' : 'Absent';
   const cells: Array<[string, number, [number, number, number]]> = [
@@ -98,12 +109,12 @@ export async function downloadDayPdf(rows: DayExportRow[], meta: DayExportMeta):
   const cw = (W - 2 * M) / cells.length;
   cells.forEach(([label, n, rgb], i) => {
     const cx = M + i * cw;
-    doc.setFont('helvetica', 'bold').setFontSize(18).setTextColor(...rgb).text(String(n), cx, 124);
-    doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(107, 114, 128).text(label, cx, 138);
+    doc.setFont('helvetica', 'bold').setFontSize(18).setTextColor(...rgb).text(String(n), cx, y0 + 70);
+    doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(107, 114, 128).text(label, cx, y0 + 84);
   });
   autoTable(doc, {
-    startY: 156,
-    margin: { left: M, right: M, bottom: 48 },
+    startY: y0 + 102,
+    margin: { left: M, right: M, top: f.top, bottom: f.bottom },
     head: [['#', 'Staff', 'Role', 'Status', 'In', 'Out', 'At school', 'How']],
     body: rows.map((r, i) => [String(i + 1), r.name, r.role, r.status, r.checkIn, r.checkOut, r.hours, r.how]),
     styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, textColor: [31, 41, 55], lineColor: [229, 231, 235], lineWidth: 0.5 },
@@ -117,16 +128,14 @@ export async function downloadDayPdf(rows: DayExportRow[], meta: DayExportMeta):
       }
     },
   });
-  // Footer on every page.
-  const pages = doc.getNumberOfPages();
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i);
-    const H = doc.internal.pageSize.getHeight();
-    doc.setFontSize(8).setTextColor(156, 163, 175);
-    doc.text(`Generated ${generatedAt()} · Tendo · Amashuri`, M, H - 24);
-    doc.text(`Page ${i} of ${pages}`, W - M, H - 24, { align: 'right' });
-  }
-  save(doc.output('blob'), `${meta.fileStem}.pdf`);
+  // Last: the school's header and footer on every page.
+  stampLetterhead(doc, lh, { sideMm: PDF_SIDE_MM, note: pdfNote() });
+  return doc;
+}
+
+export async function downloadDayPdf(rows: DayExportRow[], meta: DayExportMeta): Promise<void> {
+  const [kit, lh] = await Promise.all([pdfKit(), loadLetterhead()]);
+  save(buildDayPdf(kit, rows, meta, lh).output('blob'), `${meta.fileStem}.pdf`);
 }
 
 export async function downloadDayXlsx(rows: DayExportRow[], meta: DayExportMeta): Promise<void> {

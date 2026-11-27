@@ -7,6 +7,8 @@ import { useToast } from '../../context/ToastContext';
 import { ApiError } from '../../api/client';
 import { staffClockApi, initialsOf, type ClockDevice, type IssuedCard } from '../../api/staffClock';
 import { StaffClockHeader, Spinner } from './StaffClockHeader';
+import { PrintLetterhead } from '../../components/common/PrintLetterhead';
+import { SC_SHEET_PAGE_CSS, SC_SHEET_SIDE_MM } from './sheetPage.ts';
 
 /**
  * Phones & cards: approve / remove the devices staff check in with, and print QR
@@ -238,6 +240,8 @@ export const StaffClockDevices: React.FC = () => {
 
         {printing && (
           <section className="sc-card">
+            <style>{SC_SHEET_PAGE_CSS}</style>
+            <PrintLetterhead note="Staff attendance cards · Tendo · Amashuri" sideMm={SC_SHEET_SIDE_MM} />
             <div className="sc-filters">
               <h2 style={{ flex: 1 }}>Ready to print ({printing.cards.length})</h2>
               <button className="sc-btn sc-btn-primary" onClick={() => window.print()}><Printer size={16} /> Print</button>

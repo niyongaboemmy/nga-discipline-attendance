@@ -5,6 +5,8 @@ import App from './App.tsx'
 import { initNgaInstall, NgaInstallPrompt } from './pwa/ngaInstall'
 import { startActivity } from './activity'
 import { installNetActivity } from './net/trackRequests'
+// The school's header and footer on every PDF and printed page (utils/documentLetterhead).
+import './api/letterheadSource'
 
 // Every change sent to the server shows a small "Saving…" pill (net/NetActivity).
 installNetActivity()
